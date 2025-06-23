@@ -1,0 +1,4 @@
+commitlint.config.js        linguist-detectable=false
+clusters/**/*.yaml          linguist-detectable=true linguist-language=YAML
+ci/**/*.yaml                linguist-detectable=true linguist-language=YAML
+policies/**/*.yaml          linguist-detectable=true linguist-language=YAML
