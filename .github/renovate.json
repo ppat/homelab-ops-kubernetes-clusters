@@ -18,9 +18,24 @@
     "mergeConfidence:all-badges",
     "github>ppat/renovate-presets",
     "github>ppat/renovate-presets:dev-tools",
-    "github>ppat/renovate-presets:github-actions"
+    "github>ppat/renovate-presets:github-actions",
+    "github>ppat/renovate-presets:kubernetes",
+    "github>ppat/homelab-ops-kubernetes-clusters//.github/renovate/flux-sources",
+    "github>ppat/homelab-ops-kubernetes-clusters//.github/renovate/k3s-version",
+    "github>ppat/homelab-ops-kubernetes-clusters//.github/renovate/version-separation"
   ],
+  "flux": {
+    "managerFilePatterns": [
+      "/clusters/.+\\.yaml$/"
+    ]
+  },
   "internalChecksFilter": "strict",
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/clusters/.+\\.yaml$/",
+      "/policies/.+\\.yaml$/"
+    ]
+  },
   "labels": [
     "pr-type:renovate"
   ],

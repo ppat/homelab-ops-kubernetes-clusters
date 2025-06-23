@@ -1,0 +1,65 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "commitMessageAction": "deploy",
+      "description": "update k3s version",
+      "matchPackageNames": [
+        "k3s-io/k3s"
+      ],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}",
+      "separateMajorMinor": true,
+      "separateMinorPatch": true,
+      "separateMultipleMajor": true,
+      "separateMultipleMinor": true,
+      "versioning": "semver-coerced"
+    },
+    {
+      "addLabels": [
+        "cluster:{{ lookup (split packageFileDir '/') 1 }}"
+      ],
+      "description": "auto upgrade k3s patch versions after 7 days",
+      "groupName": "{{ lookup (split packageFileDir '/') 1 }}-k8s",
+      "matchFileNames": [
+        "clusters/**/*.yaml"
+      ],
+      "matchPackageNames": [
+        "k3s-io/k3s"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "addLabels": [
+        "automerge:off",
+        "cluster:{{ lookup (split packageFileDir '/') 1 }}"
+      ],
+      "automerge": false,
+      "description": "manual review required for major/minor updates of k3s",
+      "groupName": "{{ lookup (split packageFileDir '/') 1 }}-k8s",
+      "matchFileNames": [
+        "clusters/**/*.yaml"
+      ],
+      "matchPackageNames": [
+        "k3s-io/k3s"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
+      "minimumReleaseAge": "60 days",
+      "reviewers": [
+        "ppat"
+      ]
+    },
+    {
+      "enabled": false,
+      "matchPackageNames": [
+        "rancher/k3s-upgrade"
+      ]
+    }
+  ]
+}

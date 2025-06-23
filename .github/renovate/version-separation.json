@@ -1,0 +1,38 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "description": "configure version separation for infra modules",
+      "matchFileNames": [
+        "clusters/homelab/sources/infra-*.yaml",
+        "clusters/nas/sources/infra-*.yaml"
+      ],
+      "separateMajorMinor": true,
+      "separateMinorPatch": false,
+      "separateMultipleMajor": true,
+      "separateMultipleMinor": true
+    },
+    {
+      "description": "configure version separation for apps modules",
+      "matchFileNames": [
+        "clusters/homelab/sources/apps-*.yaml",
+        "clusters/nas/sources/apps-*.yaml"
+      ],
+      "separateMajorMinor": true,
+      "separateMinorPatch": false,
+      "separateMultipleMajor": true,
+      "separateMultipleMinor": false
+    },
+    {
+      "description": "configure version separation for bootstrap modules",
+      "matchFileNames": [
+        "clusters/homelab/bootstrap/**.yaml",
+        "clusters/nas/bootstrap/**.yaml"
+      ],
+      "separateMajorMinor": true,
+      "separateMinorPatch": false,
+      "separateMultipleMajor": true,
+      "separateMultipleMinor": false
+    }
+  ]
+}

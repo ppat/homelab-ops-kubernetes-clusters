@@ -1,0 +1,58 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "addLabels": [
+        "automerge:off",
+        "cluster:{{ lookup (split packageFileDir '/') 1 }}",
+        "dependency-type:flux-source"
+      ],
+      "automerge": false,
+      "commitMessageAction": "deploy",
+      "groupName": "{{ lookup (split packageFileDir '/') 1 }}-{{newValue}}",
+      "matchDatasources": [
+        "github-releases",
+        "github-tags",
+        "git-tags"
+      ],
+      "matchManagers": [
+        "flux"
+      ],
+      "matchFileNames": [
+        "clusters/homelab/sources/**.yaml",
+        "clusters/nas/sources/**.yaml"
+      ],
+      "minimumReleaseAge": "",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}",
+      "versionCompatibility": "^(?<compatibility>.*)-(?<version>.*)$",
+      "versioning": "semver"
+    },
+    {
+      "addLabels": [
+        "automerge:off",
+        "cluster:{{ lookup (split packageFileDir '/') 1 }}",
+        "dependency-type:kustomize-remote-resource"
+      ],
+      "automerge": false,
+      "commitMessageAction": "deploy",
+      "commitMessageTopic": "{{newValue}}",
+      "groupName": "{{ lookup (split packageFileDir '/') 1 }}-{{newValue}}",
+      "matchDatasources": [
+        "github-tags",
+        "git-tags"
+      ],
+      "matchManagers": [
+        "kustomize"
+      ],
+      "matchFileNames": [
+        "clusters/**/kustomization.yaml"
+      ],
+      "minimumReleaseAge": "",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}",
+      "versionCompatibility": "^(?<compatibility>.*)-(?<version>.*)$",
+      "versioning": "semver"
+    }
+  ]
+}
