@@ -1,0 +1,16 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: root
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include flux-root directory for this cluster
+    !/clusters/nas
+  interval: 1m0s
+  ref:
+    branch: main
+  url: https://github.com/ppat/homelab-ops-kubernetes-clusters.git
