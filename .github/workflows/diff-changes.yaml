@@ -1,0 +1,94 @@
+---
+# yamllint disable rule:line-length
+name: diff-changes
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+    - '.github/workflows/diff-changes.yaml'
+    - 'clusters/**/*.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      affected_clusters: ${{ steps.extract-clusters.outputs.clusters }}
+      has-changes: ${{ steps.changed-dirs.outputs.any_changed }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      with:
+        fetch-depth: 1
+
+    - name: Get changed cluster directories
+      id: changed-dirs
+      uses: tj-actions/changed-files@2f7c5bfce28377bc069a65ba478de0a74aa0ca32 # v46
+      with:
+        files: 'clusters/**/*.yaml'
+        dir_names: true
+        dir_names_max_depth: 2
+        dir_names_exclude_current_dir: true
+        matrix: true
+
+    - name: Extract cluster names
+      id: extract-clusters
+      # yamllint disable-line rule:indentation
+      run: |
+        # Extract cluster names from directory paths like "clusters/homelab" -> "homelab"
+        clusters=$(echo '${{ steps.changed-dirs.outputs.all_changed_files }}' | jq -r 'map(select(startswith("clusters/")) | split("/")[1]) | unique')
+        echo "clusters=$clusters" >> $GITHUB_OUTPUT
+        echo "Extracted clusters: $clusters"
+
+  diff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [detect-changes]
+    if: ${{ needs.detect-changes.outputs.has-changes == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cluster: ${{ fromJSON(needs.detect-changes.outputs.affected_clusters) }}
+        resource: [helmrelease, kustomization]
+
+    steps:
+    - name: Setup flux
+      uses: fluxcd/flux2/action@8d5f40dca5aa5d3c0fc3414457dda15a0ac92fa4 # v2.5.1
+      with:
+        # renovate: datasource=github-releases depName=fluxcd/flux2
+        version: "v2.5.1"
+
+    - name: Compute diffs
+      uses: allenporter/flux-local/action/diff@05de0c97eba82d7cdc4faa7279752e17e3c565cf # 7.0.0
+      id: diff
+      continue-on-error: true
+      with:
+        live-branch: main
+        path: clusters/${{ matrix.cluster }}
+        resource: ${{ matrix.resource }}
+        sources: root
+        skip-secrets: true
+        skip-crds: true
+        debug: false
+
+    - name: Add PR comment w/ diff
+      uses: mshick/add-pr-comment@b8f338c590a895d50bcbfa6c5859251edc8952fc # v2
+      if: ${{ steps.diff.outputs.diff != '' }}
+      continue-on-error: true
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        message-id: "${{ github.event.pull_request.number }}/${{ matrix.cluster }}/${{ matrix.resource }}"
+        message-failure: Unable to post ${{ matrix.resource }} diff for ${{ matrix.cluster }}
+        message: |
+          `````diff
+          ${{ steps.diff.outputs.diff }}
+          `````
