@@ -29,10 +29,6 @@ repos:
   hooks:
   - id: markdownlint-cli2
     args: ["--fix", "--config", ".markdownlint-cli2.yaml"]
-- repo: https://github.com/shellcheck-py/shellcheck-py
-  rev: v0.10.0.1
-  hooks:
-  - id: shellcheck
 - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
   rev: v9.22.0
   hooks:
@@ -44,3 +40,19 @@ repos:
     - '@commitlint/ensure@19.5.0'
     - 'commitlint-plugin-function-rules@4.0.1'
     args: ['--verbose']
+- repo: https://github.com/ppat/validate-kubernetes-manifests
+  rev: v0.0.2
+  hooks:
+  - id: validate-k8s
+    args:
+    - --pkg-include
+    - '["clusters/*"]'
+    - --pkg-exclude
+    - '["components/*",".archive/*"]'
+    - --kubeconform-flags
+    - '-skip=Secret,IPAddressPool'
+    - --env-file
+    - ci/validation/.env
+    - --base-kustomization-file
+    - ci/validation/kustomization.yaml
+    - --debug
