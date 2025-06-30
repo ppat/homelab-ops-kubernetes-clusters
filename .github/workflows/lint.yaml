@@ -83,90 +83,24 @@ jobs:
       with:
         fetch-depth: 1
 
-    # - name: Generate kustomization files list for only changed manifests
-    #   if: github.event_name == 'pull_request'
-    #   id: prepare-pr-file-list
-    #   shell: bash
-    #   env:
-    #     CHANGED_K8S_FILES: ${{ needs.detect-changes.outputs.kubernetes_all_changed_files }}
-    #   # yamllint disable-line rule:indentation
-    #   run: |
-    #     declare -a ks_files=()
-    #     declare -a orphan_files=()
-    #     read -r -a changed_files_array <<< "$CHANGED_K8S_FILES"
-
-    #     for file in "${changed_files_array[@]}"; do
-    #       path=$(dirname "$file")
-    #       found=false
-    #       while [[ "$path" != "." && "$path" != "/" ]]; do
-    #         if [[ -f "$path/kustomization.yaml" ]]; then
-    #           ks_files+=("$path/kustomization.yaml")
-    #           found=true
-    #           break
-    #         fi
-    #         path=$(dirname "$path")
-    #       done
-
-    #       if ! $found && [[ -f "./kustomization.yaml" ]]; then
-    #          ks_files+=("./kustomization.yaml")
-    #          found=true
-    #       fi
-
-    #       if ! $found; then
-    #         orphan_files+=("$file")
-    #       fi
-    #     done
-
-    #     if (( ${#ks_files[@]} > 0 )); then
-    #       printf "%s\n" "${ks_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/ks.json
-    #       echo "kustomization_files=$(cat /tmp/ks.json)" >> $GITHUB_OUTPUT
-    #     else
-    #       echo "kustomization_files=[]" >> $GITHUB_OUTPUT
-    #     fi
-
-    #     if (( ${#orphan_files[@]} > 0 )); then
-    #       printf "%s\n" "${orphan_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/orphans.json
-    #       echo "orphan_files=$(cat /tmp/orphans.json)" >> $GITHUB_OUTPUT
-    #     else
-    #       echo "orphan_files=[]" >> $GITHUB_OUTPUT
-    #     fi
-
-    #     echo "Found ${#ks_files[@]} kustomization files to validate:"
-    #     if (( ${#ks_files[@]} > 0 )); then
-    #       printf "  - %s\n" "${ks_files[@]}" | sort -u
-    #     fi
-    #     echo ""
-    #     echo "Found ${#orphan_files[@]} orphan Kubernetes files:"
-    #     if (( ${#orphan_files[@]} > 0 )); then
-    #       printf "  - %s\n" "${orphan_files[@]}" | sort -u
-    #     fi
-
-    - name: Generate kustomization files list for all manifests
-      # if: github.event_name != 'pull_request'
-      id: prepare-all-file-list
+    - name: Format file list for validation
+      id: format-files
       shell: bash
       # yamllint disable-line rule:indentation
       run: |
-        echo "Non-Pull Request event detected. Finding all kustomization.yaml files..."
-        mapfile -t ks_files < <(find . -type f -name "kustomization.yaml")
-
-        if (( ${#ks_files[@]} > 0 )); then
-          printf "%s\n" "${ks_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/ks.json
-          echo "kustomization_files=$(cat /tmp/ks.json)" >> $GITHUB_OUTPUT
+        changed_files="${{ github.event_name == 'pull_request' && needs.detect-changes.outputs.kubernetes_all_changed_files || '' }}"
+        if [[ -n "$changed_files" ]]; then
+          # Convert space-delimited string to a JSON array string
+          echo "$changed_files" | jq -R . | jq -s -c . > /tmp/files.json
+          echo "files_json=$(cat /tmp/files.json)" >> $GITHUB_OUTPUT
         else
-          echo "kustomization_files=[]" >> $GITHUB_OUTPUT
-        fi
-
-        echo "Found ${#ks_files[@]} kustomization files to validate:"
-        if (( ${#ks_files[@]} > 0 )); then
-          printf "  - %s\n" "${ks_files[@]}" | sort -u
+          echo "files_json=[]" >> $GITHUB_OUTPUT
         fi
 
     - name: Validate Kubernetes Manifests
-      uses: ppat/validate-kubernetes-manifests@94be4aae001773d995b604b978b13241ffe0760a # v0.0.2
+      uses: ppat/validate-kubernetes-manifests@discover-files
       with:
-        # files: ${{ steps.prepare-pr-file-list.outputs.kustomization_files || steps.prepare-all-file-list.outputs.kustomization_files }}
-        files: ${{ steps.prepare-all-file-list.outputs.kustomization_files }}
+        files: ${{ steps.format-files.outputs.files_json }}
         pkg-include: '["clusters/*"]'
         pkg-exclude: '["components/*",".archive/*"]'
         kubeconform-flags: '-skip=Secret,IPAddressPool'
@@ -180,7 +114,7 @@ jobs:
     uses: ppat/github-workflows/.github/workflows/lint-markdown.yaml@main
     with:
       git_ref: ${{ github.head_ref || github.ref }}
-      files: ${{ github.event_name == 'workflow_dispatch' && 'ALL' || needs.detect-changes.outputs.markdown_all_changed_files }}
+      files: ${{ github.event_name != 'pull_request' && 'ALL' || needs.detect-changes.outputs.markdown_all_changed_files }}
 
   pre-commit:
     uses: ppat/github-workflows/.github/workflows/lint-pre-commit.yaml@main
@@ -193,7 +127,7 @@ jobs:
     uses: ppat/github-workflows/.github/workflows/lint-renovate-config-check.yaml@main
     with:
       git_ref: ${{ github.head_ref || github.ref }}
-      files: ${{ github.event_name == 'workflow_dispatch' && 'ALL' || needs.detect-changes.outputs.renovate_all_changed_files }}
+      files: ${{ github.event_name != 'pull_request' && 'ALL' || needs.detect-changes.outputs.renovate_all_changed_files }}
 
   yaml:
     needs: [detect-changes]
@@ -201,4 +135,4 @@ jobs:
     uses: ppat/github-workflows/.github/workflows/lint-yaml.yaml@main
     with:
       git_ref: ${{ github.head_ref || github.ref }}
-      files: ${{ github.event_name == 'workflow_dispatch' && 'ALL' || needs.detect-changes.outputs.yaml_all_changed_files }}
+      files: ${{ github.event_name != 'pull_request' && 'ALL' || needs.detect-changes.outputs.yaml_all_changed_files }}
