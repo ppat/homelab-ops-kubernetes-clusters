@@ -74,7 +74,7 @@ jobs:
 
   kubernetes-manifests:
     needs: [detect-changes]
-    if: ${{ github.event_name != 'pull_request' || needs.detect-changes.outputs.kubernetes_any_changed == 'true' }}
+    # if: ${{ github.event_name != 'pull_request' || needs.detect-changes.outputs.kubernetes_any_changed == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -98,7 +98,7 @@ jobs:
         fi
 
     - name: Validate Kubernetes Manifests
-      uses: ppat/validate-kubernetes-manifests@discover-files
+      uses: ppat/validate-kubernetes-manifests@v0.1.0
       with:
         files: ${{ steps.format-files.outputs.files_json }}
         pkg-include: '["clusters/*"]'
