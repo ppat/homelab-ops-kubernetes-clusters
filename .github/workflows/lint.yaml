@@ -74,7 +74,7 @@ jobs:
 
   kubernetes-manifests:
     needs: [detect-changes]
-    if: ${{ github.event_name != 'pull_request' || needs.detect-changes.outputs.kubernetes_any_changed == 'true' }}
+    # if: ${{ github.event_name != 'pull_request' || needs.detect-changes.outputs.kubernetes_any_changed == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -83,66 +83,66 @@ jobs:
       with:
         fetch-depth: 1
 
-    - name: Generate kustomization files list for only changed manifests
-      if: github.event_name == 'pull_request'
-      id: prepare-pr-file-list
-      shell: bash
-      env:
-        CHANGED_K8S_FILES: ${{ needs.detect-changes.outputs.kubernetes_all_changed_files }}
-      # yamllint disable-line rule:indentation
-      run: |
-        declare -a ks_files=()
-        declare -a orphan_files=()
-        read -r -a changed_files_array <<< "$CHANGED_K8S_FILES"
+    # - name: Generate kustomization files list for only changed manifests
+    #   if: github.event_name == 'pull_request'
+    #   id: prepare-pr-file-list
+    #   shell: bash
+    #   env:
+    #     CHANGED_K8S_FILES: ${{ needs.detect-changes.outputs.kubernetes_all_changed_files }}
+    #   # yamllint disable-line rule:indentation
+    #   run: |
+    #     declare -a ks_files=()
+    #     declare -a orphan_files=()
+    #     read -r -a changed_files_array <<< "$CHANGED_K8S_FILES"
 
-        for file in "${changed_files_array[@]}"; do
-          path=$(dirname "$file")
-          found=false
-          while [[ "$path" != "." && "$path" != "/" ]]; do
-            if [[ -f "$path/kustomization.yaml" ]]; then
-              ks_files+=("$path/kustomization.yaml")
-              found=true
-              break
-            fi
-            path=$(dirname "$path")
-          done
+    #     for file in "${changed_files_array[@]}"; do
+    #       path=$(dirname "$file")
+    #       found=false
+    #       while [[ "$path" != "." && "$path" != "/" ]]; do
+    #         if [[ -f "$path/kustomization.yaml" ]]; then
+    #           ks_files+=("$path/kustomization.yaml")
+    #           found=true
+    #           break
+    #         fi
+    #         path=$(dirname "$path")
+    #       done
 
-          if ! $found && [[ -f "./kustomization.yaml" ]]; then
-             ks_files+=("./kustomization.yaml")
-             found=true
-          fi
+    #       if ! $found && [[ -f "./kustomization.yaml" ]]; then
+    #          ks_files+=("./kustomization.yaml")
+    #          found=true
+    #       fi
 
-          if ! $found; then
-            orphan_files+=("$file")
-          fi
-        done
+    #       if ! $found; then
+    #         orphan_files+=("$file")
+    #       fi
+    #     done
 
-        if (( ${#ks_files[@]} > 0 )); then
-          printf "%s\n" "${ks_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/ks.json
-          echo "kustomization_files=$(cat /tmp/ks.json)" >> $GITHUB_OUTPUT
-        else
-          echo "kustomization_files=[]" >> $GITHUB_OUTPUT
-        fi
+    #     if (( ${#ks_files[@]} > 0 )); then
+    #       printf "%s\n" "${ks_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/ks.json
+    #       echo "kustomization_files=$(cat /tmp/ks.json)" >> $GITHUB_OUTPUT
+    #     else
+    #       echo "kustomization_files=[]" >> $GITHUB_OUTPUT
+    #     fi
 
-        if (( ${#orphan_files[@]} > 0 )); then
-          printf "%s\n" "${orphan_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/orphans.json
-          echo "orphan_files=$(cat /tmp/orphans.json)" >> $GITHUB_OUTPUT
-        else
-          echo "orphan_files=[]" >> $GITHUB_OUTPUT
-        fi
+    #     if (( ${#orphan_files[@]} > 0 )); then
+    #       printf "%s\n" "${orphan_files[@]}" | sort -u | jq -R . | jq -s -c . > /tmp/orphans.json
+    #       echo "orphan_files=$(cat /tmp/orphans.json)" >> $GITHUB_OUTPUT
+    #     else
+    #       echo "orphan_files=[]" >> $GITHUB_OUTPUT
+    #     fi
 
-        echo "Found ${#ks_files[@]} kustomization files to validate:"
-        if (( ${#ks_files[@]} > 0 )); then
-          printf "  - %s\n" "${ks_files[@]}" | sort -u
-        fi
-        echo ""
-        echo "Found ${#orphan_files[@]} orphan Kubernetes files:"
-        if (( ${#orphan_files[@]} > 0 )); then
-          printf "  - %s\n" "${orphan_files[@]}" | sort -u
-        fi
+    #     echo "Found ${#ks_files[@]} kustomization files to validate:"
+    #     if (( ${#ks_files[@]} > 0 )); then
+    #       printf "  - %s\n" "${ks_files[@]}" | sort -u
+    #     fi
+    #     echo ""
+    #     echo "Found ${#orphan_files[@]} orphan Kubernetes files:"
+    #     if (( ${#orphan_files[@]} > 0 )); then
+    #       printf "  - %s\n" "${orphan_files[@]}" | sort -u
+    #     fi
 
     - name: Generate kustomization files list for all manifests
-      if: github.event_name != 'pull_request'
+      # if: github.event_name != 'pull_request'
       id: prepare-all-file-list
       shell: bash
       # yamllint disable-line rule:indentation
@@ -165,7 +165,8 @@ jobs:
     - name: Validate Kubernetes Manifests
       uses: ppat/validate-kubernetes-manifests@94be4aae001773d995b604b978b13241ffe0760a # v0.0.2
       with:
-        files: ${{ steps.prepare-pr-file-list.outputs.kustomization_files || steps.prepare-all-file-list.outputs.kustomization_files }}
+        # files: ${{ steps.prepare-pr-file-list.outputs.kustomization_files || steps.prepare-all-file-list.outputs.kustomization_files }}
+        files: ${{ steps.prepare-all-file-list.outputs.kustomization_files }}
         pkg-include: '["clusters/*"]'
         pkg-exclude: '["components/*",".archive/*"]'
         kubeconform-flags: '-skip=Secret,IPAddressPool'
