@@ -20,14 +20,14 @@ jobs:
     outputs:
       actions_any_changed: ${{ steps.changed-files-yaml.outputs.actions_any_changed }}
       actions_all_changed_files: ${{ steps.changed-files-yaml.outputs.actions_all_changed_files}}
+      kubernetes_any_changed: ${{ steps.changed-files-yaml.outputs.kubernetes_any_changed }}
+      kubernetes_all_changed_files: ${{ steps.changed-files-yaml.outputs.kubernetes_all_changed_files}}
+      markdown_any_changed: ${{ steps.changed-files-yaml.outputs.markdown_any_changed }}
+      markdown_all_changed_files: ${{ steps.changed-files-yaml.outputs.markdown_all_changed_files}}
       renovate_any_changed: ${{ steps.changed-files-yaml.outputs.renovate_any_changed }}
       renovate_all_changed_files: ${{ steps.changed-files-yaml.outputs.renovate_all_changed_files}}
       yaml_any_changed: ${{ steps.changed-files-yaml.outputs.yaml_any_changed }}
       yaml_all_changed_files: ${{ steps.changed-files-yaml.outputs.yaml_all_changed_files}}
-      markdown_any_changed: ${{ steps.changed-files-yaml.outputs.markdown_any_changed }}
-      markdown_all_changed_files: ${{ steps.changed-files-yaml.outputs.markdown_all_changed_files}}
-      kubernetes_any_changed: ${{ steps.changed-files-yaml.outputs.kubernetes_any_changed }}
-      kubernetes_all_changed_files: ${{ steps.changed-files-yaml.outputs.kubernetes_all_changed_files}}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -91,7 +91,7 @@ jobs:
         changed_files="${{ github.event_name == 'pull_request' && needs.detect-changes.outputs.kubernetes_all_changed_files || '' }}"
         if [[ -n "$changed_files" ]]; then
           # Convert space-delimited string to a JSON array string
-          echo "$changed_files" | jq -R . | jq -s -c . > /tmp/files.json
+          echo "$changed_files" | tr ' ' '\n' | jq -R . | jq -s -c . > /tmp/files.json
           echo "files_json=$(cat /tmp/files.json)" >> $GITHUB_OUTPUT
         else
           echo "files_json=[]" >> $GITHUB_OUTPUT
