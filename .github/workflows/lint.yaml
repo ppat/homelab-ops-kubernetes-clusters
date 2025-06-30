@@ -165,7 +165,7 @@ jobs:
     - name: Validate Kubernetes Manifests
       uses: ppat/validate-kubernetes-manifests@94be4aae001773d995b604b978b13241ffe0760a # v0.0.2
       with:
-        files: "${{ github.event_name == 'pull_request' ? steps.prepare-pr-file-list.outputs.kustomization_files : steps.prepare-all-file-list.outputs.kustomization_files }}"
+        files: ${{ steps.prepare-pr-file-list.outputs.kustomization_files || steps.prepare-all-file-list.outputs.kustomization_files }}
         pkg-include: '["clusters/*"]'
         pkg-exclude: '["components/*",".archive/*"]'
         kubeconform-flags: '-skip=Secret,IPAddressPool'
