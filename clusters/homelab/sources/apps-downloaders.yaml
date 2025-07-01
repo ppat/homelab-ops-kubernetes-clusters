@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: apps-downloaders
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include components
+    !/components
+    # include the corresponding apps subsystems directory
+    !/apps/subsystems/downloaders
+  interval: 1m0s
+  ref:
+    tag: apps-downloaders-v0.1.29
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

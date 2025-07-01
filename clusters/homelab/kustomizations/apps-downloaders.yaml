@@ -1,0 +1,42 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-downloaders
+  namespace: flux-system
+spec:
+  components:
+  - ../../../components/sso
+  - ../../../components/db-backups
+  dependsOn:
+  - name: infra-security-extra
+    namespace: flux-system
+  - name: infra-storage-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  - name: infra-database-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./apps/subsystems/downloaders
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: apps-downloaders
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      db_name: downloaders-db
+      db_namespace: downloaders
+      db_storage_class: sc-longhorn-local-non-replicated
+      db_storage_size: 10Gi
+      media_writer_uid: "1044"
+      media_writer_gid: "65538"
+      secret_store: bitwarden-secret-manager-store
+      # see: https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-substitution-of-numbers-and-booleans
+      quote: '"'
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets

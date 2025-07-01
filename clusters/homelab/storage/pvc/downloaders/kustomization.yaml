@@ -1,0 +1,30 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- bazarr-data.yaml
+- lidarr-data.yaml
+- media.yaml
+- overseerr-data.yaml
+- prowlarr-data.yaml
+- radarr-data.yaml
+- recyclarr-data.yaml
+- sabnzbd-data.yaml
+- sonarr-data.yaml
+
+patches:
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/default: enabled
+        recurring-job-group.longhorn.io/snapshot-ops: enabled
+        recurring-job-group.longhorn.io/backup-ops: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: "(lidarr-data|overseerr-data|prowlarr-data|radarr-data|sabnzbd-data|sonarr-data)"

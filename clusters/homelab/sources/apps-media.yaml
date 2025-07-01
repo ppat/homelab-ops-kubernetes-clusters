@@ -1,0 +1,16 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: apps-media
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include the corresponding apps subsystems directory
+    !/apps/subsystems/media
+  interval: 1m0s
+  ref:
+    tag: apps-media-v0.0.21
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

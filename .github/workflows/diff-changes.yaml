@@ -78,7 +78,7 @@ jobs:
         live-branch: main
         path: clusters/${{ matrix.cluster }}
         resource: ${{ matrix.resource }}
-        sources: root
+        sources: root,root-secondary
         skip-secrets: true
         skip-crds: true
         debug: false

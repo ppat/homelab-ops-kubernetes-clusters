@@ -1,0 +1,36 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- home-assistant-data.yaml
+- piper-data.yaml
+- whisper-data.yaml
+
+patches:
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/default: enabled
+        recurring-job-group.longhorn.io/snapshot-ops: enabled
+        recurring-job-group.longhorn.io/backup-ops: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: home-assistant-data
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/default: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: '^wyoming-.+$'

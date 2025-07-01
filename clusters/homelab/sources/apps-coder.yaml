@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: apps-coder
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include components
+    !/components
+    # include the corresponding apps subsystems directory
+    !/apps/subsystems/coder
+  interval: 1m0s
+  ref:
+    tag: apps-coder-v0.0.20
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

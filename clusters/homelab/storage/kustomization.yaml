@@ -1,0 +1,21 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- pv/
+- pvc/
+
+patches:
+# yamllint disable-line rule:indentation
+- patch: |-
+    kind: irrelevant
+    metadata:
+      name: irrelevant
+      annotations:
+        kustomize.toolkit.fluxcd.io/prune: disabled
+  target:
+    kind: "(PersistentVolume|PersistentVolumeClaim|RecurringJob|StorageClass)"
+
+sortOptions:
+  order: fifo

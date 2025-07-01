@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: apps-misc
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include components
+    !/components
+    # include the corresponding apps subsystems directory
+    !/apps/subsystems/misc
+  interval: 1m0s
+  ref:
+    tag: apps-misc-v0.0.4
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
