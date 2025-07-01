@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: apps-home-automation
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include components
+    !/components
+    # include the corresponding apps subsystems directory
+    !/apps/subsystems/home-automation
+  interval: 1m0s
+  ref:
+    tag: apps-home-automation-v0.0.26
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama
+  namespace: ai
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 128Gi
+  storageClassName: sc-longhorn-local-non-replicated
+  volumeMode: Filesystem

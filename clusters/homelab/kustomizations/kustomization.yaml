@@ -4,6 +4,14 @@ kind: Kustomization
 
 resources:
 - root.yaml
+- apps-helm-repositories.yaml
+- apps-ai.yaml
+- apps-coder.yaml
+- apps-downloaders.yaml
+- apps-home-automation.yaml
+- apps-media.yaml
+- apps-misc.yaml
+- storage.yaml
 
 sortOptions:
   order: fifo

@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: apps-ai
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include components
+    !/components
+    # include the corresponding apps subsystems directory
+    !/apps/subsystems/ai
+  interval: 1m0s
+  ref:
+    tag: apps-ai-v0.2.15
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

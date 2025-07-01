@@ -1,0 +1,8 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- static-nfs-share-coder-rwx.yaml
+- static-nfs-share-media-rox.yaml
+- static-nfs-share-media-rwx.yaml

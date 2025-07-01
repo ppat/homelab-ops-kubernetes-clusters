@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-assistant-data
+  namespace: home-automation
+  labels:
+    app.kubernetes.io/name: home-assistant
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: sc-longhorn-replicated
+  resources:
+    requests:
+      storage: 2Gi
+  volumeMode: Filesystem
+  volumeName: pvc-4bd558db-dcd5-4e84-9035-632c83caf66c

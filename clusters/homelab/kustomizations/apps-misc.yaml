@@ -1,0 +1,28 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-misc
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./apps/subsystems/misc
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: apps-misc
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      cert_issuer: letsencrypt-production-issuer
+      secret_store: bitwarden-secret-manager-store
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
