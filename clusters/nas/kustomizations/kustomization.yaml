@@ -8,6 +8,8 @@ resources:
 - apps-bitwarden.yaml
 - apps-harbor.yaml
 - config-storage.yaml
+- policy-baseline-pss.yaml
+- policy-best-practices.yaml
 
 sortOptions:
   order: fifo
