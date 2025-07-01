@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: static-nfs-share-bitwarden-db-backups
+  annotations:
+    pv.kubernetes.io/provisioned-by: nfs.csi.k8s.io
+spec:
+  accessModes:
+  - ReadWriteMany
+  capacity:
+    storage: 1Gi
+  csi:
+    driver: nfs.csi.k8s.io
+    # volumeHandle format: {nfs-server-address}#{sub-dir-name}#{share-name}
+    # make sure this value is unique for every share in the cluster
+    volumeHandle: ${ipaddress_nfs}#volume1#kubernetes-bitwarden-database-backups
+    volumeAttributes:
+      server: ${ipaddress_nfs}
+      share: /volume1/kubernetes-bitwarden/database-backups
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: sc-nfs-share

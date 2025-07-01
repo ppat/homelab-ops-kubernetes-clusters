@@ -4,6 +4,9 @@ kind: Kustomization
 
 resources:
 - root.yaml
+- apps-helm-repositories.yaml
+- apps-bitwarden.yaml
+- apps-harbor.yaml
 
 sortOptions:
   order: fifo
