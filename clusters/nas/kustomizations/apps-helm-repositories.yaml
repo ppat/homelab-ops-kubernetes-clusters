@@ -2,13 +2,14 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: root-secondary
+  name: apps-helm-repositories
   namespace: flux-system
 spec:
   interval: 1m0s
-  path: ./clusters/nas
+  path: ./apps/helm-repositories
   prune: true
   sourceRef:
     kind: GitRepository
-    name: root-secondary
-    namespace: flux-system
+    name: apps-helm-repositories
+  timeout: 2m0s
+  wait: true

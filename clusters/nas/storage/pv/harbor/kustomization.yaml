@@ -1,0 +1,10 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- static-nfs-share-harbor-database.yaml
+- static-nfs-share-harbor-jobservice.yaml
+- static-nfs-share-harbor-redis.yaml
+- static-nfs-share-harbor-registry.yaml
+- static-nfs-share-harbor-trivy.yaml

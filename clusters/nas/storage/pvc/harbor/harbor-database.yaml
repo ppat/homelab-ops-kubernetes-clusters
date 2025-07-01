@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-database
+  namespace: harbor
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      # must match the value specified in PV
+      storage: 1Gi
+  storageClassName: sc-nfs-share
+  volumeName: static-nfs-share-harbor-database
