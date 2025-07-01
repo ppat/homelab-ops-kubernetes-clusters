@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: unifi-backups
+  namespace: unifi
+  labels:
+    app.kubernetes.io/name: unifi-network-application
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      # must match the value specified within the static-nfs-share-unifi-backups volume
+      storage: 1Gi
+  storageClassName: sc-nfs-share
+  volumeName: static-nfs-share-unifi-backups

@@ -1,0 +1,11 @@
+---
+apiVersion: longhorn.io/v1beta1
+kind: RecurringJob
+metadata:
+  name: weekly-filesystem-trim
+  namespace: longhorn-system
+spec:
+  task: filesystem-trim
+  cron: "0 3 * * 3"  # once a week @ 3am UTC on Wednesday (runs after the 2 snapshot cleanup jobs)
+  groups:
+  - default

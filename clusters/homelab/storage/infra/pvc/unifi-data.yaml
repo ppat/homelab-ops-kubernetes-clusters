@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: unifi-data
+  namespace: unifi
+  labels:
+    app.kubernetes.io/name: unifi-network-application
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: sc-longhorn-replicated
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 5Gi

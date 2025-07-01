@@ -1,0 +1,13 @@
+---
+apiVersion: longhorn.io/v1beta1
+kind: RecurringJob
+metadata:
+  name: weekly-snapshot-cleanup
+  namespace: longhorn-system
+spec:
+  task: snapshot-delete
+  concurrency: 1
+  cron: "0 1 * * 3"  # once a week on Wednesday at 1am UTC (before the filesystem trim @ 3am UTC)
+  groups:
+  - default
+  retain: 1

@@ -1,0 +1,16 @@
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-longhorn-local-non-replicated
+allowVolumeExpansion: true
+parameters:
+  fsType: ext4
+  staleReplicaTimeout: "2880"
+  # as per https://longhorn.io/docs/1.7.1/best-practices/#io-performance
+  dataLocality: "strict-local"
+  numberOfReplicas: "1"
+  recurringJobSelector: '[{"name":"default", "isGroup":true}]'
+provisioner: driver.longhorn.io
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
