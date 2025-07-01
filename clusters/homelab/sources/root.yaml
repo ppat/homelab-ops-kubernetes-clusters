@@ -10,6 +10,7 @@ spec:
     /*
     # include flux-root directory for this cluster
     !/clusters/homelab
+    !/policies
   interval: 1m0s
   ref:
     branch: main
