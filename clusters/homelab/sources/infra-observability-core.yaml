@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: infra-observability-core
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include components
+    !/components
+    # include the corresponding infrastructure subsystems directory
+    !/infrastructure/subsystems/observability-core
+  interval: 1m0s
+  ref:
+    tag: infra-observability-core-v0.9.1
+  url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

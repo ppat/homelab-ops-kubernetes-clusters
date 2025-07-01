@@ -1,0 +1,73 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-storage-core
+  namespace: flux-system
+spec:
+  components:
+  - ../../../components/oidc-credentials/minio
+  - ../../../components/sso
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/storage-core
+  postBuild:
+    substitute:
+      oidc_minio_app_name: minio-homelab
+      oidc_minio_clientid_key: oidc_miniohomelab_clientid
+      oidc_minio_clientsecret_key: oidc_miniohomelab_clientsecret
+      secret_store: bitwarden-secret-manager-store
+      minio_admin_username_key: cluster_homelab_minio_admin_username
+      minio_admin_password_key: cluster_homelab_minio_admin_password
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-storage-core
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: minio-release
+        namespace: minio
+      spec:
+        values:
+          persistence:
+            enabled: true
+            existingClaim: minio-data
+          securityContext:
+            fsGroup: 65539
+            fsGroupChangePolicy: "OnRootMismatch"
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: minio-release
+      namespace: minio
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: longhorn-release
+        namespace: longhorn-system
+      spec:
+        values:
+          persistence:
+            defaultClass: false
+          defaultSettings:
+            backupTarget: s3://nas-longhorn-backups@us-east-1/cluster-homelab/
+            backupTargetCredentialSecret: backup-target-credentials
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: longhorn-release
+      namespace: longhorn-system

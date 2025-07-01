@@ -1,0 +1,49 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-networking-extra
+  namespace: flux-system
+spec:
+  components:
+  - ../../../components/sso
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-storage-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/networking-extra
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-networking-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/6
+        value: {name: WEBPASSWORD, value: ""}
+    target:
+      kind: Deployment
+      name: pihole
+      namespace: dns
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      $patch: delete
+      kind: Deployment
+      metadata:
+        name: cloudflared-doh
+    target:
+      kind: Deployment
+      name: cloudflared-doh
+      namespace: dns
