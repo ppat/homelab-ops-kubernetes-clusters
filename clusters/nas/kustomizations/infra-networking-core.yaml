@@ -1,0 +1,40 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-networking-core
+  namespace: flux-system
+spec:
+  components:
+  - ../../../components/external-dns-provider/unifi
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/networking-core
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-networking-core
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      cert_issuer: letsencrypt-production-issuer
+      externaldns_txtowner_id: k8s-nas
+      externaldns_txtowner_prefix: k8s.nas.
+      secret_store: bitwarden-secret-manager-store
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |
+      # needed for supporting docker image pushes to harbor
+      - op: add
+        path: /spec/values/additionalArguments/-
+        value: --entryPoints.websecure.transport.respondingTimeouts.readTimeout=1800
+    target:
+      kind: HelmRelease
+      name: traefik-release
