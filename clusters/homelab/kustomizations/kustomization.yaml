@@ -27,6 +27,3 @@ resources:
 - config-storage.yaml
 - policy-baseline-pss.yaml
 - policy-best-practices.yaml
-
-sortOptions:
-  order: fifo
