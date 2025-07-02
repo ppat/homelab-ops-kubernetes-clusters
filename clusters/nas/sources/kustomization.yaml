@@ -4,6 +4,12 @@ kind: Kustomization
 
 resources:
 - root.yaml
+- infra-helm-repositories.yaml
+- infra-clusterops-core.yaml
+- infra-kubernetes-core.yaml
+- infra-networking-core.yaml
+- infra-security-core.yaml
+- infra-storage-core.yaml
 - apps-helm-repositories.yaml
 - apps-bitwarden.yaml
 - apps-harbor.yaml

@@ -8,9 +8,9 @@ spec:
   dependsOn:
   - name: infra-security-core
     namespace: flux-system
-  - name: infra-networking-core
-    namespace: flux-system
   - name: infra-storage-csi-driver-nfs
+    namespace: flux-system
+  - name: config-storage
     namespace: flux-system
   interval: 15m0s
   path: ./apps/subsystems/bitwarden
