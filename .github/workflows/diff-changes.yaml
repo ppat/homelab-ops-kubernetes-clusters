@@ -45,6 +45,7 @@ jobs:
 
     - name: Extract cluster names
       id: extract-clusters
+      shell: bash
       # yamllint disable-line rule:indentation
       run: |
         if [[ '${{ steps.changed-dirs.outputs.all_changed_files }}' == '[".github/workflows"]' ]]; then
