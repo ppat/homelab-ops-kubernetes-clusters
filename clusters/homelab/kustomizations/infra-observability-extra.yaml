@@ -10,13 +10,6 @@ spec:
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/observability-extra
-  postBuild:
-    substitute:
-      syslogng_loki_url: "loki-write.logging.svc.cluster.local:9095"
-      secret_store: bitwarden-secret-manager-store
-    substituteFrom:
-    - kind: Secret
-      name: cluster-secrets
   prune: true
   sourceRef:
     kind: GitRepository
@@ -24,3 +17,10 @@ spec:
     namespace: flux-system
   timeout: 2m0s
   wait: true
+  postBuild:
+    substitute:
+      syslogng_loki_url: "loki-write.logging.svc.cluster.local:9095"
+      secret_store: bitwarden-secret-manager-store
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
