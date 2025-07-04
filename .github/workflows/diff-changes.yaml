@@ -24,7 +24,6 @@ jobs:
     timeout-minutes: 2
     outputs:
       affected_clusters: ${{ steps.extract-clusters.outputs.clusters }}
-      has-changes: ${{ steps.changed-dirs.outputs.any_changed }}
     steps:
     - name: Checkout
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -50,7 +49,7 @@ jobs:
       run: |
         if [[ '${{ steps.changed-dirs.outputs.all_changed_files }}' == '[".github/workflows"]' ]]; then
           echo "Testing all clusters for flux-local version upgrade..."
-          echo "clusters=["homelab","nas"]" >> $GITHUB_OUTPUT
+          echo 'clusters=["homelab","nas"]' >> $GITHUB_OUTPUT
         else
           echo "Testing changed clusters..."
           # Extract cluster names from directory paths like "clusters/homelab" -> "homelab"
@@ -64,7 +63,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [detect-changes]
-    if: ${{ needs.detect-changes.outputs.has-changes == 'true' }}
+    if: ${{ needs.detect-changes.outputs.affected_clusters != '[]' }}
     strategy:
       fail-fast: false
       matrix:
