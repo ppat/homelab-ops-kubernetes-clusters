@@ -47,13 +47,16 @@ jobs:
       id: extract-clusters
       # yamllint disable-line rule:indentation
       run: |
-        # Extract cluster names from directory paths like "clusters/homelab" -> "homelab"
-        set -x
-        mapfile -t clusters < <(echo '${{ steps.changed-dirs.outputs.all_changed_files }}' | jq -r 'map(select(startswith("clusters/")) | split("/")[1]) | unique | .[]')
-
-        # Convert arrays to JSON using printf and jq
-        printf '%s\n' "${clusters[@]}" | jq -R . | jq -s -c . > /tmp/clusters.json
-
+        if [[ '${{ steps.changed-dirs.outputs.all_changed_files }}' == '[".github/workflows"]' ]]; tj-actions/changed-files
+          echo "Testing all clusters for flux-local version upgrade..."
+          clusters='["homelab","nas"]'
+        else
+          echo "Testing changed clusters..."
+          # Extract cluster names from directory paths like "clusters/homelab" -> "homelab"
+          mapfile -t clusters < <(echo '${{ steps.changed-dirs.outputs.all_changed_files }}' | jq -r 'map(select(startswith("clusters/")) | split("/")[1]) | unique | .[]')
+          # Convert arrays to JSON using printf and jq
+          printf '%s\n' "${clusters[@]}" | jq -R . | jq -s -c . > /tmp/clusters.json
+        fi
         echo "clusters=$(cat /tmp/clusters.json)" >> $GITHUB_OUTPUT
 
   diff:
