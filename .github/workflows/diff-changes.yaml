@@ -35,7 +35,9 @@ jobs:
       id: changed-dirs
       uses: tj-actions/changed-files@2f7c5bfce28377bc069a65ba478de0a74aa0ca32 # v46
       with:
-        files: 'clusters/**/*.yaml'
+        files: |
+          .github/workflows/diff-changes.yaml
+          clusters/**/*.yaml
         dir_names: true
         dir_names_max_depth: 2
         dir_names_exclude_current_dir: true
@@ -46,6 +48,7 @@ jobs:
       # yamllint disable-line rule:indentation
       run: |
         # Extract cluster names from directory paths like "clusters/homelab" -> "homelab"
+        set -x
         mapfile -t clusters < <(echo '${{ steps.changed-dirs.outputs.all_changed_files }}' | jq -r 'map(select(startswith("clusters/")) | split("/")[1]) | unique | .[]')
 
         # Convert arrays to JSON using printf and jq
