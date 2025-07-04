@@ -16,6 +16,13 @@ spec:
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/security-extra
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-security-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
   postBuild:
     substitute:
       cert_issuer: letsencrypt-production-issuer
@@ -30,10 +37,41 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: infra-security-extra
-    namespace: flux-system
-  timeout: 2m0s
-  wait: true
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: add
+        path: /spec/backup/barmanObjectStore/serverName
+        value: 2025.07.03
+      - op: add
+        path: /spec/bootstrap/recovery
+        value:
+          database: authentik
+          owner: authentik
+          source: origin
+      - op: remove
+        path: /spec/bootstrap/initdb
+      - op: add
+        path: /spec/externalClusters
+        value:
+          - name: origin
+            barmanObjectStore:
+              data:
+                compression: snappy
+              destinationPath: s3://nas-cloudnativepg-backups/authentik-db
+              endpointURL: https://s3.nas.${domain_name}
+              serverName: authentik-db
+              s3Credentials:
+                accessKeyId:
+                  name: authentik-db-backup-credentials
+                  key: s3_accesskeyid
+                secretAccessKey:
+                  name: authentik-db-backup-credentials
+                  key: s3_secretaccesskey
+              wal:
+                compression: snappy
+                maxParallel: 8
+    target:
+      kind: Cluster
+      name: authentik-db
+      namespace: authentik

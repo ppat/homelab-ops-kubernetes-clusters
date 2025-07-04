@@ -41,3 +41,41 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: add
+        path: /spec/backup/barmanObjectStore/serverName
+        value: 2025.07.03
+      - op: add
+        path: /spec/bootstrap/recovery
+        value:
+          database: default
+          owner: downloader
+          source: origin
+      - op: remove
+        path: /spec/bootstrap/initdb
+      - op: add
+        path: /spec/externalClusters
+        value:
+          - name: origin
+            barmanObjectStore:
+              data:
+                compression: snappy
+              destinationPath: s3://nas-cloudnativepg-backups/downloaders-db
+              endpointURL: https://s3.nas.${domain_name}
+              serverName: downloaders-db
+              s3Credentials:
+                accessKeyId:
+                  name: downloaders-db-backup-credentials
+                  key: s3_accesskeyid
+                secretAccessKey:
+                  name: downloaders-db-backup-credentials
+                  key: s3_secretaccesskey
+              wal:
+                compression: snappy
+                maxParallel: 8
+    target:
+      kind: Cluster
+      name: downloaders-db
+      namespace: downloaders

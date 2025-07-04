@@ -13,6 +13,13 @@ spec:
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/storage-core
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-storage-core
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
   postBuild:
     substitute:
       oidc_minio_app_name: minio-homelab
@@ -24,13 +31,6 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: infra-storage-core
-    namespace: flux-system
-  timeout: 2m0s
-  wait: true
   patches:
   # yamllint disable-line rule:indentation
   - patch: |-

@@ -12,10 +12,6 @@ spec:
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/clusterops-extra
-  postBuild:
-    substituteFrom:
-    - kind: Secret
-      name: cluster-secrets
   prune: true
   sourceRef:
     kind: GitRepository
@@ -23,3 +19,7 @@ spec:
     namespace: flux-system
   timeout: 2m0s
   wait: true
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets

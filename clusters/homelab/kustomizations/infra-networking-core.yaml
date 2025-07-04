@@ -17,6 +17,13 @@ spec:
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/networking-core
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-networking-core
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
   postBuild:
     substitute:
       cert_issuer: letsencrypt-production-issuer
@@ -26,10 +33,3 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: infra-networking-core
-    namespace: flux-system
-  timeout: 2m0s
-  wait: true
