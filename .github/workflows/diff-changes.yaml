@@ -47,7 +47,7 @@ jobs:
       id: extract-clusters
       # yamllint disable-line rule:indentation
       run: |
-        if [[ '${{ steps.changed-dirs.outputs.all_changed_files }}' == '[".github/workflows"]' ]]; tj-actions/changed-files
+        if [[ '${{ steps.changed-dirs.outputs.all_changed_files }}' == '[".github/workflows"]' ]]; then
           echo "Testing all clusters for flux-local version upgrade..."
           clusters='["homelab","nas"]'
         else
