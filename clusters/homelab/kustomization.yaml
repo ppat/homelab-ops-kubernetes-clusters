@@ -7,5 +7,16 @@ resources:
 - kustomizations/
 - cluster/
 
+patches:
+# yamllint disable-line rule:indentation
+- patch: |-
+    kind: irrelevant
+    metadata:
+      name: irrelevant
+      annotations:
+        kustomize.toolkit.fluxcd.io/prune: disabled
+  target:
+    kind: "(GitRepository|Kustomization)"
+
 sortOptions:
   order: fifo
