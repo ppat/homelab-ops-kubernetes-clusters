@@ -73,3 +73,7 @@ spec:
               wal:
                 compression: snappy
                 maxParallel: 8
+    target:
+      kind: Cluster
+      name: coder-db
+      namespace: coder
