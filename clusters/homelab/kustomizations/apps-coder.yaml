@@ -9,6 +9,7 @@ spec:
   - ../../../components/oidc-credentials/coder
   - ../../../components/sso
   - ../../../components/db-backups
+  - ../../../components/db-restore
   dependsOn:
   - name: infra-security-extra
     namespace: flux-system
@@ -32,6 +33,10 @@ spec:
       cert_issuer: letsencrypt-production-issuer
       db_name: coder-db
       db_namespace: coder
+      db_restore_database: coder
+      db_restore_owner: coder
+      db_server_name_backup: 2025.07.03
+      db_server_name_restore: downloaders-db
       db_storage_size: 10Gi
       db_storage_class: sc-longhorn-local-non-replicated
       oidc_email_domain: wellcapitalized.net
@@ -39,41 +44,3 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
-  patches:
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      - op: add
-        path: /spec/backup/barmanObjectStore/serverName
-        value: 2025.07.03
-      - op: add
-        path: /spec/bootstrap/recovery
-        value:
-          database: coder
-          owner: coder
-          source: origin
-      - op: remove
-        path: /spec/bootstrap/initdb
-      - op: add
-        path: /spec/externalClusters
-        value:
-          - name: origin
-            barmanObjectStore:
-              data:
-                compression: snappy
-              destinationPath: s3://nas-cloudnativepg-backups/coder-db
-              endpointURL: https://s3.nas.example.com
-              serverName: coder-db
-              s3Credentials:
-                accessKeyId:
-                  name: coder-db-backup-credentials
-                  key: s3_accesskeyid
-                secretAccessKey:
-                  name: coder-db-backup-credentials
-                  key: s3_secretaccesskey
-              wal:
-                compression: snappy
-                maxParallel: 8
-    target:
-      kind: Cluster
-      name: coder-db
-      namespace: coder
