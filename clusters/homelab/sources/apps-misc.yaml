@@ -14,5 +14,5 @@ spec:
     !/apps/subsystems/misc
   interval: 1m0s
   ref:
-    tag: apps-misc-v0.0.4
+    tag: apps-misc-v0.0.5
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
