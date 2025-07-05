@@ -21,19 +21,3 @@ spec:
     namespace: flux-system
   timeout: 2m0s
   wait: true
-  postBuild:
-    substitute:
-      gpu_shared_across_max_pods: "3"
-  patches:
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      - op: add
-        path: /spec/values/deschedulerPolicy/profiles/0/pluginConfig/6/args/evictableNamespaces/exclude/-
-        value: pihole
-      - op: add
-        path: /spec/values/deschedulerPolicy/profiles/0/pluginConfig/6/args/evictableNamespaces/exclude/-
-        value: downloaders
-    target:
-      kind: HelmRelease
-      name: descheduler-release
-      namespace: kube-system
