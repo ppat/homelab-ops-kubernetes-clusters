@@ -8,6 +8,7 @@ spec:
   components:
   - ../../../components/sso
   - ../../../components/db-backups
+  - ../../../components/db-restore
   dependsOn:
   - name: infra-security-extra
     namespace: flux-system
@@ -30,48 +31,13 @@ spec:
     substitute:
       db_name: home-automation-db
       db_namespace: home-automation
+      db_restore_database: home-assistant
+      db_restore_owner: home-assistant
+      db_server_name_backup: 2025.07.03
+      db_server_name_restore: home-automation-db
       db_storage_class: sc-longhorn-local-non-replicated
       db_storage_size: 10Gi
       secret_store: bitwarden-secret-manager-store
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
-  # yamllint disable-line rule:indentation
-  patches:
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      - op: add
-        path: /spec/backup/barmanObjectStore/serverName
-        value: 2025.07.03
-      - op: add
-        path: /spec/bootstrap/recovery
-        value:
-          database: home-assistant
-          owner: home-assistant
-          source: origin
-      - op: remove
-        path: /spec/bootstrap/initdb
-      - op: add
-        path: /spec/externalClusters
-        value:
-          - name: origin
-            barmanObjectStore:
-              data:
-                compression: snappy
-              destinationPath: s3://nas-cloudnativepg-backups/home-automation-db
-              endpointURL: https://s3.nas.example.com
-              serverName: home-automation-db
-              s3Credentials:
-                accessKeyId:
-                  name: home-automation-db-backup-credentials
-                  key: s3_accesskeyid
-                secretAccessKey:
-                  name: home-automation-db-backup-credentials
-                  key: s3_secretaccesskey
-              wal:
-                compression: snappy
-                maxParallel: 8
-    target:
-      kind: Cluster
-      name: home-automation-db
-      namespace: home-automation
