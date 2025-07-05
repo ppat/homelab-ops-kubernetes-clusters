@@ -110,7 +110,7 @@ jobs:
         echo ${external_sources} | tr ' ' '\n' | pr -t -o 4
         echo " "
         echo "Transforming into concatenated source map..."
-        ext_src_list=$(for src in ${external_sources}; do echo "${src}=../modules"; done | paste -sd ',' -)
+        ext_src_list=$(for src in ${external_sources}; do echo "${src}=/github/workspace/modules"; done | paste -sd ',' -)
         echo "sources=${ext_src_list}" >> $GITHUB_OUTPUT
         echo ${ext_src_list} | pr -t -o 4
         echo
@@ -124,8 +124,8 @@ jobs:
         args: >-
           diff ${{ matrix.resource }}
           --unified 6
-          --path ./pull/clusters/${{ matrix.cluster }}
-          --path-orig ./default/clusters/${{ matrix.cluster }}
+          --path /github/workspace/pull/clusters/${{ matrix.cluster }}
+          --path-orig /github/workspace/default/clusters/${{ matrix.cluster }}
           --skip-crds
           --skip-secrets
           --strip-attrs "helm.sh/chart,checksum/config,app.kubernetes.io/version,chart"
