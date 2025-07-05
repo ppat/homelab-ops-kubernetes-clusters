@@ -21,3 +21,6 @@ spec:
     namespace: flux-system
   timeout: 2m0s
   wait: true
+  postBuild:
+    substitute:
+      gpu_shared_across_max_pods: "1"
