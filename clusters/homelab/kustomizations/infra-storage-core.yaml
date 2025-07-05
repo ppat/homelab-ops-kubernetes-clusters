@@ -66,6 +66,7 @@ spec:
           defaultSettings:
             backupTarget: s3://nas-longhorn-backups@us-east-1/cluster-homelab/
             backupTargetCredentialSecret: backup-target-credentials
+            defaultLonghornStaticStorageClass: sc-longhorn-replicated
     target:
       group: helm.toolkit.fluxcd.io
       kind: HelmRelease
