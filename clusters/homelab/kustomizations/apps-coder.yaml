@@ -61,7 +61,7 @@ spec:
               data:
                 compression: snappy
               destinationPath: s3://nas-cloudnativepg-backups/coder-db
-              endpointURL: https://s3.nas.${domain_name}
+              endpointURL: https://s3.nas.example.com
               serverName: coder-db
               s3Credentials:
                 accessKeyId:

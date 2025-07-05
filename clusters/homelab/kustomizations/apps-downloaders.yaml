@@ -63,7 +63,7 @@ spec:
               data:
                 compression: snappy
               destinationPath: s3://nas-cloudnativepg-backups/downloaders-db
-              endpointURL: https://s3.nas.${domain_name}
+              endpointURL: https://s3.nas.example.com
               serverName: downloaders-db
               s3Credentials:
                 accessKeyId:

@@ -37,6 +37,7 @@ jobs:
         files: |
           .github/workflows/diff-changes.yaml
           clusters/**/*.yaml
+          policies/**/*.yaml
         dir_names: true
         dir_names_max_depth: 2
         dir_names_exclude_current_dir: true
@@ -77,18 +78,64 @@ jobs:
         # renovate: datasource=github-releases depName=fluxcd/flux2
         version: "v2.6.3"
 
-    - name: Compute diffs
-      uses: allenporter/flux-local/action/diff@3a92449cc98cc0f8debb9a608a264f533967b92b # 7.5.4
-      id: diff
-      continue-on-error: true
+    - name: Checkout modules repository
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
-        live-branch: main
-        path: clusters/${{ matrix.cluster }}
-        resource: ${{ matrix.resource }}
-        sources: root
-        skip-secrets: true
-        skip-crds: true
-        debug: false
+        fetch-depth: 1
+        path: modules
+        persist-credentials: false
+        repository: ppat/homelab-ops-kubernetes-apps
+
+    - name: Checkout pull request branch
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      with:
+        path: pull
+        persist-credentials: false
+
+    - name: Checkout default branch
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      with:
+        path: default
+        persist-credentials: false
+        ref: "${{ github.event.repository.default_branch }}"
+
+    - name: Detect sources
+      id: detect-sources
+      shell: bash
+      working-directory: ./pull
+      # yamllint disable-line rule:indentation
+      run: |
+        echo "Detecting external sources..."
+        external_sources=$(grep -rl 'apiVersion: source.toolkit.fluxcd.io' clusters/homelab/ | xargs -n1 yq '.metadata.name' | grep -v '^root' | sort | uniq)
+        echo ${external_sources} | tr ' ' '\n' | pr -t -o 4
+        echo " "
+        echo "Transforming into concatenated source map..."
+        ext_src_list=$(for src in ${external_sources}; do echo "${src}=/github/workspace/modules"; done | paste -sd ',' -)
+        echo "sources=${ext_src_list}" >> $GITHUB_OUTPUT
+        echo ${ext_src_list} | tr ',' '\n' | pr -t -o 4
+
+    - name: Run flux-local diff
+      uses: docker://ghcr.io/allenporter/flux-local:v7.5.4
+      with:
+        args: >-
+          diff ${{ matrix.resource }}
+          --unified 6
+          --path /github/workspace/pull/clusters/${{ matrix.cluster }}
+          --path-orig /github/workspace/default/clusters/${{ matrix.cluster }}
+          --skip-crds
+          --skip-secrets
+          --strip-attrs "helm.sh/chart,checksum/config,app.kubernetes.io/version,chart"
+          --limit-bytes 10000
+          --all-namespaces
+          --sources "root=./,${{ steps.detect-sources.outputs.sources }}"
+          --output-file diff.patch
+
+    - name: Generate Diff
+      id: diff
+      run: |
+        echo 'diff<<EOF' >> $GITHUB_OUTPUT
+        cat diff.patch >> $GITHUB_OUTPUT
+        echo 'EOF' >> $GITHUB_OUTPUT
 
     - name: Add PR comment w/ diff
       uses: mshick/add-pr-comment@b8f338c590a895d50bcbfa6c5859251edc8952fc # v2
