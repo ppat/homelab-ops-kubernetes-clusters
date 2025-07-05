@@ -7,6 +7,7 @@ metadata:
 spec:
   components:
   - ../../../components/db-backups
+  - ../../../components/db-restore
   dependsOn:
   - name: infra-security-core
     namespace: flux-system
@@ -29,6 +30,10 @@ spec:
       db_name: authentik-db
       db_namespace: authentik
       db_replicas: "3"
+      db_restore_database: authentik
+      db_restore_owner: authentik
+      db_server_name_backup: 2025.07.03
+      db_server_name_restore: authentik-db
       db_storage_class: sc-longhorn-local-non-replicated
       db_storage_size: 20Gi
       redis_storage_class: sc-longhorn-replicated
@@ -37,41 +42,3 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
-  patches:
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      - op: add
-        path: /spec/backup/barmanObjectStore/serverName
-        value: 2025.07.03
-      - op: add
-        path: /spec/bootstrap/recovery
-        value:
-          database: authentik
-          owner: authentik
-          source: origin
-      - op: remove
-        path: /spec/bootstrap/initdb
-      - op: add
-        path: /spec/externalClusters
-        value:
-          - name: origin
-            barmanObjectStore:
-              data:
-                compression: snappy
-              destinationPath: s3://nas-cloudnativepg-backups/authentik-db
-              endpointURL: https://s3.nas.example.com
-              serverName: authentik-db
-              s3Credentials:
-                accessKeyId:
-                  name: authentik-db-backup-credentials
-                  key: s3_accesskeyid
-                secretAccessKey:
-                  name: authentik-db-backup-credentials
-                  key: s3_secretaccesskey
-              wal:
-                compression: snappy
-                maxParallel: 8
-    target:
-      kind: Cluster
-      name: authentik-db
-      namespace: authentik
