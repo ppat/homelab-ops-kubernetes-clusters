@@ -36,18 +36,6 @@ spec:
       - op: add
         path: /spec/template/spec/volumes/1/emptyDir/sizeLimit
         value: 10Gi
-      - op: add
-        path: /spec/template/spec/affinity
-        value:
-          nodeAffinity:
-            preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 1
-              preference:
-                matchExpressions:
-                - key: kubernetes.io/hostname
-                  operator: In
-                  values:
-                  - "minisforum-nab9-1"
     target:
       kind: Deployment
       name: plex
