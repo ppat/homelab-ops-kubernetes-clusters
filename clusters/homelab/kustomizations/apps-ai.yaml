@@ -48,7 +48,6 @@ spec:
             cpu: 4000m
           limits:
             memory: 32Gi
-            cpu: 8000m
     target:
       kind: HelmRelease
       name: ollama-release
