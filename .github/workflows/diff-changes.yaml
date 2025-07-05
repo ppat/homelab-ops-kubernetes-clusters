@@ -112,11 +112,7 @@ jobs:
         echo "Transforming into concatenated source map..."
         ext_src_list=$(for src in ${external_sources}; do echo "${src}=/github/workspace/modules"; done | paste -sd ',' -)
         echo "sources=${ext_src_list}" >> $GITHUB_OUTPUT
-        echo ${ext_src_list} | pr -t -o 4
-        echo
-        pwd
-        echo ${{ github.workspace }}
-        ls -al ${{ github.workspace }}/
+        echo ${ext_src_list} | tr ',' '\n' | pr -t -o 4
 
     - name: Run flux-local diff
       uses: docker://ghcr.io/allenporter/flux-local:v7.5.4
