@@ -36,7 +36,7 @@ spec:
       db_restore_database: coder
       db_restore_owner: coder
       db_server_name_backup: 2025.07.03
-      db_server_name_restore: downloaders-db
+      db_server_name_restore: coder-db
       db_storage_size: 10Gi
       db_storage_class: sc-longhorn-local-non-replicated
       oidc_email_domain: wellcapitalized.net
