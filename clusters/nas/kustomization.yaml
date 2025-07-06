@@ -17,6 +17,13 @@ patches:
         kustomize.toolkit.fluxcd.io/prune: disabled
   target:
     kind: "(GitRepository|Kustomization)"
+# yamllint disable-line rule:indentation
+- patch: |-
+    - op: replace
+      path: /spec/prune
+      value: false
+  target:
+    kind: Kustomization
 
 sortOptions:
   order: fifo
