@@ -24,3 +24,16 @@ spec:
   postBuild:
     substitute:
       gpu_shared_across_max_pods: "1"
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: add
+        path: /spec/values/deschedulerPolicy/profiles/0/pluginConfig/6/args/evictableNamespaces/exclude/-
+        value: dns
+      - op: add
+        path: /spec/values/deschedulerPolicy/profiles/0/pluginConfig/6/args/evictableNamespaces/exclude/-
+        value: coder
+    target:
+      kind: HelmRelease
+      name: descheduler-release
+      namespace: kube-system
