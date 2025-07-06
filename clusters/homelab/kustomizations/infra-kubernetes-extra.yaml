@@ -29,10 +29,7 @@ spec:
   - patch: |-
       - op: add
         path: /spec/values/deschedulerPolicy/profiles/0/pluginConfig/6/args/evictableNamespaces/exclude/-
-        value: dns
-      - op: add
-        path: /spec/values/deschedulerPolicy/profiles/0/pluginConfig/6/args/evictableNamespaces/exclude/-
-        value: coder
+        value: downloaders
     target:
       kind: HelmRelease
       name: descheduler-release
