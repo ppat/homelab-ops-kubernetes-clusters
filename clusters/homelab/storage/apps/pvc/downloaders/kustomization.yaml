@@ -27,4 +27,4 @@ patches:
         recurring-job-group.longhorn.io/backup-ops: enabled
   target:
     kind: PersistentVolumeClaim
-    name: "(lidarr-data|overseerr-data|prowlarr-data|radarr-data|sabnzbd-data|sonarr-data)"
+    name: "(bazarr-data|lidarr-data|overseerr-data|prowlarr-data|radarr-data|recyclarr-data|sabnzbd-data|sonarr-data)"
