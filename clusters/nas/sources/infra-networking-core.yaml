@@ -14,5 +14,5 @@ spec:
     !/infrastructure/subsystems/networking-core
   interval: 1m0s
   ref:
-    tag: infra-networking-core-v0.6.6
+    tag: infra-networking-core-v0.6.7
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
