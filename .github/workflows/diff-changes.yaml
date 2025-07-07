@@ -106,7 +106,7 @@ jobs:
       # yamllint disable-line rule:indentation
       run: |
         echo "Detecting external sources..."
-        external_sources=$(grep -rl 'apiVersion: source.toolkit.fluxcd.io' clusters/homelab/ | xargs -n1 yq '.metadata.name' | grep -v '^root' | sort | uniq)
+        external_sources=$(grep -rl 'apiVersion: source.toolkit.fluxcd.io' clusters/${{ matrix.cluster }}/ | xargs -n1 yq '.metadata.name' | grep -v '^root' | sort | uniq)
         echo ${external_sources} | tr ' ' '\n' | pr -t -o 4
         echo " "
         echo "Transforming into concatenated source map..."
