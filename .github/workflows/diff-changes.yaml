@@ -72,47 +72,63 @@ jobs:
         resource: [helmrelease, kustomization]
 
     steps:
-    - name: Setup flux
-      uses: fluxcd/flux2/action@bda4c8187e436462be0d072e728b67afa215c593 # v2.6.3
-      with:
-        # renovate: datasource=github-releases depName=fluxcd/flux2
-        version: "v2.6.3"
-
     - name: Checkout modules repository
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
-        fetch-depth: 1
+        fetch-depth: 0
         path: modules
         persist-credentials: false
         repository: ppat/homelab-ops-kubernetes-apps
 
-    - name: Checkout pull request branch
+    - name: Checkout after branch
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
-        path: pull
+        path: after
         persist-credentials: false
 
-    - name: Checkout default branch
+    - name: Checkout before branch
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
-        path: default
+        path: before
         persist-credentials: false
         ref: "${{ github.event.repository.default_branch }}"
 
-    - name: Detect sources
-      id: detect-sources
+    - name: Prepare external sources [after]
+      id: prepare-after-sources
+      env:
+        KUSTOMIZATION_DIR: "${{ github.workspace }}/after/clusters/${{ matrix.cluster }}/kustomizations"
+        SOURCES_DIR: "${{ github.workspace }}/after/clusters/${{ matrix.cluster }}/sources"
+        MODULES_DIR: "${{ github.workspace }}/modules"
+        DESTINATION_DIR: "${{ github.workspace }}/after"
+        OUTPUT_NAME: "after_sources"
       shell: bash
-      working-directory: ./pull
+      run: ${{ github.workspace }}/after/.github/scripts/prepare-sources.sh
+
+    - name: Prepare external sources [before]
+      id: prepare-before-sources
+      env:
+        KUSTOMIZATION_DIR: "${{ github.workspace }}/before/clusters/${{ matrix.cluster }}/kustomizations"
+        SOURCES_DIR: "${{ github.workspace }}/before/clusters/${{ matrix.cluster }}/sources"
+        MODULES_DIR: "${{ github.workspace }}/modules"
+        DESTINATION_DIR: "${{ github.workspace }}/before"
+        OUTPUT_NAME: "before_sources"
+      shell: bash
+      run: ${{ github.workspace }}/after/.github/scripts/prepare-sources.sh
+
+    - name: Combine external sources [before + after]
+      id: combine-sources
+      env:
+        AFTER_SOURCES: ${{ steps.prepare-after-sources.outputs.after_sources }}
+        BEFORE_SOURCES: ${{ steps.prepare-before-sources.outputs.before_sources }}
+      shell: bash
       # yamllint disable-line rule:indentation
       run: |
-        echo "Detecting external sources..."
-        external_sources=$(grep -rl 'apiVersion: source.toolkit.fluxcd.io' clusters/${{ matrix.cluster }}/ | xargs -n1 yq '.metadata.name' | grep -v '^root' | sort | uniq)
-        echo ${external_sources} | tr ' ' '\n' | pr -t -o 4
-        echo " "
-        echo "Transforming into concatenated source map..."
-        ext_src_list=$(for src in ${external_sources}; do echo "${src}=/github/workspace/modules"; done | paste -sd ',' -)
-        echo "sources=${ext_src_list}" >> $GITHUB_OUTPUT
-        echo ${ext_src_list} | tr ',' '\n' | pr -t -o 4
+        echo "Combining sources..."
+        echo "${AFTER_SOURCES}" | tr ',' '\n' > /tmp/combined_sources
+        echo "${BEFORE_SOURCES}" | tr ',' '\n' >> /tmp/combined_sources
+        combined_sources=$(cat /tmp/combined_sources | sort | uniq | paste -sd ',' -)
+        echo "combined_sources=${combined_sources}" >> $GITHUB_OUTPUT
+        echo ${combined_sources} | pr -t -o 4
 
     - name: Run flux-local diff
       uses: docker://ghcr.io/allenporter/flux-local:v7.5.4@sha256:72dbdeabca1eb4d1a053c78dfa0d1d8e2a4c4aee2c8d3938db1a382d22b0a6f9
@@ -120,14 +136,14 @@ jobs:
         args: >-
           diff ${{ matrix.resource }}
           --unified 6
-          --path /github/workspace/pull/clusters/${{ matrix.cluster }}
-          --path-orig /github/workspace/default/clusters/${{ matrix.cluster }}
+          --path /github/workspace/after/clusters/${{ matrix.cluster }}
+          --path-orig /github/workspace/before/clusters/${{ matrix.cluster }}
           --skip-crds
           --skip-secrets
           --strip-attrs "helm.sh/chart,checksum/config,app.kubernetes.io/version,chart"
           --limit-bytes 10000
           --all-namespaces
-          --sources "root=./,${{ steps.detect-sources.outputs.sources }}"
+          --sources "root,${{ steps.combine-sources.outputs.combined_sources }}"
           --output-file diff.patch
 
     - name: Generate Diff
