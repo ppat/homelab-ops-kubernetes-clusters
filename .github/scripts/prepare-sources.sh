@@ -78,8 +78,6 @@ main() {
   echo "Copied files..."
   show_file_counts | column -t
   echo " "
-  find ${DESTINATION_DIR}/components/ -type f
-  echo " "
 
   echo "Capturing utilized external sources..."
   local utilized=$(cat "${copied_ks_sources}" | grep -v root | paste -sd ',' -)

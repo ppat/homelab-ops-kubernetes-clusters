@@ -26,6 +26,8 @@ jobs:
       markdown_all_changed_files: ${{ steps.changed-files-yaml.outputs.markdown_all_changed_files}}
       renovate_any_changed: ${{ steps.changed-files-yaml.outputs.renovate_any_changed }}
       renovate_all_changed_files: ${{ steps.changed-files-yaml.outputs.renovate_all_changed_files}}
+      shellscripts_any_changed: ${{ steps.changed-files-yaml.outputs.shellscripts_any_changed }}
+      shellscripts_all_changed_files: ${{ steps.changed-files-yaml.outputs.shellscripts_all_changed_files}}
       yaml_any_changed: ${{ steps.changed-files-yaml.outputs.yaml_any_changed }}
       yaml_all_changed_files: ${{ steps.changed-files-yaml.outputs.yaml_all_changed_files}}
     runs-on: ubuntu-24.04
@@ -42,7 +44,7 @@ jobs:
       with:
         files_yaml: |
           actions:
-          - .github/workflows/**
+          - .github/workflows/**.yaml
           kubernetes:
           - 'clusters/**/*.yaml'
           - 'ci/**/*.yaml'
@@ -53,6 +55,8 @@ jobs:
           renovate:
           - .github/renovate.json
           - .github/renovate/**
+          shellscripts:
+          - '**.sh'
           yaml:
           - '**.yaml'
 
@@ -129,6 +133,14 @@ jobs:
     with:
       git_ref: ${{ github.head_ref || github.ref }}
       files: ${{ github.event_name != 'pull_request' && 'ALL' || needs.detect-changes.outputs.renovate_all_changed_files }}
+
+  shellcheck:
+    needs: [detect-changes]
+    if: ${{ github.event_name != 'pull_request' || needs.detect-changes.outputs.shellscripts_any_changed == 'true' }}
+    uses: ppat/github-workflows/.github/workflows/lint-shellcheck.yaml@dc55978a6b8efbc82d89b78caa1f41647a02da3c # v0.1.1
+    with:
+      git_ref: ${{ github.head_ref || github.ref }}
+      files: ${{ github.event_name != 'pull_request' && 'ALL' || needs.detect-changes.outputs.shellscripts_all_changed_files }}
 
   yaml:
     needs: [detect-changes]

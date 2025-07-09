@@ -102,7 +102,7 @@ jobs:
         DESTINATION_DIR: "${{ github.workspace }}/after"
         OUTPUT_NAME: "after_sources"
       shell: bash
-      run: ${{ github.workspace }}/after/.github/workflows/scripts/prepare-sources.sh
+      run: ${{ github.workspace }}/after/.github/scripts/prepare-sources.sh
 
     - name: Prepare external sources [before]
       id: prepare-before-sources
@@ -113,7 +113,7 @@ jobs:
         DESTINATION_DIR: "${{ github.workspace }}/before"
         OUTPUT_NAME: "before_sources"
       shell: bash
-      run: ${{ github.workspace }}/after/.github/workflows/scripts/prepare-sources.sh
+      run: ${{ github.workspace }}/after/.github/scripts/prepare-sources.sh
 
     - name: Combine external sources [before + after]
       id: combine-sources
