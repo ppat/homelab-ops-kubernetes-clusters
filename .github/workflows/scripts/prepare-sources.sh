@@ -22,22 +22,24 @@ copy_external_source() {
   local ks_path="$3"
   local copied_ks_sources="$4"
 
-  pushd "${MODULES_DIR}" 2> /dev/null 2>&1
+  pushd "${MODULES_DIR}" > /dev/null 2>&1
   git checkout ${ks_src_tag} 2> /dev/null
   if [[ -e "${ks_path}" ]]; then
     echo "${ks_src}: modules@${ks_src_tag} -> ${DESTINATION_DIR}/${ks_path}..."
     mkdir -p "${DESTINATION_DIR}/${ks_path}"
-    cp -R "${ks_path}" "${DESTINATION_DIR}/${ks_path}"
+    rsync -r -q "${ks_path}/" "${DESTINATION_DIR}/${ks_path}/"
     echo "${ks_src}" >> "${copied_ks_sources}"
   fi
-  popd 2> /dev/null 2>&1
+  popd > /dev/null 2>&1
 }
 
 copy_components() {
   echo "Copying components..."
+  pushd "${MODULES_DIR}" > /dev/null 2>&1
   mkdir -p "${DESTINATION_DIR}/components"
-  cp -R "${MODULES_DIR}/components" "${DESTINATION_DIR}/components"
+  rsync -r -q "${MODULES_DIR}/components/" "${DESTINATION_DIR}/components/"
   echo " "
+  popd > /dev/null 2>&1
 }
 
 prep_external_sources() {
