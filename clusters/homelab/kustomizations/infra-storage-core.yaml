@@ -60,6 +60,9 @@ spec:
         name: longhorn-release
         namespace: longhorn-system
       spec:
+        chart:
+          spec:
+            version: 1.8.2
         values:
           persistence:
             defaultClass: false
@@ -67,6 +70,21 @@ spec:
             backupTarget: s3://nas-longhorn-backups@us-east-1/cluster-homelab/
             backupTargetCredentialSecret: backup-target-credentials
             defaultLonghornStaticStorageClass: sc-longhorn-replicated
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: longhorn-release
+      namespace: longhorn-system
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: remove
+        path: /spec/values/defaultSettings/offlineRelicaRebuilding
+      - op: remove
+        path: /spec/values/defaultSettings/autoCleanupSnapshotAfterOnDemandBackupCompleted
+      - op: remove
+        path: /spec/values/defaultSettings/orphanResourceAutoDeletion
+      - op: remove
+        path: /spec/values/defaultSettings/orphanResourceAutoDeletionGracePeriod
     target:
       group: helm.toolkit.fluxcd.io
       kind: HelmRelease
