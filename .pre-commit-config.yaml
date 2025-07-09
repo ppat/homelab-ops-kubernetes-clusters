@@ -29,6 +29,10 @@ repos:
   hooks:
   - id: markdownlint-cli2
     args: ["--fix", "--config", ".markdownlint-cli2.yaml"]
+- repo: https://github.com/shellcheck-py/shellcheck-py
+  rev: v0.10.0.1
+  hooks:
+  - id: shellcheck
 - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
   rev: v9.22.0
   hooks:

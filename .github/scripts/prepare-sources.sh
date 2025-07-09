@@ -12,6 +12,7 @@ detect_kustomizations() {
   grep -rlPz 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization' "${KUSTOMIZATION_DIR}/" | \
     xargs -n1 yq '[.metadata.name, .spec.path, .spec.sourceRef.name]' -o csv | \
     sort > "${detected_ks_file}"
+  # shellcheck disable=SC2002
   cat "${detected_ks_file}" | tr ',' '\t' | column -t | pr -t -o 4
   echo " "
 }
@@ -49,7 +50,6 @@ prep_external_sources() {
 
   echo "Preparing external sources..."
   while IFS= read -r ks; do
-    ks_name=$(echo ${ks} | cut -d',' -f1)
     ks_path=$(echo ${ks} | cut -d',' -f2)
     ks_src=$(echo ${ks} | cut -d',' -f3)
     ks_src_file="${SOURCES_DIR}/${ks_src}.yaml"
@@ -57,7 +57,7 @@ prep_external_sources() {
       ks_src_tag=$(yq '.spec.ref.tag // .spec.ref.branch' "${ks_src_file}")
       copy_external_source "${ks_src}" "${ks_src_tag}" "${ks_path}" "${copied_ks_sources}"
     fi
-  done < <(cat "${detected_ks_file}" | grep -v root) | pr -t -o 4
+  done < <(grep -v root "${detected_ks_file}") | pr -t -o 4
   echo " "
 }
 
@@ -80,7 +80,7 @@ main() {
   echo " "
 
   echo "Capturing utilized external sources..."
-  local utilized=$(cat "${copied_ks_sources}" | grep -v root | paste -sd ',' -)
+  local utilized=$(grep -v root "${copied_ks_sources}" | paste -sd ',' -)
   echo "${OUTPUT_NAME}=${utilized}" >> $GITHUB_OUTPUT
   echo ${utilized} | pr -t -o 4
   echo " "
