@@ -95,73 +95,25 @@ jobs:
 
     - name: Prepare external sources [after]
       id: prepare-after-sources
+      env:
+        KUSTOMIZATION_DIR: "${{ github.workspace }}/after/clusters/${{ matrix.cluster }}/kustomizations"
+        SOURCES_DIR: "${{ github.workspace }}/after/clusters/${{ matrix.cluster }}/sources"
+        MODULES_DIR: "${{ github.workspace }}/modules"
+        DESTINATION_DIR: "${{ github.workspace }}/after"
+        OUTPUT_NAME: "after_sources"
       shell: bash
-      working-directory: ./after
-      # yamllint disable-line rule:indentation
-      run: |
-        echo "Detecting all kustomizations..."
-        grep -rlPz 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization' clusters/${{ matrix.cluster }}/ | xargs -n1 yq '[.metadata.name, .spec.path, .spec.sourceRef.name]' -o csv | sort > /tmp/ks_after
-        cat /tmp/ks_after | tr ',' '\n' | column -t | pr -t -o 4
-        echo " "
-
-        echo "Preparing external sources..."
-        while IFS= read -r ks; do
-          ks_name=$(echo ${ks} | cut -d',' -f1)
-          ks_path=$(echo ${ks} | cut -d',' -f2)
-          ks_src="clusters/${{ matrix.cluster }}/$(echo ${ks} | cut -d',' -f3).yaml"
-          if [[ -e "${ks_src}" ]]; then
-            ks_src_tag=$(yq '.spec.ref.tag // .spec.ref.branch' "${ks_src}")
-            pushd ../modules 2> /dev/null
-            git checkout ${ks_src_tag}
-            if [[ -e "${ks_path}" ]]; then
-              echo "${ks_name}: modules@${ks_src_tag} -> ./after/${ks_path}..."
-              mkdir -p "../after/${ks_path}"
-              cp -R ${ks_path} ../after/${ks_path}
-            fi
-            popd 2> /dev/null
-          fi
-        done < <(cat /tmp/ks_after | grep -v root) | pr -t -o 4
-        echo " "
-
-        echo "Transforming into concatenated source list..."
-        ext_src_list=$(cat /tmp/ks_after | grep -v root | cut -d',' -f3 | paste -sd ',' -)
-        echo "after_sources=${ext_src_list}" >> $GITHUB_OUTPUT
-        echo ${ext_src_list} | pr -t -o 4
+      run: ${{ github.workspace }}/after/.github/workflows/scripts/prepare-sources.sh
 
     - name: Prepare external sources [before]
       id: prepare-before-sources
+      env:
+        KUSTOMIZATION_DIR: "${{ github.workspace }}/before/clusters/${{ matrix.cluster }}/kustomizations"
+        SOURCES_DIR: "${{ github.workspace }}/before/clusters/${{ matrix.cluster }}/sources"
+        MODULES_DIR: "${{ github.workspace }}/modules"
+        DESTINATION_DIR: "${{ github.workspace }}/before"
+        OUTPUT_NAME: "before_sources"
       shell: bash
-      working-directory: ./before
-      # yamllint disable-line rule:indentation
-      run: |
-        echo "Detecting all kustomizations..."
-        grep -rlPz 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization' clusters/${{ matrix.cluster }}/ | xargs -n1 yq '[.metadata.name, .spec.path, .spec.sourceRef.name]' -o csv | sort > /tmp/ks_before
-        cat /tmp/ks_before | tr ',' '\n' | column -t | pr -t -o 4
-        echo " "
-
-        echo "Preparing external sources..."
-        while IFS= read -r ks; do
-          ks_name=$(echo ${ks} | cut -d',' -f1)
-          ks_path=$(echo ${ks} | cut -d',' -f2)
-          ks_src="clusters/${{ matrix.cluster }}/$(echo ${ks} | cut -d',' -f3).yaml"
-          if [[ -e "${ks_src}" ]]; then
-            ks_src_tag=$(yq '.spec.ref.tag // .spec.ref.branch' "${ks_src}")
-            pushd ../modules 2> /dev/null
-            git checkout ${ks_src_tag}
-            if [[ -e "${ks_path}" ]]; then
-              echo "${ks_name}: modules@${ks_src_tag} -> ./before/${ks_path}..."
-              mkdir -p "../before/${ks_path}"
-              cp -R ${ks_path} ../before/${ks_path}
-            fi
-            popd 2> /dev/null
-          fi
-        done < <(cat /tmp/ks_before | grep -v root) | pr -t -o 4
-        echo " "
-
-        echo "Transforming into concatenated source list..."
-        ext_src_list=$(cat /tmp/ks_before | grep -v root | cut -d',' -f3 | paste -sd ',' -)
-        echo "before_sources=${ext_src_list}" >> $GITHUB_OUTPUT
-        echo ${ext_src_list} | pr -t -o 4
+      run: ${{ github.workspace }}/after/.github/workflows/scripts/prepare-sources.sh
 
     - name: Combine external sources [before + after]
       id: combine-sources
