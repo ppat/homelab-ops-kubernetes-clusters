@@ -23,14 +23,21 @@ copy_external_source() {
   local copied_ks_sources="$4"
 
   pushd "${MODULES_DIR}" 2> /dev/null
-  git checkout ${ks_src_tag}
+  git checkout ${ks_src_tag} 2> /dev/null
   if [[ -e "${ks_path}" ]]; then
     echo "${ks_src}: modules@${ks_src_tag} -> ${DESTINATION_DIR}/${ks_path}..."
     mkdir -p "${DESTINATION_DIR}/${ks_path}"
-    cp -R ${ks_path} ${DESTINATION_DIR}/${ks_path}
+    cp -R "${ks_path}" "${DESTINATION_DIR}/${ks_path}"
     echo "${ks_src}" >> "${copied_ks_sources}"
   fi
   popd 2> /dev/null
+}
+
+copy_components() {
+  echo "Copying components..."
+  mkdir -p "${DESTINATION_DIR}/components"
+  cp -R "${MODULES_DIR}/components" "${DESTINATION_DIR}/components"
+  echo " "
 }
 
 prep_external_sources() {
@@ -57,6 +64,7 @@ main() {
 
   detect_kustomizations "${detected_ks_file}"
   prep_external_sources "${detected_ks_file}" "${copied_ks_sources}"
+  copy_components
 
   echo "Capturing utilized external sources..."
   local utilized=$(cat "${copied_ks_sources}" | grep -v root | paste -sd ',' -)
