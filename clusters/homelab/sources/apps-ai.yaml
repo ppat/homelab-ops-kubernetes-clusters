@@ -14,5 +14,5 @@ spec:
     !/apps/subsystems/ai
   interval: 1m0s
   ref:
-    tag: apps-ai-v0.2.16
+    tag: apps-ai-v0.2.17
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
