@@ -12,5 +12,5 @@ spec:
     !/infrastructure/subsystems/clusterops-extra
   interval: 1m0s
   ref:
-    tag: infra-clusterops-extra-v0.2.4
+    tag: infra-clusterops-extra-v0.2.6
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
