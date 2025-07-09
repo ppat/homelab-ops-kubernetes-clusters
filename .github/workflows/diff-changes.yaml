@@ -76,7 +76,7 @@ jobs:
       uses: fluxcd/flux2/action@bda4c8187e436462be0d072e728b67afa215c593 # v2.6.3
       with:
         # renovate: datasource=github-releases depName=fluxcd/flux2
-        version: "v2.6.3"
+        version: "v2.6.4"
 
     - name: Checkout modules repository
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
