@@ -12,5 +12,5 @@ spec:
     !/apps/subsystems/media
   interval: 1m0s
   ref:
-    tag: apps-media-v0.0.23
+    tag: apps-media-v0.0.24
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
