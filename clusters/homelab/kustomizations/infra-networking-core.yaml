@@ -30,6 +30,7 @@ spec:
       externaldns_txtowner_id: k8s-homelab
       externaldns_txtowner_prefix: k8s.
       secret_store: bitwarden-secret-manager-store
+      traefik_log_level: DEBUG
     substituteFrom:
     - kind: Secret
       name: cluster-secrets

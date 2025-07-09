@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
 - minio-data.yaml
 - pihole-data.yaml
+- traefik-logs.yaml
 - unifi-data.yaml
 - unifi-db-data.yaml
 - unifi-backups.yaml
