@@ -5,8 +5,10 @@ kind: Kustomization
 resources:
 - freetube-data.yaml
 - jellyfin-data.yaml
+- jellyfin-logs.yaml
 - media-read-only.yaml
 - plex-data.yaml
+- plex-logs.yaml
 - tautulli-data.yaml
 
 patches:

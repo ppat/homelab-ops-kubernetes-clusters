@@ -6,7 +6,7 @@ metadata:
 allowVolumeExpansion: true
 parameters:
   fsType: ext4
-  staleReplicaTimeout: "2880"
+  staleReplicaTimeout: "30"
   # as per https://longhorn.io/docs/1.7.1/best-practices/#io-performance
   dataLocality: "best-effort"
   numberOfReplicas: "2"
