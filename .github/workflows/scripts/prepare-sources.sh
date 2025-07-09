@@ -3,7 +3,7 @@ set -euo pipefail
 
 TEMP_DIR=$(mktemp -d)
 # shellcheck disable=SC2064
-trap "rm -rf ${temp_dir}" EXIT
+trap "rm -rf ${TEMP_DIR}" EXIT
 
 
 detect_kustomizations() {
