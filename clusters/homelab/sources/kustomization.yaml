@@ -4,7 +4,6 @@ kind: Kustomization
 
 resources:
 - root.yaml
-- infra-helm-repositories.yaml
 - infra-clusterops-core.yaml
 - infra-clusterops-extra.yaml
 - infra-database-core.yaml
@@ -17,7 +16,6 @@ resources:
 - infra-security-core.yaml
 - infra-security-extra.yaml
 - infra-storage-core.yaml
-- apps-helm-repositories.yaml
 - apps-ai.yaml
 - apps-coder.yaml
 - apps-downloaders.yaml
