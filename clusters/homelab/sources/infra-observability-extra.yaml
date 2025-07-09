@@ -12,5 +12,5 @@ spec:
     !/infrastructure/subsystems/observability-extra
   interval: 1m0s
   ref:
-    tag: infra-observability-extra-v0.1.11
+    tag: infra-observability-extra-v0.1.12
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
