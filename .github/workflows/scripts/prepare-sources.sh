@@ -36,6 +36,7 @@ copy_external_source() {
 copy_components() {
   echo "Copying components..."
   pushd "${MODULES_DIR}" > /dev/null 2>&1
+  git checkout main 2> /dev/null
   mkdir -p "${DESTINATION_DIR}/components"
   rsync -r -q "${MODULES_DIR}/components/" "${DESTINATION_DIR}/components/"
   echo " "
@@ -77,7 +78,7 @@ main() {
   echo "Copied files..."
   show_file_counts | column -t
   echo " "
-  find ${DESTINATION_DIR}/components/cert-issuer -type f
+  find ${DESTINATION_DIR}/components/ -type f
   echo " "
 
   echo "Capturing utilized external sources..."
