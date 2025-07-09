@@ -22,7 +22,7 @@ copy_external_source() {
   local ks_path="$3"
   local copied_ks_sources="$4"
 
-  pushd "${MODULES_DIR}" 2> /dev/null
+  pushd "${MODULES_DIR}" 2> /dev/null 2>&1
   git checkout ${ks_src_tag} 2> /dev/null
   if [[ -e "${ks_path}" ]]; then
     echo "${ks_src}: modules@${ks_src_tag} -> ${DESTINATION_DIR}/${ks_path}..."
@@ -30,7 +30,7 @@ copy_external_source() {
     cp -R "${ks_path}" "${DESTINATION_DIR}/${ks_path}"
     echo "${ks_src}" >> "${copied_ks_sources}"
   fi
-  popd 2> /dev/null
+  popd 2> /dev/null 2>&1
 }
 
 copy_components() {
@@ -58,6 +58,12 @@ prep_external_sources() {
   echo " "
 }
 
+show_file_counts() {
+  echo "infrastructure $(find ${DESTINATION_DIR}/infrastructure/ -type f -print | wc -l)"
+  echo "components $(find ${DESTINATION_DIR}/components/ -type f -print | wc -l)"
+  echo "apps $(find ${DESTINATION_DIR}/apps/ -type f -print | wc -l)"
+}
+
 main() {
   local detected_ks_file="${TEMP_DIR}/detected"
   local copied_ks_sources="${TEMP_DIR}/copied"
@@ -65,6 +71,10 @@ main() {
   detect_kustomizations "${detected_ks_file}"
   prep_external_sources "${detected_ks_file}" "${copied_ks_sources}"
   copy_components
+
+  echo "Copied files..."
+  show_file_counts | column -t
+  echo " "
 
   echo "Capturing utilized external sources..."
   local utilized=$(cat "${copied_ks_sources}" | grep -v root | paste -sd ',' -)
