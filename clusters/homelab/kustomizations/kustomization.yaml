@@ -5,7 +5,6 @@ kind: Kustomization
 resources:
 - root.yaml
 - infra-clusterops-core.yaml
-- infra-clusterops-extra.yaml
 - infra-database-core.yaml
 - infra-kubernetes-core.yaml
 - infra-kubernetes-extra.yaml
