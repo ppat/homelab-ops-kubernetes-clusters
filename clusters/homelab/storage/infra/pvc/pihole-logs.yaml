@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: unifi-db-data
-  namespace: unifi
+  name: pihole-logs
+  namespace: dns
   labels:
-    app.kubernetes.io/name: unifi-db
+    app.kubernetes.io/name: pihole
 spec:
   accessModes:
   - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: 256Mi
   storageClassName: sc-longhorn-replicated
   volumeMode: Filesystem

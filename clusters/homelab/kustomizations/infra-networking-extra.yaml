@@ -47,3 +47,22 @@ spec:
       kind: Deployment
       name: cloudflared-doh
       namespace: dns
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      $patch: delete
+      kind: ExternalSecret
+      metadata:
+        name: pihole-secrets
+    target:
+      kind: ExternalSecret
+      name: pihole-secrets
+      namespace: dns
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: ghcr.io/linuxserver/unifi-network-application:8.6.9@sha256:f8403a6813b9e0e68fcf622a7f00dbdbd772dfd6a11277fedcb54b816e0eb801
+    target:
+      kind: Deployment
+      name: unifi-network-application
+      namespace: unifi
