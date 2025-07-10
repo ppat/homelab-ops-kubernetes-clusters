@@ -24,6 +24,8 @@ spec:
   timeout: 2m0s
   wait: true
   postBuild:
+    substitute:
+      secret_store: bitwarden-secret-manager-store
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
