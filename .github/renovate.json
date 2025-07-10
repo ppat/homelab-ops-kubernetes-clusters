@@ -12,10 +12,16 @@
       "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}"
     }
   ],
+  "configMigration": true,
+  "dependencyDashboard": true,
   "extends": [
-    "config:best-practices",
-    "group:linters",
+    ":ignoreModulesAndTests",
+    "abandonments:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests",
+    "mergeConfidence:age-confidence-badges",
     "mergeConfidence:all-badges",
+    "workarounds:k3sKubernetesVersioning",
     "github>ppat/renovate-presets#v0.0.2",
     "github>ppat/renovate-presets:dev-tools#v0.0.2",
     "github>ppat/renovate-presets:github-actions#v0.0.2",
@@ -41,6 +47,11 @@
   ],
   "prConcurrentLimit": 0,
   "prHourlyLimit": 0,
+  "printConfig": true,
   "rebaseWhen": "behind-base-branch",
+  "suppressNotifications": [
+    "prEditedNotification",
+    "prIgnoreNotification"
+  ],
   "timezone": "US/Eastern"
 }
