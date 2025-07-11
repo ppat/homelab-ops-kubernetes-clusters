@@ -57,7 +57,11 @@ jobs:
           mapfile -t clusters < <(echo '${{ steps.changed-dirs.outputs.all_changed_files }}' | jq -r 'map(select(startswith("clusters/")) | split("/")[1]) | unique | .[]')
           # Convert arrays to JSON using printf and jq
           printf '%s\n' "${clusters[@]}" | jq -R . | jq -s -c . > /tmp/clusters.json
-          echo "clusters=$(cat /tmp/clusters.json)" >> $GITHUB_OUTPUT
+          if [[ "$(cat /tmp/clusters.json)" != '[""]' ]]; then
+            echo "clusters=$(cat /tmp/clusters.json)" >> $GITHUB_OUTPUT
+          else
+            echo "clusters=[]" >> $GITHUB_OUTPUT
+          fi
         fi
 
   diff:
