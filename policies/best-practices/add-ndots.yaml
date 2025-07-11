@@ -21,6 +21,14 @@ spec:
       - resources:
           kinds:
           - Pod
+    mutate:
+      patchStrategicMerge:
+        spec:
+          dnsConfig:
+            options:
+            - name: ndots
+              value: "1"
+    skipBackgroundRequests: false
     exclude:
       resources:
         namespaces:
@@ -30,10 +38,3 @@ spec:
         - logging
         - longhorn-system
         - metallb-system
-    mutate:
-      patchStrategicMerge:
-        spec:
-          dnsConfig:
-            options:
-            - name: ndots
-              value: "1"
