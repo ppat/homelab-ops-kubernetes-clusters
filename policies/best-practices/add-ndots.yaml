@@ -24,20 +24,12 @@ spec:
     exclude:
       resources:
         namespaces:
-        - authentik
-        - cert-manager
         - dns
         - external-dns
-        - external-secrets
-        - flux-system
-        - kyverno
         - kube-system
         - logging
         - longhorn-system
         - metallb-system
-        - minio
-        - monitoring
-        - traefik
     mutate:
       patchStrategicMerge:
         spec:
