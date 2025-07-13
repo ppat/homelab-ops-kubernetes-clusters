@@ -33,8 +33,6 @@ spec:
       resources:
         namespaces:
         - dns
-        - external-dns
         - kube-system
-        - logging
         - longhorn-system
         - metallb-system
