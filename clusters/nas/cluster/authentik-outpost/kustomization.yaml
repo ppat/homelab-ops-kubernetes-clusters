@@ -6,3 +6,9 @@ resources:
 - namespace.yaml
 - helm-repository-authentik.yaml
 - helm-release-authentik-outpost.yaml
+- middleware-forward-auth.yaml
+- ingress-authentik-outpost.yaml
+
+commonAnnotations:
+  # as this is a critical infrastructure component, prevent pruning unintentionally
+  kustomize.toolkit.fluxcd.io/prune: disabled
