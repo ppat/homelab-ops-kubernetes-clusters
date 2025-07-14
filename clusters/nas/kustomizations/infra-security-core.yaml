@@ -26,6 +26,12 @@ spec:
   # yamllint disable-line rule:indentation
   - patch: |-
       - op: replace
+        path: /spec/values/admissionController/replicas
+        value: 2
+      - op: replace
+        path: /spec/values/admissionController/podDisruptionBudget/minAvailable
+        value: 1
+      - op: replace
         path: /spec/values/backgroundController/replicas
         value: 1
     target:
