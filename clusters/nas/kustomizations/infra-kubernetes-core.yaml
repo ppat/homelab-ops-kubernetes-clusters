@@ -33,27 +33,42 @@ spec:
       namespace: kube-system
   # yamllint disable-line rule:indentation
   - patch: |
+      - op: add
+        path: /spec/values/master/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+      - op: add
+        path: /spec/values/worker/resources
+        value:
+          requests:
+            cpu: 5m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
       - op: replace
-        path: /spec/values/master/resources/limits/memory
-        value: 512Mi
-      - op: replace
-        path: /spec/values/master/resources/requests/cpu
-        value: 50m
-      - op: replace
-        path: /spec/values/worker/resources/limits/memory
-        value: 256Mi
-      - op: replace
-        path: /spec/values/gc/resources/limits/memory
-        value: 256Mi
+        path: /spec/values/gc/resources
+        value:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
     target:
       kind: HelmRelease
       name: node-feature-discovery-release
       namespace: kube-system
   # yamllint disable-line rule:indentation
   - patch: |
-      - op: replace
-        path: /spec/values/recommender/resources/requests/memory
-        value: 128Mi
+      - op: add
+        path: /spec/values/recommender/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 128Mi
     target:
       kind: HelmRelease
       name: vertical-pod-autoscaler-release
