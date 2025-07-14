@@ -4,3 +4,4 @@ kind: Kustomization
 
 resources:
 - sc-nfs-share.yaml
+- sc-nfs-dynamic-share.yaml

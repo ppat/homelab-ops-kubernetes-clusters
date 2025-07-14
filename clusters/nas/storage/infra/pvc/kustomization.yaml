@@ -4,3 +4,4 @@ kind: Kustomization
 
 resources:
 - minio-data.yaml
+- traefik-logs.yaml
