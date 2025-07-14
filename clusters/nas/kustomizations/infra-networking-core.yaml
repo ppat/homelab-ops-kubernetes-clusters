@@ -7,7 +7,7 @@ metadata:
 spec:
   components:
   - ../../../components/external-dns-provider/unifi
-  # - ../../../components/sso
+  - ../../../components/sso
   dependsOn:
   - name: infra-security-core
     namespace: flux-system

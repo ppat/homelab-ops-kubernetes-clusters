@@ -1,0 +1,27 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  labels:
+    app.kubernetes.io/instance: nas-cluster-outpost
+    app.kubernetes.io/name: authentik-proxy
+    goauthentik.io/outpost-name: nas-cluster-outpost
+    goauthentik.io/outpost-type: proxy
+  name: ak-outpost-nas-cluster-outpost
+  namespace: authentik
+spec:
+  rules:
+  - host: '*.${domain_name}'
+    http:
+      paths:
+      - backend:
+          service:
+            name: ak-outpost-nas-cluster-outpost
+            port:
+              name: http
+        path: /outpost.goauthentik.io
+        pathType: Prefix
+  tls: []
