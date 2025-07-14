@@ -6,9 +6,9 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
   labels:
-    app.kubernetes.io/instance: nas-cluster-outpost
+    app.kubernetes.io/instance: ${authentik_outpost_name}
     app.kubernetes.io/name: authentik-proxy
-    goauthentik.io/outpost-name: nas-cluster-outpost
+    goauthentik.io/outpost-name: ${authentik_outpost_name}
     goauthentik.io/outpost-type: proxy
   name: ak-outpost-nas-cluster-outpost
   namespace: authentik
@@ -19,9 +19,9 @@ spec:
       paths:
       - backend:
           service:
-            name: ak-outpost-nas-cluster-outpost
+            name: ak-outpost-${authentik_outpost_name}
             port:
-              name: http
+              number: 9000
         path: /outpost.goauthentik.io
         pathType: Prefix
   tls: []

@@ -18,7 +18,7 @@ spec:
   install:
     createNamespace: false
     remediation:
-      retries: 3
+      retries: -1
   interval: 15m0s
   releaseName: authentik-outpost
   targetNamespace: authentik

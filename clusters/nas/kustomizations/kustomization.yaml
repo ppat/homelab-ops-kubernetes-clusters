@@ -8,6 +8,7 @@ resources:
 - infra-kubernetes-core.yaml
 - infra-networking-core.yaml
 - infra-security-core.yaml
+- infra-security-outpost.yaml
 - infra-storage-csi-driver-nfs.yaml
 - infra-storage-core-minio.yaml
 - apps-bitwarden.yaml
