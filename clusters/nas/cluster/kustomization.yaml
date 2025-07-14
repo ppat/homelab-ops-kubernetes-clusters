@@ -6,6 +6,7 @@ resources:
 - kubernetes-version/
 - rbac/
 - secrets/
+- authentik-outpost/
 
 patches:
 # yamllint disable-line rule:indentation
@@ -16,4 +17,4 @@ patches:
       annotations:
         kustomize.toolkit.fluxcd.io/prune: disabled
   target:
-    kind: "(ClusterRole|ClusterRoleBinding|ClusterSecretStore|ExternalSecret)"
+    kind: "(ClusterRole|ClusterRoleBinding|ClusterSecretStore|ExternalSecret|HelmRepository|HelmRelease)"
