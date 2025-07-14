@@ -6,7 +6,7 @@ metadata:
   namespace: authentik
 spec:
   forwardAuth:
-    address: http://ak-outpost-nas-cluster-outpost.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik
+    address: http://ak-outpost-${authentik_outpost_name}.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik
     authResponseHeaders:
     - X-authentik-username
     - X-authentik-groups
