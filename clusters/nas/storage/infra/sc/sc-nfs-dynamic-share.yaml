@@ -1,0 +1,19 @@
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-nfs-dynamic-share
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: ${ipaddress_nfs}
+  share: /volume1/kubernetes-dynamic
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+mountOptions:
+- vers=4.1,
+- proto=tcp
+- noatime
+- nodiratime
+- nodev
+- noexec
+- nosuid
