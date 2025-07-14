@@ -7,8 +7,13 @@ metadata:
 spec:
   components:
   - ../../../components/external-dns-provider/unifi
+  # - ../../../components/sso
   dependsOn:
   - name: infra-security-core
+    namespace: flux-system
+  - name: infra-storage-csi-driver-nfs
+    namespace: flux-system
+  - name: config-storage
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/networking-core
@@ -25,12 +30,20 @@ spec:
       externaldns_txtowner_id: k8s-nas
       externaldns_txtowner_prefix: k8s.nas.
       secret_store: bitwarden-secret-manager-store
+      traefik_log_level: DEBUG
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
   patches:
   # yamllint disable-line rule:indentation
   - patch: |
+      # use deployment instead of daemonset so that we can have two pods on same node for redundancy
+      - op: replace
+        path: /spec/values/deployment/kind
+        value: Deployment
+      - op: replace
+        path: /spec/values/deployment/replicas
+        value: 2
       # needed for supporting docker image pushes to harbor
       - op: add
         path: /spec/values/additionalArguments/-
