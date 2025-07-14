@@ -20,6 +20,9 @@ spec:
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: 256Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
       - op: remove
         path: /spec/template/spec/containers/0/resources/limits/cpu
     target:

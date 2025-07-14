@@ -31,3 +31,45 @@ spec:
       kind: Deployment
       name: coredns
       namespace: kube-system
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/master/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 512Mi
+      - op: add
+        path: /spec/values/worker/resources
+        value:
+          requests:
+            cpu: 5m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+      - op: replace
+        path: /spec/values/gc/resources
+        value:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+    target:
+      kind: HelmRelease
+      name: node-feature-discovery-release
+      namespace: kube-system
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/recommender/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+    target:
+      kind: HelmRelease
+      name: vertical-pod-autoscaler-release
+      namespace: kube-system
