@@ -14,5 +14,5 @@ spec:
     !/apps/subsystems/coder
   interval: 1m0s
   ref:
-    tag: apps-coder-v0.0.24
+    tag: apps-coder-v0.0.25
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
