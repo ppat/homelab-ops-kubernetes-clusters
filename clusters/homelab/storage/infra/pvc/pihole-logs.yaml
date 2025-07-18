@@ -11,6 +11,6 @@ spec:
   - ReadWriteOnce
   resources:
     requests:
-      storage: 256Mi
+      storage: 512Mi
   storageClassName: sc-longhorn-replicated
   volumeMode: Filesystem
