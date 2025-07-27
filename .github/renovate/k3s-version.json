@@ -10,7 +10,7 @@
       "semanticCommitType": "chore",
       "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}",
       "separateMajorMinor": true,
-      "separateMinorPatch": true,
+      "separateMinorPatch": false,
       "separateMultipleMajor": true,
       "separateMultipleMinor": true,
       "versioning": "semver-coerced"
