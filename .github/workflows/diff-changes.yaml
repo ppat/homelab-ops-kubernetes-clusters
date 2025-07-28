@@ -31,6 +31,7 @@ jobs:
       dir_names_max_depth: 2
       dir_names_exclude_current_dir: true
       matrix: true
+      git_ref: ${{ github.head_ref || github.ref }}
 
   affected-clusters:
     needs: [detect-changes]
