@@ -12,5 +12,5 @@ spec:
     !/infrastructure/subsystems/kubernetes-core
   interval: 1m0s
   ref:
-    tag: infra-kubernetes-core-v0.0.8
+    tag: infra-kubernetes-core-v0.0.9
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
