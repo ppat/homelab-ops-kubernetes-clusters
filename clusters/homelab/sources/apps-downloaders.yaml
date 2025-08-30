@@ -14,5 +14,5 @@ spec:
     !/apps/subsystems/downloaders
   interval: 1m0s
   ref:
-    tag: apps-downloaders-v0.1.35
+    tag: apps-downloaders-v0.1.36
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
