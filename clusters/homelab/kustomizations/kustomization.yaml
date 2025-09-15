@@ -22,5 +22,5 @@ resources:
 - apps-media.yaml
 - apps-misc.yaml
 - config-storage.yaml
-- policy-baseline-pss.yaml
+- policy-pod-security-standards.yaml
 - policy-best-practices.yaml
