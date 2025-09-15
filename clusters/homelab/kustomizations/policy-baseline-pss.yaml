@@ -6,7 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./policies/pod-security-standard/baseline
+  path: ./policies/pod-security-standard/restricted
   prune: true
   sourceRef:
     kind: GitRepository
