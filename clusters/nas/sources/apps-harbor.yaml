@@ -12,5 +12,5 @@ spec:
     !/apps/subsystems/harbor
   interval: 1m0s
   ref:
-    tag: apps-harbor-v0.0.10
+    tag: apps-harbor-v0.0.11
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
