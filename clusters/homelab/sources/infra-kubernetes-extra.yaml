@@ -12,5 +12,5 @@ spec:
     !/infrastructure/subsystems/kubernetes-extra
   interval: 1m0s
   ref:
-    tag: infra-kubernetes-extra-v0.0.21
+    tag: infra-kubernetes-extra-v0.0.22
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
