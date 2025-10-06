@@ -32,8 +32,8 @@ spec:
       db_replicas: "3"
       db_restore_database: authentik
       db_restore_owner: authentik
-      db_server_name_backup: 2025.07.03
-      db_server_name_restore: authentik-db
+      db_server_name_backup: 2025.10.06
+      db_server_name_restore: 2025.07.03
       db_storage_class: sc-longhorn-local-non-replicated
       db_storage_size: 20Gi
       redis_storage_class: sc-longhorn-replicated
