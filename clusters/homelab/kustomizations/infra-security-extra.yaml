@@ -28,16 +28,15 @@ spec:
     substitute:
       cert_issuer: letsencrypt-production-issuer
       db_name: authentik-db
+      db_suffix_current: 20251017
+      db_suffix_restore: 2025.10.06
       db_namespace: authentik
+      db_bootstrap_database: authentik
+      db_bootstrap_owner: authentik
       db_replicas: "3"
-      db_restore_database: authentik
-      db_restore_owner: authentik
-      db_server_name_backup: 2025.10.06
-      db_server_name_restore: 2025.07.03
       db_storage_class: sc-longhorn-local-non-replicated
       db_storage_size: 20Gi
-      redis_storage_class: sc-longhorn-replicated
-      redis_storage_size: 8Gi
+      redis_replicas: "3"
       secret_store: bitwarden-secret-manager-store
     substituteFrom:
     - kind: Secret
