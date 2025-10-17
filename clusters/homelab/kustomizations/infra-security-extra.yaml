@@ -28,8 +28,8 @@ spec:
     substitute:
       cert_issuer: letsencrypt-production-issuer
       db_name: authentik-db
-      db_suffix_current: 20251017
-      db_suffix_restore: 2025.10.06
+      db_suffix_current: "20251017"
+      db_suffix_restore: "2025.10.06"
       db_namespace: authentik
       db_bootstrap_database: authentik
       db_bootstrap_owner: authentik
