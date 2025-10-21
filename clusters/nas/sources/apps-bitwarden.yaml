@@ -12,5 +12,5 @@ spec:
     !/apps/subsystems/bitwarden
   interval: 1m0s
   ref:
-    tag: apps-bitwarden-v0.0.17
+    tag: apps-bitwarden-v0.0.18
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
