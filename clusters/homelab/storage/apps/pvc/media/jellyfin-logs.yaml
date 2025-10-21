@@ -12,5 +12,5 @@ spec:
   storageClassName: sc-longhorn-replicated
   resources:
     requests:
-      storage: 100Mi
+      storage: 1Gi
   volumeMode: Filesystem
