@@ -35,19 +35,10 @@ spec:
   patches:
   # yamllint disable-line rule:indentation
   - patch: |-
-      - op: add
-        path: /spec/values/extraEnv/-
-        value:
-          name: OLLAMA_DEBUG
-          value: "1"
-      - op: add
-        path: /spec/values/resources
-        value:
-          requests:
-            memory: 8Gi
-            cpu: 4000m
-          limits:
-            memory: 32Gi
+      $patch: delete
+      kind: HelmRelease
+      metadata:
+        name: ollama-release
     target:
       kind: HelmRelease
       name: ollama-release
