@@ -11,6 +11,6 @@ spec:
   - ReadWriteMany
   resources:
     requests:
-      storage: 512Mi
+      storage: 1Gi
   storageClassName: sc-longhorn-rwx
   volumeMode: Filesystem
