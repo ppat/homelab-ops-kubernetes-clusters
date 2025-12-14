@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   detect-changes:
-    uses: ppat/github-workflows/.github/workflows/detect-changed-files.yaml@b62897fd95e2274bfb096f275a7e5588d61bb1c3 # v3.0.1
+    uses: ppat/github-workflows/.github/workflows/detect-changed-files.yaml@c867e85a344eba1f3408600b8212830fbe0decd9 # v3.1.0
     with:
       # yamllint disable-line rule:indentation
       files: |
