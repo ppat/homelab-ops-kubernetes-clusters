@@ -37,8 +37,8 @@ spec:
       db_bootstrap_owner: coder
       db_storage_size: 10Gi
       db_storage_class: sc-longhorn-local-non-replicated
-      db_suffix_current: "v20251021"
-      db_suffix_restore: "2025.07.03"
+      db_suffix_current: "v20251215"
+      db_suffix_restore: "v20251021"
       oidc_email_domain: wellcapitalized.net
       secret_store: bitwarden-secret-manager-store
     substituteFrom:
