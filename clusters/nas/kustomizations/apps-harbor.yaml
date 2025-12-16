@@ -7,7 +7,7 @@ metadata:
 spec:
   components:
   - ../../../components/db-backups
-  # - ../../../components/db-restore
+  - ../../../components/db-restore
   dependsOn:
   - name: infra-security-core
     namespace: flux-system
@@ -30,14 +30,13 @@ spec:
     substitute:
       db_name: harbor-db
       db_suffix_current: "v20251215"
-      # db_suffix_restore: "2025.10.06"
+      db_suffix_restore: "legacybackup"
       db_namespace: harbor
       db_bootstrap_database: registry
       db_bootstrap_owner: harbor
       # db_replicas: "3"
       db_storage_class: sc-nfs-dynamic-share
       db_storage_size: 1Gi
-      # redis_replicas: "3"
       secret_store: bitwarden-secret-manager-store
     substituteFrom:
     - kind: Secret
@@ -55,55 +54,3 @@ spec:
     target:
       kind: Cluster
       name: harbor-db-v20251215
-        # bootstrap:
-        #   pg_basebackup:
-        #     source: source-db
-        # bootstrap:
-        #   initdb:
-        #     database: ${db_bootstrap_database:=registry}
-        #     owner: ${db_bootstrap_owner:=harbor}
-        # storage:
-        #   size: 1Gi
-        #   storageClass: sc-nfs-dynamic-share
-        # externalClusters:
-        # - name: source-db
-        #   connectionParameters:
-        #     host: harbor-database.harbor.svc.cluster.local
-        #     user: streaming_replica
-        #   password:
-        #     name: source-db-replica-user
-        #     key: password
-  # # yamllint disable-line rule:indentation
-  # - patch: |-
-  #     apiVersion: helm.toolkit.fluxcd.io/v2
-  #     kind: HelmRelease
-  #     metadata:
-  #       name: harbor-release
-  #       namespace: harbor
-  #     spec:
-  #       values:
-  #         # if this feature enabled, harbor will cache the resource
-  #         # `project/project_metadata/repository/artifact/manifest` in the redis
-  #         # which help to improve the performance of high concurrent pulling manifest.
-  #         cache:
-  #           # default is not enabled.
-  #           enabled: true
-  #           # default keep cache for one day.
-  #           expireHours: 24
-  #   target:
-  #     kind: HelmRelease
-  #     name: harbor-release
-  # # yamllint disable-line rule:indentation
-  # - patch: |-
-  #     apiVersion: dragonflydb.io/v1alpha1
-  #     kind: Dragonfly
-  #     metadata:
-  #       name: harbor-redis
-  #       namespace: harbor
-  #     spec:
-  #       resources:
-  #         limits:
-  #           memory: 1024Mi
-  #   target:
-  #     kind: Dragonfly
-  #     name: harbor-redis
