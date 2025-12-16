@@ -34,7 +34,7 @@ spec:
       db_namespace: harbor
       db_bootstrap_database: registry
       db_bootstrap_owner: harbor
-      # db_replicas: "3"
+      db_replicas: "2"
       db_storage_class: sc-nfs-dynamic-share
       db_storage_size: 1Gi
       secret_store: bitwarden-secret-manager-store
@@ -43,10 +43,30 @@ spec:
       name: cluster-secrets
   patches:
   # yamllint disable-line rule:indentation
-  - patch: |-
+  - patch: |
       - op: replace
         path: /spec/imageName
         value: ghcr.io/cloudnative-pg/postgresql:15.14
     target:
       kind: Cluster
       namespace: harbor
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/cache
+        value:
+          enabled: true
+          expireHours: 24
+    target:
+      kind: HelmRelease
+      name: harbor-release
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: replace
+        path: /spec/resources/limits
+        value:
+          limits:
+            memory: 1024Mi
+    target:
+      kind: Dragonfly
+      name: harbor-redis
