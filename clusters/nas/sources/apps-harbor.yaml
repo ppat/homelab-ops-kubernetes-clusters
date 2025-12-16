@@ -8,6 +8,8 @@ spec:
   ignore: |
     # exclude all
     /*
+    # include components
+    !/components
     # include the corresponding apps subsystems directory
     !/apps/subsystems/harbor
   interval: 1m0s
