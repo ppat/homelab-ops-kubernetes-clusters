@@ -65,8 +65,7 @@ spec:
       - op: replace
         path: /spec/resources/limits
         value:
-          limits:
-            memory: 1024Mi
+          memory: 1024Mi
     target:
       kind: Dragonfly
       name: harbor-redis
