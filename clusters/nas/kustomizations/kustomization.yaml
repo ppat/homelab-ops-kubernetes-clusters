@@ -12,6 +12,7 @@ resources:
 - infra-storage-csi-driver-nfs.yaml
 - infra-storage-core-minio.yaml
 - apps-bitwarden.yaml
+- infra-database-core.yaml
 - apps-harbor.yaml
 - config-storage.yaml
 - policy-baseline-pss.yaml
