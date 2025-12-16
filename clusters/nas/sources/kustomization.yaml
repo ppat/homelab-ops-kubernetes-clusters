@@ -9,5 +9,6 @@ resources:
 - infra-networking-core.yaml
 - infra-security-core.yaml
 - infra-storage-core.yaml
+- infra-database-core.yaml
 - apps-bitwarden.yaml
 - apps-harbor.yaml
