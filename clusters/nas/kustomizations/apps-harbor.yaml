@@ -5,12 +5,17 @@ metadata:
   name: apps-harbor
   namespace: flux-system
 spec:
+  components:
+  - ../../../components/db-backups
+  - ../../../components/db-restore
   dependsOn:
   - name: infra-security-core
     namespace: flux-system
   - name: infra-storage-csi-driver-nfs
     namespace: flux-system
   - name: config-storage
+    namespace: flux-system
+  - name: infra-database-core
     namespace: flux-system
   interval: 15m0s
   path: ./apps/subsystems/harbor
@@ -23,7 +28,25 @@ spec:
   wait: true
   postBuild:
     substitute:
+      db_name: harbor-db
+      db_suffix_current: "v20251215"
+      db_suffix_restore: "legacybackup"
+      db_namespace: harbor
+      db_bootstrap_database: registry
+      db_bootstrap_owner: harbor
+      # db_replicas: "3"
+      db_storage_class: sc-nfs-dynamic-share
+      db_storage_size: 1Gi
       secret_store: bitwarden-secret-manager-store
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: replace
+        path: /spec/imageName
+        value: ghcr.io/cloudnative-pg/postgresql:15.14
+    target:
+      kind: Cluster
+      namespace: harbor
