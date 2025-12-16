@@ -44,13 +44,9 @@ spec:
   patches:
   # yamllint disable-line rule:indentation
   - patch: |-
-      apiVersion: postgresql.cnpg.io/v1
-      kind: Cluster
-      metadata:
-        name: harbor-db-v20251215
-        namespace: harbor
-      spec:
-        imageName: ghcr.io/cloudnative-pg/postgresql:15.14
+      - op: replace
+        path: /spec/imageName
+        value: ghcr.io/cloudnative-pg/postgresql:15.14
     target:
       kind: Cluster
-      name: harbor-db-v20251215
+      namespace: harbor
