@@ -14,5 +14,5 @@ spec:
     !/infrastructure/subsystems/security-core
   interval: 1m0s
   ref:
-    tag: infra-security-core-v0.1.1
+    tag: infra-security-core-v0.1.2
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
