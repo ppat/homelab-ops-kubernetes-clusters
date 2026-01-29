@@ -14,5 +14,5 @@ spec:
     !/infrastructure/subsystems/storage-core
   interval: 1m0s
   ref:
-    tag: infra-storage-core-v0.0.22
+    tag: infra-storage-core-v0.1.1
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
