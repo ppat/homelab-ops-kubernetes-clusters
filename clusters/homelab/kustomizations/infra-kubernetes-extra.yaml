@@ -24,4 +24,3 @@ spec:
   postBuild:
     substitute:
       gpu_shared_across_max_pods: "1"
-
