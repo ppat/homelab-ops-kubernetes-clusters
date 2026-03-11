@@ -46,3 +46,13 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/affinity
+        value:
+          podAntiAffinityType: required
+    target:
+      group: postgresql.cnpg.io
+      kind: Cluster
