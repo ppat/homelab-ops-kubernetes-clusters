@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
 - kubernetes-version/
 - rbac/
+- config/
 - secrets/
 
 patches:
