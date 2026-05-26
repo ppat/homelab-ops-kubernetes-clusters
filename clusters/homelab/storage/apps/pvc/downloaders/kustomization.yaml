@@ -8,6 +8,7 @@ resources:
 - media.yaml
 - overseerr-data.yaml
 - prowlarr-data.yaml
+- qbittorrent-data.yaml
 - radarr-data.yaml
 - recyclarr-data.yaml
 - sabnzbd-data.yaml
@@ -28,4 +29,4 @@ patches:
         recurring-job-group.longhorn.io/backup-ops: enabled
   target:
     kind: PersistentVolumeClaim
-    name: "(bazarr-data|lidarr-data|overseerr-data|prowlarr-data|radarr-data|recyclarr-data|sabnzbd-data|sonarr-data)"
+    name: '^.+-data$'
