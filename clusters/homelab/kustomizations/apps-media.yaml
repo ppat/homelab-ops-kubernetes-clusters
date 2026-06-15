@@ -35,7 +35,7 @@ spec:
         value: [65538,44,993]
       - op: add
         path: /spec/template/spec/volumes/1/emptyDir/sizeLimit
-        value: 10Gi
+        value: 20Gi
     target:
       kind: Deployment
       name: plex

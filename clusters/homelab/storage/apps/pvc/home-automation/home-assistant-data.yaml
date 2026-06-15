@@ -12,6 +12,6 @@ spec:
   storageClassName: sc-longhorn-replicated
   resources:
     requests:
-      storage: 2Gi
+      storage: 3Gi
   volumeMode: Filesystem
   volumeName: pvc-4bd558db-dcd5-4e84-9035-632c83caf66c
