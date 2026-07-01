@@ -44,3 +44,9 @@ spec:
           - path: "/spec/volumes/{{elementIndex}}/emptyDir/sizeLimit"
             op: add
             value: 256Mi
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - longhorn-system

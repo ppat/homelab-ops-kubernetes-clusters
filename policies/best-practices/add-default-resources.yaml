@@ -44,3 +44,9 @@ spec:
                 requests:
                   +(memory): "32Mi"
                   +(cpu): "32m"
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - longhorn-system
