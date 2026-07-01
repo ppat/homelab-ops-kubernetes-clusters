@@ -29,11 +29,11 @@ spec:
       - op: add
         path: /spec/values/cleanupController/resources/limits
         value:
-          memory: 256Mi
+          memory: 512Mi
       - op: add
         path: /spec/values/reportsController/resources/limits
         value:
-          memory: 256Mi
+          memory: 512Mi
     target:
       group: helm.toolkit.fluxcd.io
       kind: HelmRelease
