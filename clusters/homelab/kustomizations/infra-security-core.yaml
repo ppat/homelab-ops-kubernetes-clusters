@@ -22,3 +22,20 @@ spec:
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
+  patches:
+  # yamllint disable-line rule:indentation
+  - patch: |
+      # fix oom kills from chart defaults
+      - op: add
+        path: /spec/values/cleanupController/resources/limits
+        value:
+          memory: 256Mi
+      - op: add
+        path: /spec/values/reportsController/resources/limits
+        value:
+          memory: 256Mi
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: kyverno-release
+      namespace: kyverno
