@@ -91,14 +91,3 @@ spec:
       kind: HelmRelease
       name: kube-prometheus-stack-release
       namespace: monitoring
-  # yamllint disable-line rule:indentation
-  - patch: |
-      # fix oom kills from chart defaults
-      - op: replace
-        path: /spec/values/controller/resources/limits/memory
-        value: 512Mi
-    target:
-      group: helm.toolkit.fluxcd.io
-      kind: HelmRelease
-      name: goldilocks-release
-      namespace: goldilocks
