@@ -6,8 +6,8 @@ resources:
 - add-default-resources.yaml
 - add-emptydir-sizelimit.yaml
 - add-ndots.yaml
-- cleanup-bare-pods.yaml
-- cleanup-empty-replicasets.yaml
+# - cleanup-bare-pods.yaml
+# - cleanup-empty-replicasets.yaml
 - disallow-cri-sock-mount.yaml
 - disallow-latest-tag.yaml
 - require-probes.yaml
