@@ -1,0 +1,22 @@
+---
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyClass
+metadata:
+  name: tun-access
+spec:
+  statefulSet:
+    pod:
+      tailscaleContainer:
+        env:
+        - name: TS_DEBUG_FIREWALL_MODE
+          value: "nftables"
+        resources:
+          limits:
+            devic.es/tun: "1"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_ADMIN
