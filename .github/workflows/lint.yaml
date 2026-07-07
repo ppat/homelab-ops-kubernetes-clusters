@@ -83,7 +83,7 @@ jobs:
         fi
 
     - name: Validate Kubernetes Manifests
-      uses: ppat/validate-kubernetes-manifests@1a74426949d4e9e56a753236d287430c06736253 # v0.1.8
+      uses: ppat/validate-kubernetes-manifests@2459a37f66c37e61dc13d155b27d0c8e63fc3a25 # v0.1.9
       with:
         files: ${{ steps.format-files.outputs.files_json }}
         pkg-include: '["clusters/*","policies/*"]'
