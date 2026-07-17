@@ -1,0 +1,132 @@
+---
+# yamllint disable rule:line-length
+config:
+  snippets:
+    # yamllint disable-line rule:indentation
+    extraScrapeConfigs: |-
+      - job_name: pihole-pvc-logs
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+          # 1. DISCOVERY: Find the pihole pod by its label.
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: "pihole"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            regex: "pihole"
+            action: keep
+          # 2. PATH: Build path to the log files on the pod's mounted PVC.
+          - source_labels: [__meta_kubernetes_pod_uid]
+            target_label: __path__
+            replacement: /var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/*.log
+          # 3. LABELS: Apply a full, consistent set of labels.
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_label_app]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: app
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance, __meta_kubernetes_pod_label_instance]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component, __meta_kubernetes_pod_label_component]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: component
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node_name
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+        pipeline_stages:
+          - regex:
+              source: filename
+              expression: ".*/kubernetes.io~csi/[^/]+/mount/(?P<clean_filename>.*)"
+          - labels:
+              filename: clean_filename
+
+      - job_name: plex-pvc-logs
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: "plex"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            regex: "plex"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_uid]
+            target_label: __path__
+            replacement: /var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/**/*.log
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_label_app]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: app
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance, __meta_kubernetes_pod_label_instance]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component, __meta_kubernetes_pod_label_component]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: component
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node_name
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+        pipeline_stages:
+          - regex:
+              source: filename
+              expression: ".*/kubernetes.io~csi/[^/]+/mount/(?P<clean_filename>.*)"
+          - labels:
+              filename: clean_filename
+
+      - job_name: traefik-access-rwx-logs
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: "traefik"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            regex: "traefik"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_name]
+            separator: ;
+            regex: (.+);(.+)
+            target_label: __path__
+            replacement: /var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/$2/access.log
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_label_app]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: app
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance, __meta_kubernetes_pod_label_instance]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component, __meta_kubernetes_pod_label_component]
+            regex: ^;*([^;]+)(;.*)?$
+            target_label: component
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node_name
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+        pipeline_stages:
+          - json:
+              expressions:
+                timestamp: time
+                status: DownstreamStatus
+                method: RequestMethod
+              drop_malformed: true
+          - regex:
+              source: filename
+              expression: ".*/kubernetes.io~csi/[^/]+/mount/.*/(?P<clean_filename>.*)"
+          - labels:
+              status:
+              method:
+              filename: clean_filename
+          - timestamp:
+              source: timestamp
+              format: RFC3339

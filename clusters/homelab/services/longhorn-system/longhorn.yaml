@@ -1,0 +1,31 @@
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backup-target-credentials
+  namespace: longhorn-system
+spec:
+  data:
+  - secretKey: access_key_id
+    remoteRef:
+      key: cluster_nas_minio_longhorn_accesskeyid
+  - secretKey: secret_key
+    remoteRef:
+      key: cluster_nas_minio_longhorn_secretkey
+  - secretKey: dns_zone
+    remoteRef:
+      key: cluster_homelab_dns_zone
+  refreshInterval: 24h
+  secretStoreRef:
+    name: bitwarden-secret-manager-store
+    kind: ClusterSecretStore
+  target:
+    template:
+      type: Opaque
+      metadata:
+        annotations: {}
+        labels: {}
+      data:
+        AWS_ENDPOINTS: "https://s3.nas.{{ .dns_zone }}"
+        AWS_ACCESS_KEY_ID: "{{ .access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ .secret_key }}"

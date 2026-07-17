@@ -1,0 +1,17 @@
+---
+loki:
+  limits_config:
+    ingestion_burst_size_mb: 128
+    ingestion_rate_mb: 64
+    max_query_parallelism: 100
+    per_stream_rate_limit: 64M
+    per_stream_rate_limit_burst: 128M
+    shard_streams:
+      enabled: true
+    retention_stream:
+    - selector: '{namespace="media"}'
+      priority: 1
+      period: 24h
+    - selector: '{service_name="coredns"}'
+      priority: 1
+      period: 24h

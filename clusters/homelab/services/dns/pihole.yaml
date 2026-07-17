@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pihole-optional-config
+  namespace: dns
+data:
+  DNSMASQ_LISTENING: all
+  DNSSEC: "false"
+  FTLCONF_MAXDBDAYS: "90"
+  FTLCONF_MOZILLA_CANARY: "true"
+  FTLCONF_RESOLVE_IPV6: "yes"
+  IPv6: "true"
+  REV_SERVER: "true"
+  REV_SERVER_CIDR: 192.168.0.0/16
+  REV_SERVER_DOMAIN: nodes.${dns_zone}
+  REV_SERVER_TARGET: ${externaldns_ip_address}
+  TZ: US/Eastern
+  WEBTHEME: default-darker

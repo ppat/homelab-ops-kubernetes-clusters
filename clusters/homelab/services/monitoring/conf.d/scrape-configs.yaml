@@ -1,0 +1,18 @@
+---
+extraArgs: []
+#  --history.limit=1000
+
+envFrom: []
+#  - secretRef:
+#      name: name-of-secret
+
+serviceMonitor:
+  params:
+  - name: syn-rs1221
+    module: ["synology"]
+    target: syn-rs1221.nodes.${dns_zone}
+    auth: ["public_v2"]
+  - name: hp-m477fdw
+    module: ["printer_mib"]
+    target: hp-m477fdw.nodes.${dns_zone}
+    auth: ["public_v2"]
