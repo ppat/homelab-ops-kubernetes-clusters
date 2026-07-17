@@ -58,19 +58,30 @@ so sub-skills can stay short and just link back:
   `Kustomization`. If a `patches:` block deletes a `HelmRelease` or an
   `ExternalSecret`, the doc must say so — the apps repo's own README won't
   know about it.
-- **Never restate a configuration value that lives in exactly one file
-  already — point to that file instead.** This isn't only about versions. It
-  includes any number, list, or setting that can change without the change
-  being architectural: a `ref.tag`, a replica count from
-  `postBuild.substitute`, a Renovate soak-period day-count or reviewer name,
-  a cron schedule, a per-policy namespace exclusion list, an IP range or
-  CIDR. The test isn't "is this a version" — it's "if someone edits the one
-  file that actually controls this, does my sentence become wrong without
-  anyone noticing." If yes, replace the value with a pointer: "see
-  `kustomizations/infra-security-core.yaml`," not its `ref.tag`; "see
-  `.github/renovate/k3s-version.json`," not "auto-merges after 7 days."
-  Describing *what a mechanism does* ("k3s patches may auto-merge after a
-  soak period") stays fine — restating its *current parameter* doesn't.
+- **Elevate, don't restate.** A doc's job is to give a reader an
+  understanding of what exists and how to operate or maintain it, at a level
+  of abstraction *above* the code — not to re-express the code's own
+  specifics in prose form. If a sentence could only have been written by
+  reading the implementation and transcribing what it says, it's restating,
+  not elevating, regardless of whether that specific value happens to be
+  stable or volatile. Example: "Renovate manages Flux-source and k3s-version
+  bumps" is elevation — it tells the reader what exists and why the split
+  matters. Following it with the exact soak-period day count, the exact
+  reviewer username, or the exact `packageRules` match pattern is restating
+  the config file's own content back at the reader, in a form that now has
+  to be kept in sync with it for no benefit — the file is right there, and
+  the doc added a second, weaker copy of the same fact instead of a new
+  layer of understanding. The same applies to exact cron schedules, exact
+  `exclude` namespace lists, exact CIDRs, exact enum values reproduced
+  verbatim, exact JSON6902 patch bodies, or a `dependsOn` list spelled out
+  as prose instead of drawn as a graph — none of these become acceptable
+  just because the underlying value is unlikely to change soon. When a
+  concrete value is genuinely necessary to make a sentence meaningful, point
+  to the file that holds it ("see `kustomizations/infra-security-core.yaml`")
+  rather than copying the value into the doc. Drift risk is a *symptom* of
+  restating, not the definition of it — a value that never changes can still
+  be a restatement problem if copying it added no understanding a reader
+  didn't already get from the higher-level sentence around it.
 - **Match altitude to the doc, not to how interesting the change is.** A
   fascinating implementation detail inside a module's Helm values still
   doesn't belong in `clusters/<name>/README.md` — that doc answers "what's
@@ -88,84 +99,13 @@ so sub-skills can stay short and just link back:
 - **Run `pre-commit run --files <changed-docs>` before considering the update
   done.** All six docs must pass markdownlint (and yamllint/kubeconform if a
   manifest changed alongside).
-- **A Mermaid diagram must actually render on GitHub and in VS Code, not just
-  parse.** Both platforms use the current mermaid.js and its stock sanitizer.
-  Verify any diagram you write or edit before considering it done — see
-  "Verifying a Mermaid diagram renders correctly" below. Don't rely on eyeballing
-  the source for correctness; the failure modes here are silent (a diagram
-  renders "successfully" with nodes stacked on top of each other, or GitHub
-  shows a parse error with no useful line number).
-
-### Verifying a Mermaid diagram renders correctly
-
-Two known, easy-to-hit failure classes, both confirmed against a real
-mermaid.js render (not just `mermaid.parse`, which does not catch either one):
-
-1. **`direction LR`/`TB` inside a `subgraph` is silently dropped the moment
-   that subgraph has any edge crossing its boundary** (an edge from a node
-   inside it to a node outside it, or vice versa) — this is a known upstream
-   Mermaid layout limitation, not a bug in this repo's diagrams specifically.
-   The dropped direction isn't just cosmetic: it can cause nodes in different
-   subgraphs to be laid out at identical coordinates, i.e. actually
-   overlapping. Every dependency-graph diagram in this repo has cross-subgraph
-   edges, so **do not add a `direction` line inside a `subgraph` here** —
-   check whether your new/edited subgraph has any inbound or outbound edge; if
-   it does (it almost always will), omit `direction` entirely rather than
-   write a line that will be silently ignored.
-2. **Angle brackets in a node label must be escaped as `&lt;`/`&gt;`, never
-   written raw** (e.g. `root["clusters/&lt;name&gt;/"]`, not
-   `root["clusters/<name>/"]`). GitHub's markdown sanitizer parses an
-   unescaped `<name>` as the start of an HTML tag and can break rendering.
-   This is easy to miss because a raw angle bracket parses fine locally and
-   even renders fine in some contexts — it fails specifically under GitHub's
-   sanitization pass.
-
-To verify a diagram before finishing, render it with mermaid.js locally
-(don't rely on a browser-based headless renderer like `mermaid-cli` unless
-one is already working in this environment — installing a browser purely to
-render a diagram is out of scope for a doc update): use the `mermaid` npm
-package inside a `jsdom` environment. Sample harness — save as a script, run
-with `node`, pass the `.mmd` source as an argument:
-
-```js
-import { JSDOM } from 'jsdom';
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { pretendToBeVisual: true });
-global.window = dom.window;
-global.document = dom.window.document;
-Object.defineProperty(global, 'navigator', { value: dom.window.navigator, configurable: true });
-class FakeCSSStyleSheet {
-  cssRules = [];
-  replaceSync() {}
-  insertRule(rule, index) { this.cssRules.splice(index ?? this.cssRules.length, 0, rule); return index ?? this.cssRules.length - 1; }
-}
-global.CSSStyleSheet = FakeCSSStyleSheet;
-dom.window.CSSStyleSheet = FakeCSSStyleSheet;
-dom.window.SVGElement.prototype.getBBox = () => ({ x: 0, y: 0, width: 100, height: 20 });
-dom.window.SVGElement.prototype.getComputedTextLength = () => 60;
-
-const mermaid = (await import('mermaid')).default;
-mermaid.initialize({ startOnLoad: false });
-import fs from 'fs';
-const code = fs.readFileSync(process.argv[2], 'utf8');
-const { svg } = await mermaid.render('check', code);
-console.log('rendered, svg length:', svg.length);
-```
-
-After it renders, check for node overlap by extracting each
-`<g class="node ...">` element's `transform="translate(x, y)"` and confirming
-no two nodes share the same `(x, y)` pair — that's the concrete symptom of the
-`direction`-inside-subgraph bug above, and parsing/rendering success alone
-won't catch it. Run this check (`npm install jsdom mermaid` in a scratch
-directory is fine) whenever you add a subgraph, add a cross-subgraph edge, or
-touch a label containing `<`/`>`. A diagram with no subgraphs and no angle
-brackets in labels doesn't need this — the failure modes above don't apply to
-it.
-
-- **Prefer plain, unhyphenated node IDs** (`secx` not `sec-x`, `homeauto` not
-  `home-auto`). A hyphen in a bare node ID works today but is fragile across
-  Mermaid versions and easy to get wrong when adding edges (`sec-x --> net-x`
-  can be misparsed as `sec - x --> net - x` in some contexts). Keep the
-  human-readable name in the label (`secx[security-extra]`), not the ID.
+- **Any Mermaid diagram you write or edit must be verified with
+  `verify-mermaid-diagrams`, not just eyeballed.** That skill owns the
+  diagram-correctness rules (a couple of real, silent failure modes exist —
+  `mermaid.parse` succeeding is not evidence a diagram is right) and a
+  runnable verification harness. Invoke it whenever a change touches a
+  `subgraph`, an edge, or a label — don't re-derive or duplicate its rules
+  here.
 
 ## When a change doesn't fit any existing doc's scope
 

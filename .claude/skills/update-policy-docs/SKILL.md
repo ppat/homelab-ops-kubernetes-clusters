@@ -45,20 +45,20 @@ Both halves matter and come from different files.
   derived from the `description` annotation, not copied verbatim (those
   annotations are written for kyverno.io's policy library, often longer and
   more general than this repo needs). Don't enumerate the `exclude` block's
-  namespace/name list in the doc — that list grows (a new infra DaemonSet
-  needs a carve-out, a name-specific exclusion gets added) independently of
-  any decision that belongs in this doc, and a partial list is worse than no
-  list because it reads as complete. Say that exclusions exist and roughly
-  why in one clause ("excludes system namespaces and workloads that
-  legitimately need what this otherwise disallows") and point to the
-  policy's own `exclude` block for the current, exact list — this is the
-  same "point to the file, not the value" rule `update-repo-docs` states for
-  versions and counts, applied to exclusion lists.
+  namespace/name list in the doc — transcribing it is restating a config
+  file's own content, the exact thing `update-repo-docs`' "Elevate, don't
+  restate" rule targets, and it also drifts (a new infra DaemonSet needs a
+  carve-out, a name-specific exclusion gets added) independently of any
+  decision that belongs in this doc. A partial list is worse than none,
+  since it reads as complete. Say that exclusions exist and roughly why in
+  one clause ("excludes system namespaces and workloads that legitimately
+  need what this otherwise disallows") and point to the policy's own
+  `exclude` block for the exact, current list.
 - **Enforcement mode**: state current mode plainly (e.g. "all policies
   currently run in `Audit` mode"). If a cluster's `policy-*.yaml` patch
   changes `validationFailureAction`, update this immediately — it's a
-  safety-relevant fact, not a version number, so it doesn't fall under the
-  "don't track values that Renovate changes" rule that applies to versions.
+  safety-relevant fact about what the policy *does*, the kind of thing this
+  doc exists to convey, not a config value being restated for its own sake.
 - **Does NOT belong**: Kyverno version numbers, the full upstream policy
   description text, implementation-level rule syntax (JMESPath expressions,
   raw `match`/`exclude` YAML) — link to the file instead of reproducing its
@@ -73,7 +73,9 @@ Both halves matter and come from different files.
    itself tell you which cluster is affected; the per-cluster `Kustomization`
    does.
 3. Update the group table and the relevant per-policy table in
-   `policies/README.md` in place.
+   `policies/README.md` in place. If the change affects the groups/clusters
+   relationship, update the Mermaid diagram too, then run
+   `verify-mermaid-diagrams` on it before moving on.
 4. If a change adds a wholly new group (not `baseline`/`restricted`/
    `best-practices`), that's a structural change worth flagging to
    `update-design-docs` too, since DESIGN.md's policy-enforcement section

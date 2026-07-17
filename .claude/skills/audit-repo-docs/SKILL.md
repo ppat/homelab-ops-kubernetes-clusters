@@ -57,26 +57,29 @@ verifies against the rules those skills already encode:
 
 ## Also check: convention violations that aren't classic "drift"
 
-Two categories worth checking even though they aren't a fact going stale
+Two categories worth checking even though neither is a fact going stale
 against a source file — both were found and fixed across all six docs once
 already, so treat them as recurring risks, not one-time cleanup:
 
-- **Restated tunable config.** Any specific value in a doc that duplicates a
-  number/list/setting living in exactly one config file (a soak-period day
-  count, a reviewer name, a cron schedule, an exclusion namespace list, a
-  CIDR) is a convention violation regardless of whether it's currently
-  *correct* — it's one edit to that file away from becoming a lie, and the
-  doc's own rules (see `update-repo-docs`) say it shouldn't be there at all.
-  Flag it even if the value still matches the source right now.
+- **Restating instead of elevating.** Flag any passage that only restates
+  what a config file, patch body, or manifest already says — a specific
+  number, list, cron schedule, CIDR, enum value, or JSON6902 body reproduced
+  in the doc instead of described by its effect and pointed at. This is a
+  violation regardless of whether the value happens to be currently
+  *correct* or likely to change — the test is whether the passage added
+  understanding above the source file, per `update-repo-docs`'s "Elevate,
+  don't restate." A value that will never change can still be a
+  restatement violation; conversely this is not simply "did a version
+  number sneak in" — check for restated mechanics and structure too (a
+  `dependsOn` list spelled out as prose, an `exclude` block's namespace
+  list transcribed, a patch's exact JSON6902 operations narrated line by
+  line).
 - **Mermaid diagrams that don't actually render correctly.** Check every
-  diagram in all six docs for: a `direction` line inside a `subgraph` that
-  also has an edge crossing its boundary (silently ignored by Mermaid, and
-  can cause real node overlap — not just dead syntax); unescaped `<`/`>`
-  inside a node label (breaks under GitHub's sanitizer). Render each diagram
-  with the harness in `update-repo-docs`' "Verifying a Mermaid diagram
-  renders correctly" and check for overlapping node coordinates — don't rely
-  on reading the Mermaid source, since both failure modes are invisible by
-  inspection alone (`mermaid.parse` succeeds on both).
+  diagram in all six docs against `verify-mermaid-diagrams`' rules
+  (`direction` inside a `subgraph` that also has a boundary-crossing edge;
+  unescaped `<`/`>` in a label) using its render-and-check harness — don't
+  rely on reading the Mermaid source, since both failure modes are
+  invisible by inspection and `mermaid.parse` succeeds on both.
 
 ## Procedure
 

@@ -58,21 +58,22 @@ the doc:
   `spec.dependsOn` across all this cluster's `Kustomization`s, grouped by
   core/extra/apps the same way the existing diagram does. Regenerate the
   whole diagram rather than patching one edge in by hand — a single added
-  `dependsOn` can change which nodes belong in which subgraph. These
-  diagrams group nodes into `subgraph`s and always have edges crossing those
-  subgraphs' boundaries (that's how the core/extra/apps layering is drawn) —
-  do **not** add a `direction` line inside any subgraph here, and use plain
-  unhyphenated node IDs (`secx`, not `sec-x`). See `update-repo-docs`'
-  "Verifying a Mermaid diagram renders correctly" for why, and render the
-  regenerated diagram before finishing to confirm no two nodes land on
-  identical coordinates.
-- **Does NOT belong**: `ref.tag` versions, replica counts or storage sizes
-  from `postBuild.substitute`, secret key names, exact CIDR/IP values from a
-  `services/tailscale/connector.yaml`-style resource, anything that changes
-  on a Renovate PR (or a config edit) without a human deciding the *shape* of
-  the deployment changed. If tempted to write a specific value, write a
-  pointer to the file that holds it instead — describe what the value is
-  *for*, not what it currently *is*.
+  `dependsOn` can change which nodes belong in which subgraph. Before
+  finishing, invoke `verify-mermaid-diagrams` on the regenerated diagram —
+  it owns the correctness rules for `subgraph`/`direction`/labels and a
+  render-and-check harness; don't skip it just because the diagram "looks"
+  right.
+- **Does NOT belong**: exact values that only restate what a config file
+  already says more precisely — `ref.tag` versions, replica counts or
+  storage sizes from `postBuild.substitute`, secret key names, exact
+  CIDR/IP values, a `patches:` body reproduced verbatim instead of described
+  by effect. The test isn't just "will this go stale" — even a value that's
+  unlikely to ever change still doesn't belong if writing it added no
+  understanding beyond what the surrounding sentence already gave the
+  reader. Describe what a value is *for* and, if a reader needs the exact
+  current value, point them to the file that holds it. See
+  `update-repo-docs`'s "Elevate, don't restate" for the general rule this
+  follows.
 
 ## Procedure
 
@@ -85,8 +86,7 @@ the doc:
    entry.
 4. If a module was added or removed, or a `dependsOn` edge changed, rebuild
    the Mermaid dependency graph rather than hand-editing individual node
-   lines. Render it afterward to confirm it renders cleanly and no nodes
-   overlap (see `update-repo-docs`).
+   lines. Run `verify-mermaid-diagrams` on the result before moving on.
 5. If the change also affects wiring mechanics that DESIGN.md documents in
    the abstract (a new kind of `patches:` usage, a new `services/` pattern
    not yet described there), flag it — that's `update-design-docs`'
