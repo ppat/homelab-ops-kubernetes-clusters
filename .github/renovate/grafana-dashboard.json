@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "customDatasources": {
+    "grafana-dashboards": {
+      "defaultRegistryUrlTemplate": "https://grafana.com/api/dashboards/{{packageName}}",
+      "format": "json",
+      "transformTemplates": [
+        "{\"releases\":[{\"version\": $string(revision)}]}"
+      ]
+    }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": [
+        "(^|/)grafana-dashboards.yaml$"
+      ],
+      "matchStrings": [
+        "#\\s+renovate:\\s+depName=\"(?<depName>.*)\"\\n\\s+gnetId:\\s+(?<packageName>.*?)\\n\\s+revision:\\s+(?<currentValue>.*)"
+      ],
+      "versioningTemplate": "regex:^(?<major>\\d+)$",
+      "datasourceTemplate": "custom.grafana-dashboards"
+    }
+  ],
+  "packageRules": [
+    {
+      "addLabels": [
+        "dependency-type:grafana-dashboard"
+      ],
+      "automerge": false,
+      "commitMessageAction": "update dashboard",
+      "description": "grafana dashboards | configure automerge, commit message action, labels, min-release age and reviewers",
+      "matchFileNames": [
+        "**/grafana-dashboards.yaml"
+      ],
+      "minimumReleaseAge": "30 days",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}"
+    }
+  ]
+}
