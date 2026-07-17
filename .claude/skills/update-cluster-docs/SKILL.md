@@ -50,10 +50,20 @@ the doc:
   ships (like `homelab`'s `apps-ai` deleting `ollama-release`), say so with a
   footnote — a reader trusting the apps-repo README alone would expect
   something that isn't actually there.
-- **Cluster-specific resources table** (`services/`, `outpost/`, etc.): path,
-  kind, and *why it exists* — named-lookup consumption vs. standalone. Don't
-  just restate the YAML; explain the relationship (which module looks this
-  up, or why it's independent).
+- **Cluster-specific resources table** (`services/`, `outpost/`, etc.):
+  `Directory | Purpose`, one row per directory — not per file, and not one
+  column per Kubernetes `Kind`. The Purpose cell states intent (what this
+  achieves and why it exists) and the consumer relationship (which module
+  picks it up by name, or that it's a standalone resource with no module
+  awareness) — it does not name specific `Kind`s, resource names, generated
+  `ConfigMap`/`Secret` names, or enumerate the files inside the directory.
+  That's implementation detail a reader can get by opening the directory,
+  and listing it just gives the doc more surface area to drift out of sync
+  as files get added/renamed/split inside a directory whose *purpose*
+  hasn't changed. Read every file in the directory before writing the row —
+  don't infer purpose from filenames alone (e.g. a Promtail scrape-config
+  file named after one app may also scrape several others; check
+  `job_name`s, not just the filename).
 - **Dependency graph diagram** (Mermaid `flowchart`): should mirror
   `spec.dependsOn` across all this cluster's `Kustomization`s, grouped by
   core/extra/apps the same way the existing diagram does. Regenerate the

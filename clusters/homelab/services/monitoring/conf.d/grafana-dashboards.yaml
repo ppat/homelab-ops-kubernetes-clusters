@@ -1,0 +1,178 @@
+---
+## Configure grafana dashboard providers
+## ref: http://docs.grafana.org/administration/provisioning/#dashboards
+## `path` must be /var/lib/grafana/dashboards/<provider_name>
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+    - name: default
+      disableDeletion: false
+      editable: true
+      folder: ""
+      options:
+        path: /var/lib/grafana/dashboards/default
+      orgId: 1
+      type: file
+    - name: flux
+      disableDeletion: false
+      editable: true
+      folder: Flux
+      options:
+        path: /var/lib/grafana/dashboards/flux
+      orgId: 1
+      type: file
+    - name: minio
+      disableDeletion: false
+      editable: true
+      folder: Minio
+      options:
+        path: /var/lib/grafana/dashboards/minio
+      orgId: 1
+      type: file
+    - name: unpoller
+      disableDeletion: false
+      editable: true
+      folder: "UniFi"
+      options:
+        path: /var/lib/grafana/dashboards/unpoller
+      orgId: 1
+      type: file
+    - name: synology
+      disableDeletion: false
+      editable: true
+      folder: "Synology"
+      options:
+        path: /var/lib/grafana/dashboards/synology
+      orgId: 1
+      type: file
+
+## Configure grafana dashboard to import
+## NOTE: To use dashboards you must also enable/configure dashboardProviders
+## ref: https://grafana.com/dashboards
+##
+## dashboards per provider, use provider name as key.
+##
+dashboards:
+  default:
+    cert-manager:
+      url: https://raw.githubusercontent.com./monitoring-mixins/website/master/assets/cert-manager/dashboards/overview.json
+      datasource: prometheus
+    external-dns:
+      # renovate: depName="ExternalDNS"
+      gnetId: 15038
+      revision: 3
+      datasource: prometheus
+    external-secrets:
+      # renovate-gh-raw-url: datasource=github-releases depName=external-secrets/external-secrets
+      url: https://raw.githubusercontent.com./external-secrets/external-secrets/v0.18.1/docs/snippets/dashboard.json
+      datasource: prometheus
+    longhorn:
+      # renovate: depName="Longhorn"
+      gnetId: 16888
+      revision: 9
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    metallb:
+      # renovate: depName="MetalLB"
+      gnetId: 20162
+      revision: 6
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    traefik:
+      # renovate-gh-raw-url: datasource=github-releases depName=traefik/traefik
+      url: https://raw.githubusercontent.com/traefik/traefik/v3.4.1/contrib/grafana/traefik-kubernetes.json
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    authentik:
+      # renovate: depName="Authentik"
+      gnetId: 14837
+      revision: 2
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    blocky:
+      # renovate-gh-raw-url: datasource=github-releases depName=0xERR0R/blocky
+      url: https://raw.githubusercontent.com./0xERR0R/blocky/v0.26.2/docs/blocky-grafana.json
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+      # - name: VAR_BLOCKY_URL
+      #   value: http://blocky.dns.svc.cluster.local
+
+  minio:
+    minio-cluster:
+      # renovate: depName="MinIO Cluster"
+      gnetId: 13502
+      revision: 26
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    minio-buckets:
+      # renovate: depName="MinIO Buckets"
+      gnetId: 19237
+      revision: 2
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    minio-nodes:
+      # renovate-gh-raw-url: datasource=github-releases depName=minio/minio
+      url: https://raw.githubusercontent.com/minio/minio/RELEASE.2024-09-22T00-33-43Z/docs/metrics/prometheus/grafana/node/minio-node.json
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+  flux:
+    flux-cluster:
+      url: https://raw.githubusercontent.com./fluxcd/flux2-monitoring-example/main/monitoring/configs/dashboards/cluster.json
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    flux-control-plane:
+      url: https://raw.githubusercontent.com./fluxcd/flux2-monitoring-example/main/monitoring/configs/dashboards/control-plane.json
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    flux-logs:
+      url: https://raw.githubusercontent.com./fluxcd/flux2-monitoring-example/main/monitoring/configs/dashboards/logs.json
+      datasource:
+      - name: DS_LOKI
+        value: loki
+  unpoller:
+    unifi-insights:
+      # renovate: depName="UniFi-Poller: Client Insights"
+      gnetId: 11315
+      revision: 9
+      datasource: prometheus
+    unifi-network-sites:
+      # renovate: depName="UniFi-Poller: Network Sites"
+      gnetId: 11311
+      revision: 5
+      datasource: prometheus
+    unifi-usw:
+      # renovate: depName="UniFi-Poller: USW Insights"
+      gnetId: 11312
+      revision: 9
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+    unifi-uap:
+      # renovate: depName="UniFi-Poller: UAP Insights"
+      gnetId: 11314
+      revision: 10
+      datasource:
+      - name: DS_PROMETHEUS
+        value: prometheus
+  synology:
+    nas-details:
+      # not updated via renovate as latest version is incompatible w/ snmp.yml in kubernetes-snmp-exporter
+      gnetId: 14284
+      revision: 9
+      datasource: prometheus
+    nas-overview:
+      # not updated via renovate as latest version is incompatible w/ snmp.yml in kubernetes-snmp-exporter
+      gnetId: 14364
+      revision: 8
+      datasource: prometheus

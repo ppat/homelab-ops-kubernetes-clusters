@@ -36,12 +36,9 @@ dedicated `outpost/` directory — content authored directly in this repo rather
 than pulled from the apps repo (its `Kustomization`, `infra-security-outpost`,
 sources from `root`, not a module `GitRepository`):
 
-| Path | Kind | Purpose |
-| --- | --- | --- |
-| `outpost/helm-release-authentik-outpost.yaml` | `HelmRelease` (`authentik-remote-cluster` chart) | Deploys a remote Authentik outpost so this cluster's Ingress can authenticate against the Authentik instance running on `homelab`, without running Authentik itself here |
-| `outpost/middleware-forward-auth.yaml` | Traefik `Middleware` (`forward-auth`) | Routes Ingress auth checks to the outpost's `forwardAuth` endpoint |
-| `outpost/ingress-authentik-outpost.yaml` | `Ingress` | Exposes the outpost's own auth endpoint |
-| `outpost/namespace.yaml` | `Namespace` | `authentik` namespace (this cluster only runs the outpost, not the full Authentik stack) |
+| Directory | Purpose |
+| --- | --- |
+| `outpost/` | Deploys a remote Authentik outpost, with the routing/ingress to reach it, so this cluster's Ingress can authenticate against the Authentik instance running on `homelab` without running Authentik itself here |
 
 This exists because SSO (`components/sso`) is used across both clusters, but
 Authentik itself (`security-extra`) only runs on `homelab` — the outpost lets

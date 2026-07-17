@@ -49,12 +49,14 @@ Resources under `services/` that aren't modules — see
 [DESIGN.md#the-services-directory](../../DESIGN.md#the-services-directory)
 for the general pattern.
 
-| Path | Kind | Purpose |
-| --- | --- | --- |
-| `services/downloaders/downloaders-gluetun-config.yaml` | `ConfigMap` (`gluetun-config`) | VPN provider/server selection and port-forwarding hooks, read by name by the `gluetun` sidecar inside `apps-downloaders` |
-| `services/downloaders/downloaders-gluetun-secrets.yaml` | `ExternalSecret` (`gluetun-secrets`) | WireGuard private key for the same `gluetun` sidecar |
-| `services/tailscale/connector.yaml` | Tailscale `Connector` | Subnet router for the homelab LAN + exit node, a custom resource for the CRD the `networking-extra` module's Tailscale operator installs — not something that module ships an instance of itself |
-| `services/tailscale/proxyclass.yaml` | Tailscale `ProxyClass` | Grants the Tailscale proxy pod `NET_ADMIN` + TUN device access needed for the connector above |
+| Directory | Purpose |
+| --- | --- |
+| `services/dns/` | Tunes Pi-hole's DNS/DNSSEC/reverse-DNS behavior, picked up by name by `networking-extra`'s Pi-hole |
+| `services/downloaders/` | Supplies VPN provider/server selection, port-forwarding hooks, and the WireGuard key for qBittorrent's `gluetun` VPN sidecar inside `apps-downloaders`, picked up by name |
+| `services/logging/` | Tunes Loki's log retention and adds Promtail scrape jobs for apps that write logs to a PVC instead of stdout (Pi-hole, Plex, UniFi, Traefik) — picked up by name by `observability-core`'s Loki/Promtail |
+| `services/longhorn-system/` | Supplies S3 credentials for Longhorn's off-cluster backup target (cluster-nas MinIO), picked up by name by `storage-core`'s Longhorn |
+| `services/monitoring/` | Adds extra Grafana dashboards/providers and SNMP scrape targets (a NAS, a printer), picked up by name by `observability-core`'s Grafana and `observability-extra`'s SNMP Exporter respectively |
+| `services/tailscale/` | Standalone subnet-router/exit-node config for the homelab LAN — `networking-extra` ships the Tailscale operator and its CRDs, but not an instance of them; this cluster provides its own |
 
 ## Module dependency graph
 
