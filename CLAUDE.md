@@ -77,6 +77,24 @@ Conventional Commits, enforced by commitlint (`commitlint.config.js`):
 - header max 120 chars; scope must be one of: `cluster-homelab`, `cluster-nas`, `dev-tools`, `github-actions`, `kubernetes-api`, `policies`, `renovate`, `release`
 - version bumps to a module use scope matching the cluster, e.g. `chore(cluster-homelab): deploy infra-security-core (v0.2.5 -> v0.2.6)`
 
+## Pull requests
+
+GitHub is configured to **squash-merge** every PR into `main` — all commits
+on a branch collapse into a single commit at merge time. GitHub seeds the
+squash commit from the PR's **first commit**: the first commit's subject
+line becomes the PR title, and the rest of its message becomes the PR body
+(later commits' messages are discarded from that seed, though GitHub also
+appends a list of all commit subjects below the body).
+
+Practical effect: **write the first commit on a branch as if it already
+describes everything the branch will eventually do**, not just that first
+step. If a branch grows additional commits, go back and reword the first
+commit's message (`git commit --amend` if it's still last, or a rebase
+otherwise) to fold in what the later commits added, before opening or
+updating the PR. A first commit message that only describes its own small
+slice will ship as an incomplete PR title/body even though the branch as a
+whole did more.
+
 ## Dependency updates
 
 Renovate manages module version bumps (`clusters/*/sources/*.yaml`) and k3s
