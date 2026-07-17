@@ -53,7 +53,7 @@ for the general pattern.
 | --- | --- | --- |
 | `services/downloaders/downloaders-gluetun-config.yaml` | `ConfigMap` (`gluetun-config`) | VPN provider/server selection and port-forwarding hooks, read by name by the `gluetun` sidecar inside `apps-downloaders` |
 | `services/downloaders/downloaders-gluetun-secrets.yaml` | `ExternalSecret` (`gluetun-secrets`) | WireGuard private key for the same `gluetun` sidecar |
-| `services/tailscale/connector.yaml` | Tailscale `Connector` | Subnet router (`192.168.8.0/24`) + exit node, a custom resource for the CRD the `networking-extra` module's Tailscale operator installs — not something that module ships an instance of itself |
+| `services/tailscale/connector.yaml` | Tailscale `Connector` | Subnet router for the homelab LAN + exit node, a custom resource for the CRD the `networking-extra` module's Tailscale operator installs — not something that module ships an instance of itself |
 | `services/tailscale/proxyclass.yaml` | Tailscale `ProxyClass` | Grants the Tailscale proxy pod `NET_ADMIN` + TUN device access needed for the connector above |
 
 ## Module dependency graph

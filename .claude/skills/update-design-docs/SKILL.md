@@ -51,6 +51,14 @@ DESIGN.md and add at most one pointer line to CLAUDE.md.
   changing its filename. Update DESIGN.md's CI table and/or
   "Versioning and updates" section, and CLAUDE.md's Commands/CI-enforcement
   section if the change affects a command a contributor would run locally.
+  Renovate config is exactly the case the restated-config rule targets —
+  describe what a `packageRules` entry *does* ("k3s patch bumps may
+  auto-merge after a soak period; major/minor always require review") and
+  point to `.github/renovate/*.json` for the current soak-period length or
+  reviewer name, don't quote them. Job *names* in the CI table are fine to
+  state exactly (they're structural, not tunable parameters) — the line is
+  between "this job exists and does X" (stable) and "this job runs on this
+  exact schedule/threshold" (tunable, so point to the file).
 - **New or removed cluster**: update README.md's cluster table, DESIGN.md's
   references to "both clusters" (search for that literal phrase — it appears
   multiple times and assumes exactly two), and spawn a whole new
@@ -80,7 +88,14 @@ system; the other two document its *current contents*.
    a single file's diff.
 3. Update DESIGN.md's relevant section, including its Mermaid diagram if the
    change affects a relationship the diagram depicts. Regenerate rather than
-   patch a diagram when a node or edge's meaning has changed.
+   patch a diagram when a node or edge's meaning has changed. If the diagram
+   uses `subgraph` blocks with edges crossing them (DESIGN.md's
+   "Two repositories, one system" and "Cluster directory anatomy" diagrams
+   both do), don't add a `direction` line inside a subgraph, escape any `<`/`>`
+   in a label as `&lt;`/`&gt;`, and render the result before finishing to
+   confirm it renders cleanly with no overlapping nodes — see
+   `update-repo-docs`'s "Verifying a Mermaid diagram renders correctly" for
+   why and how.
 4. Update CLAUDE.md only if the change affects something a contributor would
    need without opening DESIGN.md (a new command, a new commit scope, a new
    top-level directory worth naming in the layout bullets). Otherwise leave

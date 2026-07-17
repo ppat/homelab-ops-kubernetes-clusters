@@ -51,8 +51,32 @@ verifies against the rules those skills already encode:
   but isn't restated here — these docs deliberately link out rather than
   duplicate. Missing restatement isn't drift; a broken or misleading link
   is.
-- Prose style, wording choices, or diagram aesthetics — this audit checks
-  factual accuracy, not writing quality.
+- Prose style or wording choices — this audit checks factual accuracy, not
+  writing quality. Diagram *aesthetics* (color choices, layout) are also out
+  of scope, but diagram *correctness* is not — see below.
+
+## Also check: convention violations that aren't classic "drift"
+
+Two categories worth checking even though they aren't a fact going stale
+against a source file — both were found and fixed across all six docs once
+already, so treat them as recurring risks, not one-time cleanup:
+
+- **Restated tunable config.** Any specific value in a doc that duplicates a
+  number/list/setting living in exactly one config file (a soak-period day
+  count, a reviewer name, a cron schedule, an exclusion namespace list, a
+  CIDR) is a convention violation regardless of whether it's currently
+  *correct* — it's one edit to that file away from becoming a lie, and the
+  doc's own rules (see `update-repo-docs`) say it shouldn't be there at all.
+  Flag it even if the value still matches the source right now.
+- **Mermaid diagrams that don't actually render correctly.** Check every
+  diagram in all six docs for: a `direction` line inside a `subgraph` that
+  also has an edge crossing its boundary (silently ignored by Mermaid, and
+  can cause real node overlap — not just dead syntax); unescaped `<`/`>`
+  inside a node label (breaks under GitHub's sanitizer). Render each diagram
+  with the harness in `update-repo-docs`' "Verifying a Mermaid diagram
+  renders correctly" and check for overlapping node coordinates — don't rely
+  on reading the Mermaid source, since both failure modes are invisible by
+  inspection alone (`mermaid.parse` succeeds on both).
 
 ## Procedure
 
@@ -69,8 +93,11 @@ verifies against the rules those skills already encode:
    - **Fabricated**: a doc entry has no corresponding file/resource anymore
      (rare, but check for it — usually from a doc edit made without
      re-verifying against the file).
-   - **Convention violation**: a version number, count, or other value crept
-     in that the doc's own rules say shouldn't be there.
+   - **Convention violation**: a version number, count, tunable config value,
+     or other value crept in that the doc's own rules say shouldn't be
+     there — including a Mermaid diagram that fails to render correctly (dead
+     `direction` inside a bounded subgraph, unescaped angle brackets, or
+     confirmed node overlap).
 4. Report findings grouped by doc, each with: the specific claim, what the
    source file actually shows, and the classification above. Don't edit any
    file — hand the report back to the user (or to `update-repo-docs`, if the

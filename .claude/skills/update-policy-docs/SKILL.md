@@ -23,10 +23,12 @@ Both halves matter and come from different files.
    `resources: [../baseline]` — restricted-cluster docs need both lists.
 2. Each `policies/<group>/*.yaml` file itself — read the
    `metadata.annotations.policies.kyverno.io/description` and the
-   `spec.rules`/`match`/`exclude` blocks. The annotation gives the plain-English
-   intent; the `exclude` block tells you which namespaces are carved out
-   (e.g. `kube-system`, `longhorn-system`) — that's often the detail worth
-   documenting, since it's what makes the policy safe to run at all.
+   `spec.rules`/`match`/`exclude` blocks. The annotation gives the
+   plain-English intent; the `exclude` block tells you *that* namespaces or
+   named workloads are carved out and roughly why (so you can write "excludes
+   system namespaces and a handful of workloads that legitimately need this"),
+   but don't transcribe the actual namespace/name list into the doc — see
+   "What belongs" below for why that specific list drifts.
 3. `clusters/<name>/kustomizations/policy-*.yaml` (one per cluster, per
    group) — this is where `validationFailureAction` gets patched (Audit vs.
    the enforcing mode) and confirms which groups a given cluster actually
@@ -42,10 +44,16 @@ Both halves matter and come from different files.
 - **Per-policy tables**: policy name and a short plain-English restriction —
   derived from the `description` annotation, not copied verbatim (those
   annotations are written for kyverno.io's policy library, often longer and
-  more general than this repo needs). Mention an `exclude`d namespace only
-  when it changes the practical scope (e.g. "excludes `kube-system`,
-  `longhorn-system`" is worth a line; excluding a namespace that doesn't
-  otherwise appear in this repo isn't).
+  more general than this repo needs). Don't enumerate the `exclude` block's
+  namespace/name list in the doc — that list grows (a new infra DaemonSet
+  needs a carve-out, a name-specific exclusion gets added) independently of
+  any decision that belongs in this doc, and a partial list is worse than no
+  list because it reads as complete. Say that exclusions exist and roughly
+  why in one clause ("excludes system namespaces and workloads that
+  legitimately need what this otherwise disallows") and point to the
+  policy's own `exclude` block for the current, exact list — this is the
+  same "point to the file, not the value" rule `update-repo-docs` states for
+  versions and counts, applied to exclusion lists.
 - **Enforcement mode**: state current mode plainly (e.g. "all policies
   currently run in `Audit` mode"). If a cluster's `policy-*.yaml` patch
   changes `validationFailureAction`, update this immediately — it's a
