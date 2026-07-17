@@ -22,20 +22,18 @@ repo and are released there independently, one version per module.
 ```mermaid
 flowchart LR
     subgraph apps["homelab-ops-kubernetes-apps"]
-        direction TB
         M1["infrastructure/subsystems/*"]
         M2["apps/subsystems/*"]
         M3["components/*"]
     end
 
     subgraph clusters["homelab-ops-kubernetes-clusters (this repo)"]
-        direction TB
         GR["GitRepository\n(pinned to a released tag)"]
         KZ["Kustomization\n(path, dependsOn, components,\npostBuild, patches)"]
         GR --> KZ
     end
 
-    apps -- "released tag\ne.g. infra-security-core-v0.2.6" --> GR
+    apps -- "released tag" --> GR
     KZ -- "spec.path points into" --> apps
     KZ -- "spec.components mixes in" --> M3
 
@@ -93,8 +91,8 @@ that module are made:
 
 ```mermaid
 flowchart TB
-    GR["GitRepository (sources/infra-security-core.yaml)\nref.tag: infra-security-core-v0.2.6\nignore: only /infrastructure/subsystems/security-core + /components"]
-    KZ["Kustomization (kustomizations/infra-security-core.yaml)\npath: ./infrastructure/subsystems/security-core"]
+    GR["GitRepository (sources/&lt;module&gt;.yaml)\nref.tag: a released tag of the apps repo"]
+    KZ["Kustomization (kustomizations/&lt;module&gt;.yaml)\npath: into the apps repo's module directory"]
     GR -->|sourceRef| KZ
 
     KZ --> DEP["dependsOn\nother Kustomizations that must be Ready first"]
@@ -129,10 +127,12 @@ spec:
 
 All four mechanisms — `dependsOn`, `components`, `postBuild`, `patches` — are
 applied *only* at this point of use, never inside the module itself. That's what
-lets the same module serve both clusters differently: `infra-networking-core` on
-`homelab` sets `externaldns_txtowner_prefix: k8s.` while on `nas` it's `k8s.nas.`,
-and `nas`'s copy patches Traefik to run as a `Deployment` with 2 replicas instead
-of a `DaemonSet`.
+lets the same module serve both clusters differently: `networking-core` runs on
+both `homelab` and `nas` with different `postBuild.substitute` values (e.g. a
+per-cluster DNS TXT-record owner prefix, so external-dns on one cluster doesn't
+clobber the other's records) and a patch on `nas` alone that changes how Traefik
+is deployed there. The exact values are in each cluster's
+`kustomizations/infra-networking-core.yaml`.
 
 ## The `services/` directory
 
@@ -157,8 +157,7 @@ module's own manifests, for two distinct reasons:
 
 ```mermaid
 flowchart LR
-    subgraph svc["services/<name>/"]
-        direction TB
+    subgraph svc["services/&lt;name&gt;/"]
         A["ConfigMap / Secret\nlooked up by name from inside a module"]
         B["Standalone CRs\n(no module awareness)"]
     end
@@ -210,12 +209,14 @@ flowchart LR
     classDef ext fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
     classDef k8s fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
     class BW ext
-    class CSS,CS,K8SSECRET,K8SSECRET k8s
+    class CSS,CS,K8SSECRET k8s
 ```
 
-`cluster-secrets` holds cluster-wide values (DNS zone, domain name, external IPs
-for MetalLB/Pi-hole/Plex/etc., cert-issuer email) that many modules'
-`postBuild.substituteFrom` pull from. Module-specific secrets (e.g. the
+`cluster-secrets` is one `ExternalSecret` holding every value that's genuinely
+cluster-wide rather than owned by a single module — DNS/domain identifiers,
+per-service external IPs handed out by MetalLB, the cert-issuer contact email.
+Any module's `postBuild.substituteFrom` can pull from it; the exact key list is
+`cluster/secrets/cluster-secrets.yaml`. Module-specific secrets (e.g. the
 downloaders' VPN key in `services/downloaders/downloaders-gluetun-secrets.yaml`)
 are their own `ExternalSecret`s pointed at the same `ClusterSecretStore`, scoped
 to the namespace that needs them. `ClusterSecretStore`/`ExternalSecret` objects
@@ -252,18 +253,18 @@ checks locally (`.pre-commit-config.yaml`).
 
 ## Versioning and updates
 
-Renovate (`.github/renovate.json` + `.github/renovate/*.json`) manages two
-categories of updates in this repo:
+Renovate manages two categories of version bumps in this repo, each grouped
+and labeled per cluster: **Flux sources** (a module's `ref.tag` in
+`clusters/*/sources/*.yaml`, bumped when the apps repo cuts a new release) and
+**k3s version** (`cluster/kubernetes-version/server-upgrade.yaml`). A module
+bump changes deployed behavior, so it always requires human review — the
+`diff-changes` PR comment (see [CI and validation](#ci-and-validation)) is what
+that review is based on. k3s patch bumps may auto-merge after a soak period;
+major/minor bumps always require review. Exact soak periods and reviewers are
+configuration, not design, and belong to `.github/renovate/*.json` — read
+those files rather than this doc for the current values.
 
-- **Flux sources** (`clusters/*/sources/*.yaml`): bumps to a module's `ref.tag`
-  when a new release lands in the apps repo. Always `automerge: false`, grouped
-  and labeled by cluster (`cluster:homelab` / `cluster:nas`) since a version bump
-  changes deployed behavior and always warrants review via the `diff-changes`
-  PR comment.
-- **k3s version** (`cluster/kubernetes-version/server-upgrade.yaml`): patch
-  bumps auto-eligible after a 7-day soak; major/minor require review
-  (`reviewers: ["ppat"]`) and a 60-day soak.
-
-Commits follow Conventional Commits with `commitlint.config.js` enforcing scope
-one of: `cluster-homelab`, `cluster-nas`, `dev-tools`, `github-actions`,
-`kubernetes-api`, `policies`, `renovate`, `release`.
+Commits follow Conventional Commits, enforced by `commitlint.config.js` (see
+[CLAUDE.md](./CLAUDE.md#commit-conventions) for the current scope list). A
+version-bump commit's scope names the cluster it deploys to, e.g.
+`cluster-homelab`.

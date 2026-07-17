@@ -56,7 +56,6 @@ flowchart TB
     classDef outpost fill:#fde68a,stroke:#d97706,color:#92400e
 
     subgraph Core["Infrastructure (Core)"]
-        direction LR
         sec[security-core]:::core
         nfs[storage: csi-driver-nfs]:::core
         minio[storage: minio]:::core
@@ -67,7 +66,6 @@ flowchart TB
     end
 
     subgraph Apps["Applications"]
-        direction LR
         bw[bitwarden]:::apps
         harbor:::apps
     end

@@ -75,7 +75,7 @@ affected `HelmRelease`/`Kustomization` resources on any PR touching
 Conventional Commits, enforced by commitlint (`commitlint.config.js`):
 
 - header max 120 chars; scope must be one of: `cluster-homelab`, `cluster-nas`, `dev-tools`, `github-actions`, `kubernetes-api`, `policies`, `renovate`, `release`
-- version bumps to a module use scope matching the cluster, e.g. `chore(cluster-homelab): deploy infra-security-core (v0.2.5 -> v0.2.6)`
+- version bumps to a module use scope matching the cluster, e.g. `chore(cluster-homelab): deploy <module> (<old-version> -> <new-version>)`
 
 ## Pull requests
 
@@ -98,7 +98,9 @@ whole did more.
 ## Dependency updates
 
 Renovate manages module version bumps (`clusters/*/sources/*.yaml`) and k3s
-version bumps (`cluster/kubernetes-version/server-upgrade.yaml`). Module bumps
-never auto-merge (config-split across `.github/renovate/*.json`); k3s patches
-auto-merge after a 7-day soak, major/minor require review. See
+version bumps (`cluster/kubernetes-version/server-upgrade.yaml`); config is
+split across `.github/renovate/*.json` by category. Module bumps always
+require review; k3s patch bumps may auto-merge after a soak period, major/minor
+always require review. Current soak periods and reviewers are in
+`.github/renovate/*.json`, not restated here. See
 [DESIGN.md#versioning-and-updates](./DESIGN.md#versioning-and-updates).

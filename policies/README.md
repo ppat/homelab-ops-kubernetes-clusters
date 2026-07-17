@@ -75,12 +75,18 @@ Applied to both clusters. Mixes validation, mutation, and scheduled cleanup:
 
 | Policy | Type | What it does |
 | --- | --- | --- |
-| `add-default-resources` | Mutate | Adds default CPU/memory requests to containers missing them (excludes `kube-system`, `longhorn-system`) |
-| `add-emptydir-sizelimit` | Mutate | Adds a `sizeLimit` to `emptyDir` volumes missing one (excludes `kube-system`, `longhorn-system`) |
-| `add-ndots` | Mutate | Sets DNS `ndots: 1` on Pods outside `dns`/`kube-system`/`longhorn-system` |
+| `add-default-resources` | Mutate | Adds default CPU/memory requests to containers missing them |
+| `add-emptydir-sizelimit` | Mutate | Adds a `sizeLimit` to `emptyDir` volumes missing one |
+| `add-ndots` | Mutate | Sets DNS `ndots: 1` on Pods, avoiding an extra DNS lookup per query |
 | `disallow-cri-sock-mount` | Validate | Blocks mounting the container runtime socket |
 | `disallow-latest-tag` | Validate | Requires an explicit, non-`latest` image tag |
-| `require-probes` | Validate | Requires a liveness/readiness/startup probe (excludes `csi-driver-nfs`, `kube-system`) |
+| `require-probes` | Validate | Requires a liveness, readiness, or startup probe on every container |
 | `restrict-node-port` | Validate | Blocks `Service` type `NodePort` |
-| `cleanup-bare-pods` | Cleanup | Deletes unowned (controller-less) Pods daily at 05:00 UTC |
-| `cleanup-empty-replicasets` | Cleanup | Deletes empty `ReplicaSet`s (excludes `kube-system`) |
+| `cleanup-bare-pods` | Cleanup | Deletes unowned (controller-less) Pods on a daily schedule |
+| `cleanup-empty-replicasets` | Cleanup | Deletes empty `ReplicaSet`s on a recurring schedule |
+
+Each policy excludes the system namespaces and workloads that legitimately need
+the behavior it otherwise disallows (e.g. `require-probes` doesn't apply to a
+handful of infra DaemonSets that have none) — the exact exclusion list is a
+policy-tuning detail that lives in, and should be read from, each policy's own
+`exclude` block rather than restated here.

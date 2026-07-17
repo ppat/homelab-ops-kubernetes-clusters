@@ -65,7 +65,6 @@ flowchart TB
     classDef apps fill:#93c5fd,stroke:#2563eb,color:#1e3a8a
 
     subgraph Core["Infrastructure (Core)"]
-        direction LR
         sec[security-core]:::core
         store[storage-core]:::core
         k8s[kubernetes-core]:::core
@@ -76,19 +75,17 @@ flowchart TB
     end
 
     subgraph Extra["Infrastructure (Extra)"]
-        direction LR
-        sec-x[security-extra]:::extra
-        net-x[networking-extra]:::extra
-        k8s-x[kubernetes-extra]:::extra
-        obs-x[observability-extra]:::extra
+        secx[security-extra]:::extra
+        netx[networking-extra]:::extra
+        k8sx[kubernetes-extra]:::extra
+        obsx[observability-extra]:::extra
     end
 
     subgraph Apps["Applications"]
-        direction LR
         ai:::apps
         coder:::apps
         downloaders:::apps
-        home-auto[home-automation]:::apps
+        homeauto[home-automation]:::apps
         media:::apps
         misc:::apps
     end
@@ -99,10 +96,10 @@ flowchart TB
     db --> net & store
     obs --> sec & net & store
 
-    sec-x --> sec & store & db
-    net-x --> sec & store & net
-    k8s-x --> k8s & net & store
-    obs-x --> obs
+    secx --> sec & store & db
+    netx --> sec & store & net
+    k8sx --> k8s & net & store
+    obsx --> obs
 
     Core --> Extra --> Apps
 ```
