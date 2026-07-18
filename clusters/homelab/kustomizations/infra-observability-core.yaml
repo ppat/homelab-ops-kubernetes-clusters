@@ -41,13 +41,12 @@ spec:
       prometheus_storage_class: sc-longhorn-replicated
       prometheus_storage_size: 60Gi
       prometheus_volume_name: pv-prometheus
-      loki_deployment_mode: simple-scalable
       loki_storage_class: sc-longhorn-replicated
       loki_retention_size: 30d
-      loki_read_storage_size: 2Gi
-      loki_write_storage_size: 16Gi
-      loki_backend_storage_size: 2Gi
-      loki_singlebinary_storage_size: 2Gi
+      # each of the 3 monolithic replicas combines the write/read/backend roles that SimpleScalable
+      # split across dedicated nodes - size for the write-path buffer (previously the write node's
+      # 16Gi), not the old singleBinary default, since every replica now does that work too.
+      loki_singlebinary_storage_size: 16Gi
       loki_results_cache_memory: "1024"
       loki_chunks_cache_memory: "4096"
       # see: https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-substitution-of-numbers-and-booleans
