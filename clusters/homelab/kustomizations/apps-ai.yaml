@@ -64,3 +64,20 @@ spec:
     target:
       group: postgresql.cnpg.io
       kind: Cluster
+  # mcp-playwright (v0.0.78) enforces a Host-header allowlist (DNS-rebinding
+  # protection) that defaults to localhost, so LiteLLM's in-cluster requests to
+  # http://mcp-playwright.ai.svc.cluster.local:8931/mcp get 403. Add --allowed-hosts
+  # for the service FQDN LiteLLM connects to. Interim cluster-side patch; remove once
+  # the apps-ai module sets --allowed-hosts itself and is re-pinned.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --allowed-hosts
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: mcp-playwright.ai.svc.cluster.local:8931
+    target:
+      kind: Deployment
+      name: mcp-playwright
+      namespace: ai
