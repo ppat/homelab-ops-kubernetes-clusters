@@ -1,0 +1,165 @@
+---
+# Hybrid model catalog for the LiteLLM AI gateway (apps-ai, namespace `ai`).
+# Consumed by the litellm-release HelmRelease via an optional valuesFrom ConfigMap
+# ref (valuesKey: model-config.yaml), so this catalog can change per-cluster
+# without an apps-repo module release.
+#
+# Shape: (a) a curated "featured" model_list -- human-friendly aliases with
+# explicit per-token costs, populating the OpenWebUI dropdown with reliable
+# spend tracking + fallbacks; (b) a flat `openrouter/*` wildcard catch-all so
+# any un-listed OpenRouter model is still callable via OpenWebUI's manual
+# model-ID field (nested `openrouter/<sub>/*` forms are buggy in LiteLLM --
+# flat form only).
+#
+# All slugs + input/output_cost_per_token (USD per token = USD-per-million / 1e6)
+# verified against https://openrouter.ai/api/v1/models on 2026-07-22.
+#
+# Two known wildcard caveats (not blockers): (1) cost tracking for wildcard
+# calls is reliable only for models in LiteLLM's bundled OpenRouter price map --
+# models outside it (and not in this featured list) report $0 spend until
+# promoted here; (2) after a cost-map hot-reload, wildcard access can go stale
+# (401) until the litellm-release pod restarts.
+proxy_config:
+  model_list:
+  - model_name: claude-opus
+    litellm_params:
+      # TODO verify: OpenRouter's live catalog entry for this alias has
+      # canonical_slug "~anthropic/claude-opus-latest" (leading tilde). LiteLLM
+      # forwards everything after "openrouter/" verbatim to OpenRouter's model
+      # field, so confirm this resolves; if OpenRouter 400s, retry with the
+      # tilde preserved (openrouter/~anthropic/claude-opus-latest).
+      model: openrouter/anthropic/claude-opus-latest
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+  - model_name: claude-sonnet
+    litellm_params:
+      # TODO verify tilde handling -- see claude-opus note above
+      # (canonical_slug: ~anthropic/claude-sonnet-latest).
+      model: openrouter/anthropic/claude-sonnet-latest
+      api_key: os.environ/OPENROUTER_API_KEY
+      # live intro pricing through 2026-08-31 ($2/$10 per 1M); sticker
+      # ($3/$15 per 1M) resumes after -- bump then.
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.00001
+  - model_name: claude-haiku
+    litellm_params:
+      # TODO verify tilde handling -- see claude-opus note above
+      # (canonical_slug: ~anthropic/claude-haiku-latest).
+      model: openrouter/anthropic/claude-haiku-latest
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000005
+  - model_name: gpt
+    litellm_params:
+      model: openrouter/openai/gpt-5.6-sol
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.00003
+  - model_name: gpt-mini
+    litellm_params:
+      # TODO verify tilde handling -- see claude-opus note above
+      # (canonical_slug: ~openai/gpt-mini-latest).
+      model: openrouter/openai/gpt-mini-latest
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.00000075
+      output_cost_per_token: 0.0000045
+  - model_name: gpt-nano
+    litellm_params:
+      # no -latest alias exists for the nano tier; pinned to the concrete slug.
+      model: openrouter/openai/gpt-5-nano
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.00000005
+      output_cost_per_token: 0.0000004
+  - model_name: gemini-pro
+    litellm_params:
+      # TODO verify tilde handling -- see claude-opus note above
+      # (canonical_slug: ~google/gemini-pro-latest).
+      model: openrouter/google/gemini-pro-latest
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.000012
+  - model_name: gemini-flash
+    litellm_params:
+      # confirmed current flagship flash tier (newer than 3.1/3.5); pinned to
+      # the concrete slug rather than the ~google/gemini-flash-latest alias.
+      model: openrouter/google/gemini-3.6-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.0000015
+      output_cost_per_token: 0.0000075
+  - model_name: grok
+    litellm_params:
+      # TODO verify tilde handling -- see claude-opus note above
+      # (canonical_slug: ~x-ai/grok-latest).
+      model: openrouter/x-ai/grok-latest
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.000006
+  - model_name: deepseek
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-pro
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000000435
+      output_cost_per_token: 0.00000087
+  - model_name: kimi
+    litellm_params:
+      model: openrouter/moonshotai/kimi-k3
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000003
+      output_cost_per_token: 0.000015
+  - model_name: qwen
+    litellm_params:
+      model: openrouter/qwen/qwen3.7-max
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000001475
+      output_cost_per_token: 0.000004425
+  - model_name: llama
+    litellm_params:
+      model: openrouter/meta-llama/llama-4-maverick
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.0000002
+      output_cost_per_token: 0.0000008
+  - model_name: mistral
+    litellm_params:
+      model: openrouter/mistralai/mistral-large-2512
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.0000005
+      output_cost_per_token: 0.0000015
+  - model_name: glm
+    litellm_params:
+      model: openrouter/z-ai/glm-5.2
+      api_key: os.environ/OPENROUTER_API_KEY
+      input_cost_per_token: 0.000000805
+      output_cost_per_token: 0.00000253
+  # --- wildcard catch-all (flat form only) ---
+  - model_name: "openrouter/*"
+    litellm_params:
+      model: "openrouter/*"
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  router_settings:
+    routing_strategy: simple-shuffle
+    allowed_fails: 3
+    cooldown_time: 60
+    fallbacks:
+    - claude-opus:
+      - claude-sonnet
+    - claude-sonnet:
+      - claude-haiku
+      - gpt
+    - claude-haiku:
+      - gemini-flash
+    - gpt:
+      - claude-sonnet
+    - gpt-mini:
+      - gpt-nano
+    - gemini-pro:
+      - claude-sonnet
+    - gemini-flash:
+      - claude-haiku
+    - grok:
+      - claude-sonnet
+    - deepseek:
+      - kimi
+    - kimi:
+      - deepseek
