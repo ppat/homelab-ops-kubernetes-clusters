@@ -35,7 +35,7 @@ spec:
       db_bootstrap_owner: litellm
       db_name: litellm-db
       db_namespace: ai
-      db_replicas: "3"
+      db_replicas: "2"
       db_storage_class: sc-longhorn-local-non-replicated
       db_storage_size: 10Gi
       db_suffix_current: "v20260722"
@@ -64,32 +64,3 @@ spec:
     target:
       group: postgresql.cnpg.io
       kind: Cluster
-  # mcp-playwright (v0.0.78) enforces a Host-header allowlist (DNS-rebinding
-  # protection) that defaults to localhost, so LiteLLM's in-cluster requests to
-  # http://mcp-playwright.ai.svc.cluster.local:8931/mcp get 403. Add --allowed-hosts
-  # for the service FQDN LiteLLM connects to. Interim cluster-side patch; remove once
-  # the apps-ai module sets --allowed-hosts itself and is re-pinned.
-  # yamllint disable-line rule:indentation
-  - patch: |
-      - op: add
-        path: /spec/template/spec/containers/0/args/-
-        value: --allowed-hosts
-      - op: add
-        path: /spec/template/spec/containers/0/args/-
-        value: mcp-playwright.ai.svc.cluster.local:8931
-    target:
-      kind: Deployment
-      name: mcp-playwright
-      namespace: ai
-  # LiteLLM ships detect_prompt_injection in litellm_settings.callbacks inline in
-  # the apps-ai HelmRelease values; it's a replaced (not merged) list and inline
-  # values outrank our litellm-model-config ConfigMap, so it must be patched here.
-  # yamllint disable-line rule:indentation
-  - patch: |
-      - op: replace
-        path: /spec/values/proxy_config/litellm_settings/callbacks
-        value: ["prometheus"]
-    target:
-      kind: HelmRelease
-      name: litellm-release
-      namespace: ai
