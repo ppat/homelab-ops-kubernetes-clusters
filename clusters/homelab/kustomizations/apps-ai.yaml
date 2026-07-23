@@ -81,3 +81,15 @@ spec:
       kind: Deployment
       name: mcp-playwright
       namespace: ai
+  # LiteLLM ships detect_prompt_injection in litellm_settings.callbacks inline in
+  # the apps-ai HelmRelease values; it's a replaced (not merged) list and inline
+  # values outrank our litellm-model-config ConfigMap, so it must be patched here.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: replace
+        path: /spec/values/proxy_config/litellm_settings/callbacks
+        value: ["prometheus"]
+    target:
+      kind: HelmRelease
+      name: litellm-release
+      namespace: ai
