@@ -33,7 +33,7 @@ links below into the [apps repo](https://github.com/ppat/homelab-ops-kubernetes-
 
 | Module | Kustomization | Provides |
 | --- | --- | --- |
-| [ai](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/ai/README.md) | `apps-ai` | OpenWebUI (Ollama's own `HelmRelease` is deleted on this cluster — see note below) |
+| [ai](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/ai/README.md) | `apps-ai` | OpenWebUI, LiteLLM AI gateway (master-key auth only, no SSO forward-auth yet) fronting self-hosted mcp-context7 and mcp-playwright MCP servers (Ollama's own `HelmRelease` is deleted on this cluster — see note below) |
 | [coder](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/coder/README.md) | `apps-coder` | Remote development workspaces |
 | [downloaders](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/downloaders/README.md) | `apps-downloaders` | autobrr, Sonarr, Radarr, Lidarr, Prowlarr, qBittorrent, qui, SABnzbd, Seerr |
 | [home-automation](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/home-automation/README.md) | `apps-home-automation` | Home Assistant |
@@ -41,7 +41,8 @@ links below into the [apps repo](https://github.com/ppat/homelab-ops-kubernetes-
 | [misc](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/misc/README.md) | `apps-misc` | Maddy (SMTP relay) |
 
 Note: `apps-ai`'s `ollama-release` `HelmRelease` is deleted via patch on this
-cluster — Ollama runs elsewhere and this cluster's OpenWebUI points at it.
+cluster — Ollama isn't deployed here, and OpenWebUI is instead configured to
+use the in-cluster LiteLLM gateway as its model backend.
 
 ## Cluster-specific services
 
@@ -51,6 +52,7 @@ for the general pattern.
 
 | Directory | Purpose |
 | --- | --- |
+| `services/ai/` | Supplies an optional model catalog and routing config for the LiteLLM gateway — featured model aliases with cost tracking plus a provider wildcard catch-all and router fallbacks — picked up by name by `apps-ai`'s LiteLLM `HelmRelease` |
 | `services/dns/` | Tunes Pi-hole's DNS/DNSSEC/reverse-DNS behavior, picked up by name by `networking-extra`'s Pi-hole |
 | `services/downloaders/` | Supplies VPN provider/server selection, port-forwarding hooks, and the WireGuard key for qBittorrent's `gluetun` VPN sidecar inside `apps-downloaders`, picked up by name |
 | `services/logging/` | Tunes Loki's log retention and adds Promtail scrape jobs for apps that write logs to a PVC instead of stdout (Pi-hole, Plex, Traefik) — picked up by name by `observability-core`'s Loki/Promtail |
