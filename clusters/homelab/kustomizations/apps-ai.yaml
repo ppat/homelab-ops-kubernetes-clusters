@@ -49,15 +49,6 @@ spec:
       name: cluster-secrets
   patches:
   # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      kind: HelmRelease
-      metadata:
-        name: ollama-release
-    target:
-      kind: HelmRelease
-      name: ollama-release
-  # yamllint disable-line rule:indentation
   - patch: |
       - op: add
         path: /spec/affinity

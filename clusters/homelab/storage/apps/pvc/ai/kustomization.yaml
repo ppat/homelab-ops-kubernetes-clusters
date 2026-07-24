@@ -4,21 +4,8 @@ kind: Kustomization
 
 resources:
 - openwebui.yaml
-- ollama.yaml
 
 patches:
-# yamllint disable-line rule:indentation
-- patch: |-
-    apiVersion: v1
-    kind: PersistentVolumeClaim
-    metadata:
-      name: irrelevant
-      labels:
-        recurring-job.longhorn.io/source: enabled
-        recurring-job-group.longhorn.io/default: enabled
-  target:
-    kind: PersistentVolumeClaim
-    name: ollama
 # yamllint disable-line rule:indentation
 - patch: |-
     apiVersion: v1
