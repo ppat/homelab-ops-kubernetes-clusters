@@ -173,3 +173,18 @@ spec:
     target:
       kind: Deployment
       name: mcp-unifi-protect
+  # PVCs are cluster-provisioned (see storage/apps/pvc/ai/openclaw-data.yaml), matching
+  # the openwebui convention -- the module's own openclaw-data PVC is deleted here so
+  # only the cluster-provisioned one exists (avoids two Flux Kustomizations owning it).
+  # yamllint disable-line rule:indentation
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: openclaw-data
+        namespace: openclaw
+    target:
+      kind: PersistentVolumeClaim
+      name: openclaw-data
+      namespace: openclaw
