@@ -48,7 +48,7 @@ for the general pattern.
 
 | Directory | Purpose |
 | --- | --- |
-| `services/ai/` | Supplies an optional model catalog and routing config for the LiteLLM gateway — featured model aliases with cost tracking plus a provider wildcard catch-all and router fallbacks — picked up by name by `apps-ai`'s LiteLLM `HelmRelease` |
+| `services/ai/` | Supplies an optional model catalog and routing config for the LiteLLM gateway — featured model aliases with cost tracking plus a provider wildcard catch-all and router fallbacks — picked up by name by `apps-ai`'s LiteLLM `HelmRelease`. Also holds example n8n workflow exports (`services/ai/n8n/workflows/`), staged here for manual import at rollout since n8n↔OpenClaw wiring is cluster-specific |
 | `services/dns/` | Tunes Pi-hole's DNS/DNSSEC/reverse-DNS behavior, picked up by name by `networking-extra`'s Pi-hole |
 | `services/downloaders/` | Supplies VPN provider/server selection, port-forwarding hooks, and the WireGuard key for qBittorrent's `gluetun` VPN sidecar inside `apps-downloaders`, picked up by name |
 | `services/logging/` | Tunes Loki's log retention and adds Promtail scrape jobs for apps that write logs to a PVC instead of stdout (Pi-hole, Plex, Traefik) — picked up by name by `observability-core`'s Loki/Promtail |

@@ -90,3 +90,60 @@ spec:
       kind: HelmRelease
       name: kube-prometheus-stack-release
       namespace: monitoring
+  # Route alerts to n8n's Alertmanager-intake webhook (apps-ai's alertmanager-receiver
+  # workflow) instead of the chart's default null receiver -- Alertmanager otherwise has
+  # zero receivers configured. Watchdog stays routed to 'null' so the dead-man's-switch
+  # heartbeat doesn't spam the webhook. Inert until that n8n workflow is manually imported
+  # and activated (clusters#740) -- until then this just posts to a 404.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/alertmanager/config
+        value:
+          global:
+            resolve_timeout: 5m
+          inhibit_rules:
+          - source_matchers:
+            - 'severity = critical'
+            target_matchers:
+            - 'severity =~ warning|info'
+            equal:
+            - 'namespace'
+            - 'alertname'
+          - source_matchers:
+            - 'severity = warning'
+            target_matchers:
+            - 'severity = info'
+            equal:
+            - 'namespace'
+            - 'alertname'
+          - source_matchers:
+            - 'alertname = InfoInhibitor'
+            target_matchers:
+            - 'severity = info'
+            equal:
+            - 'namespace'
+          - target_matchers:
+            - 'alertname = InfoInhibitor'
+          route:
+            group_by: ['namespace']
+            group_wait: 30s
+            group_interval: 5m
+            repeat_interval: 12h
+            receiver: 'n8n-webhook'
+            routes:
+            - receiver: 'null'
+              matchers:
+              - alertname = "Watchdog"
+          receivers:
+          - name: 'null'
+          - name: 'n8n-webhook'
+            webhook_configs:
+            - url: 'http://n8n.n8n.svc.cluster.local:5678/webhook/alertmanager'
+          templates:
+          - '/etc/alertmanager/config/*.tmpl'
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: kube-prometheus-stack-release
+      namespace: monitoring

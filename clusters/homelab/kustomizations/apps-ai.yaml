@@ -41,6 +41,9 @@ spec:
       db_storage_size: 10Gi
       db_suffix_current: "v20260723"
       db_suffix_restore: "v20260722"
+      n8n_db_storage_size: 10Gi
+      n8n_db_storage_class: sc-longhorn-local-non-replicated
+      n8n_db_suffix_current: "v20260725"
       secret_store: bitwarden-secret-manager-store
       # see: https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-substitution-of-numbers-and-booleans
       quote: '"'
@@ -57,6 +60,81 @@ spec:
     target:
       group: postgresql.cnpg.io
       kind: Cluster
+  # components/db-backups and components/db-restore both patch `kind: Cluster` with no name
+  # filter, so they also inject litellm's barman plugin config and recovery bootstrap into
+  # n8n's Cluster (namespace n8n). n8n's DB has no backup store of its own yet (unbacked by
+  # design for now -- see clusters#740), so undo that injection here and restore n8n's Cluster
+  # to a plain initdb bootstrap. Drop this patch once n8n gets its own db-backups wiring.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: remove
+        path: /spec/plugins
+      - op: remove
+        path: /spec/externalClusters
+      - op: remove
+        path: /spec/bootstrap/recovery
+      - op: add
+        path: /spec/bootstrap/initdb
+        value:
+          database: ${n8n_db_bootstrap_database:=n8n}
+          owner: ${n8n_db_bootstrap_owner:=n8n}
+    target:
+      group: postgresql.cnpg.io
+      kind: Cluster
+      namespace: n8n
+  # n8n's owner login email and SMTP sender are pulled from the n8n-secrets
+  # ExternalSecret (BWS keys n8n_owner_email / n8n_smtp_sender) instead of the module's
+  # hardcoded/postBuild-literal defaults -- add the two keys here rather than in the
+  # module so they stay scoped to this cluster's n8n instance.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/data/-
+        value:
+          secretKey: N8N_INSTANCE_OWNER_EMAIL
+          remoteRef:
+            key: n8n_owner_email
+      - op: add
+        path: /spec/data/-
+        value:
+          secretKey: N8N_SMTP_SENDER
+          remoteRef:
+            key: n8n_smtp_sender
+    target:
+      group: external-secrets.io
+      version: v1
+      kind: ExternalSecret
+      name: n8n-secrets
+  # Companion to the n8n-secrets patch above: point the n8n Deployment's owner-email and
+  # SMTP-sender envs at the two new secretKeyRefs instead of the module's literal defaults.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: irrelevant
+      spec:
+        template:
+          spec:
+            containers:
+            - name: n8n
+              env:
+              - name: N8N_INSTANCE_OWNER_EMAIL
+                value: null
+                valueFrom:
+                  secretKeyRef:
+                    name: n8n-secrets
+                    key: N8N_INSTANCE_OWNER_EMAIL
+              - name: N8N_SMTP_SENDER
+                value: null
+                valueFrom:
+                  secretKeyRef:
+                    name: n8n-secrets
+                    key: N8N_SMTP_SENDER
+    target:
+      kind: Deployment
+      namespace: n8n
+      name: n8n
   # Workaround: UNIFI_MCP_ALLOWED_HOSTS is missing the service port upstream,
   # so the MCP Python SDK's transport-security host check rejects every
   # request from LiteLLM with a 421 "Invalid Host header". Remove once fixed
