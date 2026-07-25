@@ -120,24 +120,3 @@ spec:
     target:
       kind: Deployment
       name: mcp-unifi-protect
-  # The upstream SMTP provider behind the Maddy relay rejects any From address
-  # that isn't the account's real sender, so n8n's hardcoded `n8n@${domain_name}`
-  # (apps#3383) can't be used as-is. Override it with the account's real sender,
-  # sourced from BWS via cluster-secrets rather than hardcoded here.
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: irrelevant
-      spec:
-        template:
-          spec:
-            containers:
-            - name: n8n
-              env:
-              - name: N8N_SMTP_SENDER
-                value: ${n8n_smtp_sender}
-    target:
-      kind: Deployment
-      name: n8n
