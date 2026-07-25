@@ -24,3 +24,9 @@ an `Execute Workflow` node, which n8n resolves post-import in the UI.
 Both pre-seeded credentials referenced by these workflows (LiteLLM Bearer, Maddy SMTP) come from
 `apps-ai`'s `n8n_credentials_overwrite` secret-store key — no manual credential setup is required,
 only the workflow import above.
+
+**Before importing**, edit `notify-subworkflow.json`'s email node: the `${domain_name}` tokens in
+its `fromEmail`/`toEmail` fields are Flux postBuild placeholders that only get substituted in
+GitOps-applied manifests, not on a manual `n8n import:workflow`. Replace `fromEmail` with the real
+SMTP sender (BWS key `cluster_homelab_n8n_smtp_sender`) and `toEmail` with the real notification
+recipient before importing.
