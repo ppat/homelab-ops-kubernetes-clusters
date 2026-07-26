@@ -180,5 +180,33 @@
   // enabled.
   "diagnostics": {
     "enabled": true
+  },
+
+  // Accepted risk: the pod's `fsGroup: 1000` (apps/subsystems/ai/openclaw/deployment.yaml,
+  // required so the non-root, uid-1000 gateway can write its PVC-backed state) makes these
+  // three PVC paths group-writable/group-readable by design -- there's no fsGroup mode that
+  // keeps a shared PVC writable for uid 1000 without also grouping in gid 1000. Only that one
+  // gateway process ever runs as gid 1000, so this is not exploitable in this single-tenant,
+  // single-operator pod (see OpenClaw's own "personal assistant trust model" note:
+  // docs.openclaw.ai/gateway/security -- one trusted operator boundary per gateway; someone
+  // able to touch Gateway host state is already treated as a trusted operator). Leave the
+  // deep-probe `operator.read` finding and any other future finding unsuppressed.
+  "security": {
+    "audit": {
+      "suppressions": [
+        {
+          "checkId": "fs.credentials_dir.perms_writable",
+          "reason": "fsGroup:1000 group-writable credentials dir; single-tenant pod, gid 1000 is only the gateway."
+        },
+        {
+          "checkId": "fs.state_dir.perms_group_writable",
+          "reason": "fsGroup:1000 group-writable state dir; single-tenant pod, gid 1000 is only the gateway."
+        },
+        {
+          "checkId": "fs.sessions_store.perms_readable",
+          "reason": "fsGroup:1000 group-readable sessions store; single-tenant pod, gid 1000 is only the gateway."
+        }
+      ]
+    }
   }
 }
