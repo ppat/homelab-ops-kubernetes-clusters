@@ -183,28 +183,23 @@
   },
 
   // Accepted risk: the pod's `fsGroup: 1000` (apps/subsystems/ai/openclaw/deployment.yaml,
-  // required so the non-root, uid-1000 gateway can write its PVC-backed state) makes these
-  // three PVC paths group-writable/group-readable by design -- there's no fsGroup mode that
-  // keeps a shared PVC writable for uid 1000 without also grouping in gid 1000. Only that one
-  // gateway process ever runs as gid 1000, so this is not exploitable in this single-tenant,
-  // single-operator pod (see OpenClaw's own "personal assistant trust model" note:
-  // docs.openclaw.ai/gateway/security -- one trusted operator boundary per gateway; someone
-  // able to touch Gateway host state is already treated as a trusted operator). Leave the
-  // deep-probe `operator.read` finding and any other future finding unsuppressed.
+  // required so the non-root, uid-1000 gateway can write its PVC-backed state) makes the PVC
+  // mount ROOT group-writable by design -- there's no fsGroup mode that keeps a shared PVC
+  // writable for uid 1000 without also grouping in gid 1000, and uid 1000 cannot chmod the
+  // kubelet-owned mount root (EPERM). Only that one gateway process ever runs as gid 1000, so
+  // this is not exploitable in this single-tenant, single-operator pod (see OpenClaw's own
+  // "personal assistant trust model" note: docs.openclaw.ai/gateway/security -- one trusted
+  // operator boundary per gateway). The sibling fs.credentials_dir.perms_writable and
+  // fs.sessions_store.perms_readable findings are NO LONGER suppressed: the custom image's
+  // entrypoint sets `umask 077`, so those gateway-created paths land 700/600 and the checks
+  // pass at the source instead of being waived here. Leave the deep-probe `operator.read`
+  // finding and any other future finding unsuppressed.
   "security": {
     "audit": {
       "suppressions": [
         {
-          "checkId": "fs.credentials_dir.perms_writable",
-          "reason": "fsGroup:1000 group-writable credentials dir; single-tenant pod, gid 1000 is only the gateway."
-        },
-        {
           "checkId": "fs.state_dir.perms_group_writable",
-          "reason": "fsGroup:1000 group-writable state dir; single-tenant pod, gid 1000 is only the gateway."
-        },
-        {
-          "checkId": "fs.sessions_store.perms_readable",
-          "reason": "fsGroup:1000 group-readable sessions store; single-tenant pod, gid 1000 is only the gateway."
+          "reason": "fsGroup:1000 group-writable PVC mount root; kubelet-owned, uid 1000 cannot chmod it. Single-tenant, single-operator pod; gid 1000 is only the gateway."
         }
       ]
     }
