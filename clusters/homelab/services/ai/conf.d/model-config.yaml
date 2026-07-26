@@ -76,6 +76,20 @@ proxy_config:
       # $0.05 / $0.40per 1M
       input_cost_per_token: 0.00000005
       output_cost_per_token: 0.0000004
+  - model_name: openai/text-embedding-3-small
+    litellm_params:
+      model: openrouter/openai/text-embedding-3-small
+      api_key: os.environ/OPENROUTER_API_KEY
+      # $0.02 / $0.00per 1M
+      input_cost_per_token: 0.00000002
+      output_cost_per_token: 0.00
+  - model_name: openai/gpt-4o-mini
+    litellm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+      # $0.15 / $0.60per 1M
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000006
   - model_name: google/gemini-pro-latest
     litellm_params:
       model: openrouter/~google/gemini-pro-latest

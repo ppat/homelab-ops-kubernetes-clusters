@@ -33,7 +33,7 @@
             "name": "OpenAI GPT-5 Nano"
           },
           {
-            "id": "openrouter/openai/text-embedding-3-small",
+            "id": "openai/text-embedding-3-small",
             "name": "OpenAI Text Embedding 3 Small"
           }
         ]
@@ -215,7 +215,7 @@
           },
           "embedding": {
             "provider": "litellm",
-            "model": "openrouter/openai/text-embedding-3-small"
+            "model": "openai/text-embedding-3-small"
           }
         }
       },
