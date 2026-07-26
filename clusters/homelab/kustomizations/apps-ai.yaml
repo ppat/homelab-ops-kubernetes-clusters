@@ -226,6 +226,9 @@ spec:
   #    openclaw-config-secrets Secret (see the ES split patch below); the reloader annotation
   #    lists both Secrets so a change to either restarts the pod. LITELLM_KEY /
   #    OPENCLAW_GATEWAY_TOKEN stay on openclaw-secrets.
+  #  - Control UI origin: OPENCLAW_CONTROL_UI_ORIGIN feeds gateway.controlUi.allowedOrigins
+  #    in openclaw.json (expanded by OpenClaw itself, not Flux). ${domain_name} is a Flux
+  #    postBuild var resolved after spec.patches, same as the ingress hostname.
   # yamllint disable-line rule:indentation
   - patch: |-
       apiVersion: apps/v1
@@ -272,6 +275,8 @@ spec:
                     key: OWNER_WHATSAPP_NUMBER
               - name: OPENCLAW_STATE_DIR
                 value: /home/node/.openclaw
+              - name: OPENCLAW_CONTROL_UI_ORIGIN
+                value: https://openclaw.${domain_name}
               - name: OPENCLAW_DATA_DIR
                 $patch: delete
               readinessProbe:

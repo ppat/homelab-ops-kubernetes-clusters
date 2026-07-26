@@ -112,6 +112,19 @@
     "auth": {
       "mode": "token",
       "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    // bind=lan requires the Control UI's browser origin to be listed explicitly (no
+    // wildcards allowed) or the gateway rejects it with "Browser origin not allowed".
+    // ${OPENCLAW_CONTROL_UI_ORIGIN} is expanded by OpenClaw itself from the container
+    // env at startup (NOT a Flux postBuild var) -- same mechanism as ${LITELLM_KEY} /
+    // ${OWNER_WHATSAPP_NUMBER} above. Localhost entries stay so port-forward/in-cluster
+    // access keeps working.
+    "controlUi": {
+      "allowedOrigins": [
+        "${OPENCLAW_CONTROL_UI_ORIGIN}",
+        "http://localhost:18789",
+        "http://127.0.0.1:18789"
+      ]
     }
   },
 
