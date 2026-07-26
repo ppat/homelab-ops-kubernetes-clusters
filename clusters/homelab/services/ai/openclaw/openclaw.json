@@ -87,10 +87,16 @@
   },
 
   // Inbound point for n8n / Alertmanager relays (see n8n's notify-subworkflow.json).
+  // allowedAgentIds/defaultSessionKey per `openclaw security audit` findings
+  // hooks.allowed_agent_ids_unrestricted (CRITICAL) / hooks.default_session_key_unset (WARN):
+  // without an explicit allowlist, hook requests can target any agent; "main" is the
+  // gateway's only configured agent id (agents.defaults has no named agent map here).
   "hooks": {
     "enabled": true,
     "token": "${OPENCLAW_HOOKS_TOKEN}",
-    "path": "/hooks/agent"
+    "path": "/hooks/agent",
+    "allowedAgentIds": ["main"],
+    "defaultSessionKey": "hook:ingress"
   },
 
   // Jobs are not declared statically here -- `cron.jobs` isn't part of the config schema
@@ -111,7 +117,27 @@
     "port": 18789,
     "auth": {
       "mode": "token",
-      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+      "token": "${OPENCLAW_GATEWAY_TOKEN}",
+      // Per `openclaw security audit` finding gateway.auth_no_rate_limit (WARN): throttle
+      // gateway login/auth attempts to reduce token brute-force risk.
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000
+      }
+    },
+    // bind=lan requires the Control UI's browser origin to be listed explicitly (no
+    // wildcards allowed) or the gateway rejects it with "Browser origin not allowed".
+    // ${OPENCLAW_CONTROL_UI_ORIGIN} is expanded by OpenClaw itself from the container
+    // env at startup (NOT a Flux postBuild var) -- same mechanism as ${LITELLM_KEY} /
+    // ${OWNER_WHATSAPP_NUMBER} above. Localhost entries stay so port-forward/in-cluster
+    // access keeps working.
+    "controlUi": {
+      "allowedOrigins": [
+        "${OPENCLAW_CONTROL_UI_ORIGIN}",
+        "http://localhost:18789",
+        "http://127.0.0.1:18789"
+      ]
     }
   },
 
@@ -154,5 +180,33 @@
   // enabled.
   "diagnostics": {
     "enabled": true
+  },
+
+  // Accepted risk: the pod's `fsGroup: 1000` (apps/subsystems/ai/openclaw/deployment.yaml,
+  // required so the non-root, uid-1000 gateway can write its PVC-backed state) makes these
+  // three PVC paths group-writable/group-readable by design -- there's no fsGroup mode that
+  // keeps a shared PVC writable for uid 1000 without also grouping in gid 1000. Only that one
+  // gateway process ever runs as gid 1000, so this is not exploitable in this single-tenant,
+  // single-operator pod (see OpenClaw's own "personal assistant trust model" note:
+  // docs.openclaw.ai/gateway/security -- one trusted operator boundary per gateway; someone
+  // able to touch Gateway host state is already treated as a trusted operator). Leave the
+  // deep-probe `operator.read` finding and any other future finding unsuppressed.
+  "security": {
+    "audit": {
+      "suppressions": [
+        {
+          "checkId": "fs.credentials_dir.perms_writable",
+          "reason": "fsGroup:1000 group-writable credentials dir; single-tenant pod, gid 1000 is only the gateway."
+        },
+        {
+          "checkId": "fs.state_dir.perms_group_writable",
+          "reason": "fsGroup:1000 group-writable state dir; single-tenant pod, gid 1000 is only the gateway."
+        },
+        {
+          "checkId": "fs.sessions_store.perms_readable",
+          "reason": "fsGroup:1000 group-readable sessions store; single-tenant pod, gid 1000 is only the gateway."
+        }
+      ]
+    }
   }
 }

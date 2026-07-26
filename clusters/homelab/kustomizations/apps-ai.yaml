@@ -226,6 +226,12 @@ spec:
   #    openclaw-config-secrets Secret (see the ES split patch below); the reloader annotation
   #    lists both Secrets so a change to either restarts the pod. LITELLM_KEY /
   #    OPENCLAW_GATEWAY_TOKEN stay on openclaw-secrets.
+  #  - Control UI origin: OPENCLAW_CONTROL_UI_ORIGIN feeds gateway.controlUi.allowedOrigins
+  #    in openclaw.json (expanded by OpenClaw itself, not Flux). ${domain_name} is a Flux
+  #    postBuild var resolved after spec.patches, same as the ingress hostname.
+  #  - Config perms (`openclaw security audit` finding fs.config.perms_world_readable,
+  #    CRITICAL): the seed initContainer now chmods the copied config to 600 (shell form,
+  #    since a chmod needs a second command after the cp).
   # yamllint disable-line rule:indentation
   - patch: |-
       apiVersion: apps/v1
@@ -241,10 +247,13 @@ spec:
             initContainers:
             - name: openclaw-config-seed
               image: docker.io/ppatlabs/openclaw:2026.7.1@sha256:8efc9d2e7a02e137031534d82eeee94b66938d26a3013d96d42643e5ad69fedc
+              # chmod 600 per `openclaw security audit` finding fs.config.perms_world_readable
+              # (CRITICAL): the ConfigMap-seeded copy lands 644 by default; the file is owned
+              # by uid 1000 (the gateway's runAsUser), so 600 stays readable by the gateway.
               command:
-              - cp
-              - /etc/openclaw-seed/openclaw.json
-              - /etc/openclaw/openclaw.json
+              - sh
+              - -c
+              - cp /etc/openclaw-seed/openclaw.json /etc/openclaw/openclaw.json && chmod 600 /etc/openclaw/openclaw.json
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -272,6 +281,8 @@ spec:
                     key: OWNER_WHATSAPP_NUMBER
               - name: OPENCLAW_STATE_DIR
                 value: /home/node/.openclaw
+              - name: OPENCLAW_CONTROL_UI_ORIGIN
+                value: https://openclaw.${domain_name}
               - name: OPENCLAW_DATA_DIR
                 $patch: delete
               readinessProbe:
