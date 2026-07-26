@@ -87,10 +87,16 @@
   },
 
   // Inbound point for n8n / Alertmanager relays (see n8n's notify-subworkflow.json).
+  // allowedAgentIds/defaultSessionKey per `openclaw security audit` findings
+  // hooks.allowed_agent_ids_unrestricted (CRITICAL) / hooks.default_session_key_unset (WARN):
+  // without an explicit allowlist, hook requests can target any agent; "main" is the
+  // gateway's only configured agent id (agents.defaults has no named agent map here).
   "hooks": {
     "enabled": true,
     "token": "${OPENCLAW_HOOKS_TOKEN}",
-    "path": "/hooks/agent"
+    "path": "/hooks/agent",
+    "allowedAgentIds": ["main"],
+    "defaultSessionKey": "hook:ingress"
   },
 
   // Jobs are not declared statically here -- `cron.jobs` isn't part of the config schema
@@ -111,7 +117,14 @@
     "port": 18789,
     "auth": {
       "mode": "token",
-      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+      "token": "${OPENCLAW_GATEWAY_TOKEN}",
+      // Per `openclaw security audit` finding gateway.auth_no_rate_limit (WARN): throttle
+      // gateway login/auth attempts to reduce token brute-force risk.
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000
+      }
     },
     // bind=lan requires the Control UI's browser origin to be listed explicitly (no
     // wildcards allowed) or the gateway rejects it with "Browser origin not allowed".
