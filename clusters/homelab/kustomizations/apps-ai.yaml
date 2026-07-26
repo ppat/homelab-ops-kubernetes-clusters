@@ -277,3 +277,69 @@ spec:
       kind: Deployment
       name: openclaw
       namespace: openclaw
+  # Secret split (homelab-ops-kubernetes-clusters#740): now that openclaw.json is
+  # cluster-owned, the two config-feature-coupled secrets it references -- the WhatsApp
+  # owner allowlist (OWNER_WHATSAPP_NUMBER) and the inbound hooks token
+  # (OPENCLAW_HOOKS_TOKEN) -- move to a cluster-owned ES co-located with the config
+  # (services/ai/openclaw/externalsecret-openclaw-config-secrets.yaml), so a config change
+  # that needs one of them stays a single-repo change. The module's openclaw-secrets ES
+  # keeps the universal LITELLM_KEY + OPENCLAW_GATEWAY_TOKEN. Same BWS keys, no new remote
+  # secrets. Drop the two moved entries from the module ES here.
+  #
+  # JSON6902 (by index) rather than a strategic-merge `$patch: delete` keyed by secretKey:
+  # ExternalSecret is a CRD with no schema known to kustomize, so a schema-less strategic
+  # merge can't match spec.data list items by key and instead replaces the whole list --
+  # it would drop LITELLM_KEY/OPENCLAW_GATEWAY_TOKEN too. The `test` ops guard the indices
+  # so this fails loudly if the module ever reorders its data entries (module order today:
+  # 0=OPENCLAW_GATEWAY_TOKEN, 1=LITELLM_KEY, 2=OPENCLAW_HOOKS_TOKEN, 3=OWNER_WHATSAPP_NUMBER).
+  # Remove the higher index first so the lower index stays valid.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: test
+        path: /spec/data/3/secretKey
+        value: OWNER_WHATSAPP_NUMBER
+      - op: remove
+        path: /spec/data/3
+      - op: test
+        path: /spec/data/2/secretKey
+        value: OPENCLAW_HOOKS_TOKEN
+      - op: remove
+        path: /spec/data/2
+    target:
+      group: external-secrets.io
+      kind: ExternalSecret
+      name: openclaw-secrets
+      namespace: openclaw
+  # Companion to the ES split above: point the two moved env vars at the new
+  # openclaw-config-secrets Secret (same keys), and add it to the reloader annotation so a
+  # change to either moved secret still restarts the pod. LITELLM_KEY /
+  # OPENCLAW_GATEWAY_TOKEN stay sourced from openclaw-secrets.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: openclaw
+        namespace: openclaw
+        annotations:
+          secret.reloader.stakater.com/reload: openclaw-secrets,openclaw-config-secrets
+      spec:
+        template:
+          spec:
+            containers:
+            - name: openclaw
+              env:
+              - name: OPENCLAW_HOOKS_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-config-secrets
+                    key: OPENCLAW_HOOKS_TOKEN
+              - name: OWNER_WHATSAPP_NUMBER
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-config-secrets
+                    key: OWNER_WHATSAPP_NUMBER
+    target:
+      kind: Deployment
+      name: openclaw
+      namespace: openclaw

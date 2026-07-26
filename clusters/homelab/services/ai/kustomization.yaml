@@ -2,6 +2,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+resources:
+# Feature-coupled OpenClaw secrets, co-located with the cluster-owned openclaw.json
+# (homelab-ops-kubernetes-clusters#740). See the manifest header for the split rationale.
+- openclaw/externalsecret-openclaw-config-secrets.yaml
+
 configMapGenerator:
 - name: litellm-model-config
   namespace: ai
