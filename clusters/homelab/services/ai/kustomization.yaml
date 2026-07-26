@@ -15,6 +15,12 @@ configMapGenerator:
   options:
     annotations:
       kustomize.toolkit.fluxcd.io/substitute: disabled
+    # helm-controller only re-reconciles the litellm HelmRelease on a change to this valuesFrom
+    # ConfigMap when it carries this label. Without it, a model-config.yaml edit isn't applied
+    # until the HR's reconcile interval; with it, the HR re-renders instantly and the chart's
+    # own checksum/config annotation rolls the litellm pod with the new model catalog.
+    labels:
+      reconcile.fluxcd.io/watch: "Enabled"
     disableNameSuffixHash: true
 # Interim cluster-side ownership of openclaw's config (homelab-ops-kubernetes-clusters#740):
 # the module's own ConfigMap of the same name is deleted via a patch in
