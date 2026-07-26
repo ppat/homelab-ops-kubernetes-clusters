@@ -188,3 +188,92 @@ spec:
       kind: PersistentVolumeClaim
       name: openclaw-data
       namespace: openclaw
+  # Interim (homelab-ops-kubernetes-clusters#740): openclaw's config moves cluster-side
+  # (services/ai/openclaw/openclaw.json, generated into a ConfigMap of the same name/
+  # namespace by config-services) so it can carry the deepseek thinkingFormat fix below
+  # without an apps-repo module release. Same dual-ownership pattern as the PVC delete
+  # above -- delete the module's copy so only the cluster-provided ConfigMap exists.
+  # To be ported into apps/subsystems/ai/openclaw in one pass later.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: openclaw-config
+        namespace: openclaw
+    target:
+      kind: ConfigMap
+      name: openclaw-config
+      namespace: openclaw
+  # A: OpenClaw's CLI writes back to its own config file (e.g. `openclaw channels login`
+  # rewrites credentials into openclaw.json), which fails with EBUSY against the module's
+  # read-only ConfigMap subPath mount. Seed the writable `config-dir` emptyDir from the
+  # ConfigMap via an initContainer instead, and drop the main container's read-only
+  # subPath mount so /etc/openclaw is fully writable. OPENCLAW_CONFIG_PATH already points
+  # at the writable copy, so no env change is needed for this fix.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: irrelevant
+      spec:
+        template:
+          spec:
+            initContainers:
+            - name: openclaw-config-seed
+              image: docker.io/ppatlabs/openclaw:2026.7.1@sha256:8efc9d2e7a02e137031534d82eeee94b66938d26a3013d96d42643e5ad69fedc
+              command:
+              - cp
+              - /etc/openclaw-seed/openclaw.json
+              - /etc/openclaw/openclaw.json
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                  - ALL
+              volumeMounts:
+              - name: config
+                mountPath: /etc/openclaw-seed
+                readOnly: true
+              - name: config-dir
+                mountPath: /etc/openclaw
+            containers:
+            - name: openclaw
+              volumeMounts:
+              - mountPath: /etc/openclaw/openclaw.json
+                $patch: delete
+    target:
+      kind: Deployment
+      name: openclaw
+      namespace: openclaw
+  # C: readiness was tied to /readyz, which only reports ready once WhatsApp is paired --
+  # decouple pod Ready from that optional channel by probing /healthz instead (same
+  # endpoint already used by the startup/liveness probes).
+  # env: OPENCLAW_DATA_DIR is not a real OpenClaw env var (no-op); the actual state dir
+  # override is OPENCLAW_STATE_DIR. Renamed here, same value.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: irrelevant
+      spec:
+        template:
+          spec:
+            containers:
+            - name: openclaw
+              env:
+              - name: OPENCLAW_DATA_DIR
+                $patch: delete
+              - name: OPENCLAW_STATE_DIR
+                value: /home/node/.openclaw
+              readinessProbe:
+                httpGet:
+                  path: /healthz
+    target:
+      kind: Deployment
+      name: openclaw
+      namespace: openclaw

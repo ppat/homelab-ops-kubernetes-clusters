@@ -11,3 +11,18 @@ configMapGenerator:
     annotations:
       kustomize.toolkit.fluxcd.io/substitute: disabled
     disableNameSuffixHash: true
+# Interim cluster-side ownership of openclaw's config (homelab-ops-kubernetes-clusters#740):
+# the module's own ConfigMap of the same name is deleted via a patch in
+# kustomizations/apps-ai.yaml so only this one exists. To be ported back into the
+# apps/subsystems/ai/openclaw module in one pass once the fixes below are proven out.
+- name: openclaw-config
+  namespace: openclaw
+  files:
+  - openclaw/openclaw.json
+  options:
+    annotations:
+      # openclaw.json's `${VAR}` tokens are expanded by OpenClaw itself from its own
+      # container env at startup, not by Flux -- without this, Flux's postBuild
+      # substitution would try (and fail) to resolve them before this ConfigMap is applied.
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    disableNameSuffixHash: true

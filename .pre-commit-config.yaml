@@ -6,6 +6,11 @@ repos:
   - id: check-added-large-files
   - id: check-executables-have-shebangs
   - id: check-json
+    # openclaw.json is JS-style JSON5 (comments) fed straight into a ConfigMap
+    # via configMapGenerator, not parsed by us -- OpenClaw's own JSON5 parser reads
+    # it -- so strict-JSON validation doesn't apply here (mirrors the .yamllint
+    # ignore homelab-ops-kubernetes-apps uses for the module's own copy).
+    exclude: ^clusters/homelab/services/ai/openclaw/openclaw\.json$
   - id: check-shebang-scripts-are-executable
   - id: detect-private-key
   - id: end-of-file-fixer
