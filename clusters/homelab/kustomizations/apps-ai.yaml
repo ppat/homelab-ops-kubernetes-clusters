@@ -206,18 +206,35 @@ spec:
       kind: ConfigMap
       name: openclaw-config
       namespace: openclaw
-  # A: OpenClaw's CLI writes back to its own config file (e.g. `openclaw channels login`
-  # rewrites credentials into openclaw.json), which fails with EBUSY against the module's
-  # read-only ConfigMap subPath mount. Seed the writable `config-dir` emptyDir from the
-  # ConfigMap via an initContainer instead, and drop the main container's read-only
-  # subPath mount so /etc/openclaw is fully writable. OPENCLAW_CONFIG_PATH already points
-  # at the writable copy, so no env change is needed for this fix.
+  # Consolidated openclaw Deployment patch -- all in-place edits to the openclaw Deployment
+  # live in this one strategic-merge entry (the module/PVC/ConfigMap/ES deletes stay
+  # separate since they target other resources). It does four things:
+  #  - Writable config seed (A): OpenClaw's CLI writes back to its own config file (e.g.
+  #    `openclaw channels login` rewrites credentials into openclaw.json), which fails with
+  #    EBUSY against the module's read-only ConfigMap subPath mount. An initContainer seeds
+  #    the writable `config-dir` emptyDir from the ConfigMap, and the main container's
+  #    read-only /etc/openclaw/openclaw.json subPath mount is dropped so /etc/openclaw is
+  #    fully writable. OPENCLAW_CONFIG_PATH already points at the writable copy.
+  #  - Readiness /healthz decouple (C): /readyz only reports ready once WhatsApp is paired;
+  #    probe /healthz instead (same endpoint startup/liveness already use) so pod Ready is
+  #    independent of that optional channel.
+  #  - STATE_DIR rename: OPENCLAW_DATA_DIR is not a real OpenClaw env var (no-op); the actual
+  #    state dir override is OPENCLAW_STATE_DIR. Renamed, same value.
+  #  - Config-coupled secret repoint (#740): the two secrets openclaw.json references --
+  #    OPENCLAW_HOOKS_TOKEN (hooks.token) and OWNER_WHATSAPP_NUMBER
+  #    (channels.whatsapp.allowFrom) -- now source from the cluster-owned
+  #    openclaw-config-secrets Secret (see the ES split patch below); the reloader annotation
+  #    lists both Secrets so a change to either restarts the pod. LITELLM_KEY /
+  #    OPENCLAW_GATEWAY_TOKEN stay on openclaw-secrets.
   # yamllint disable-line rule:indentation
-  - patch: |
+  - patch: |-
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: irrelevant
+        name: openclaw
+        namespace: openclaw
+        annotations:
+          secret.reloader.stakater.com/reload: openclaw-secrets,openclaw-config-secrets
       spec:
         template:
           spec:
@@ -242,37 +259,27 @@ spec:
                 mountPath: /etc/openclaw
             containers:
             - name: openclaw
-              volumeMounts:
-              - mountPath: /etc/openclaw/openclaw.json
-                $patch: delete
-    target:
-      kind: Deployment
-      name: openclaw
-      namespace: openclaw
-  # C: readiness was tied to /readyz, which only reports ready once WhatsApp is paired --
-  # decouple pod Ready from that optional channel by probing /healthz instead (same
-  # endpoint already used by the startup/liveness probes).
-  # env: OPENCLAW_DATA_DIR is not a real OpenClaw env var (no-op); the actual state dir
-  # override is OPENCLAW_STATE_DIR. Renamed here, same value.
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: irrelevant
-      spec:
-        template:
-          spec:
-            containers:
-            - name: openclaw
               env:
-              - name: OPENCLAW_DATA_DIR
-                $patch: delete
+              - name: OPENCLAW_HOOKS_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-config-secrets
+                    key: OPENCLAW_HOOKS_TOKEN
+              - name: OWNER_WHATSAPP_NUMBER
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-config-secrets
+                    key: OWNER_WHATSAPP_NUMBER
               - name: OPENCLAW_STATE_DIR
                 value: /home/node/.openclaw
+              - name: OPENCLAW_DATA_DIR
+                $patch: delete
               readinessProbe:
                 httpGet:
                   path: /healthz
+              volumeMounts:
+              - mountPath: /etc/openclaw/openclaw.json
+                $patch: delete
     target:
       kind: Deployment
       name: openclaw
@@ -309,37 +316,4 @@ spec:
       group: external-secrets.io
       kind: ExternalSecret
       name: openclaw-secrets
-      namespace: openclaw
-  # Companion to the ES split above: point the two moved env vars at the new
-  # openclaw-config-secrets Secret (same keys), and add it to the reloader annotation so a
-  # change to either moved secret still restarts the pod. LITELLM_KEY /
-  # OPENCLAW_GATEWAY_TOKEN stay sourced from openclaw-secrets.
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: openclaw
-        namespace: openclaw
-        annotations:
-          secret.reloader.stakater.com/reload: openclaw-secrets,openclaw-config-secrets
-      spec:
-        template:
-          spec:
-            containers:
-            - name: openclaw
-              env:
-              - name: OPENCLAW_HOOKS_TOKEN
-                valueFrom:
-                  secretKeyRef:
-                    name: openclaw-config-secrets
-                    key: OPENCLAW_HOOKS_TOKEN
-              - name: OWNER_WHATSAPP_NUMBER
-                valueFrom:
-                  secretKeyRef:
-                    name: openclaw-config-secrets
-                    key: OWNER_WHATSAPP_NUMBER
-    target:
-      kind: Deployment
-      name: openclaw
       namespace: openclaw
