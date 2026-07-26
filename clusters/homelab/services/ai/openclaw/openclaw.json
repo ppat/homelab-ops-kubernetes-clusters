@@ -13,12 +13,16 @@
             // OpenRouter's DeepSeek-v4 endpoint rejects the `thinking` param
             // OpenClaw sends by default (HTTP 400) -- "openrouter" compat mode
             // omits it instead. See homelab-ops-kubernetes-clusters#740.
-            "compat": { "thinkingFormat": "openrouter" }
+            "compat": {
+              "thinkingFormat": "openrouter"
+            }
           },
           {
             "id": "deepseek/deepseek-v4-flash",
             "name": "DeepSeek v4 Flash",
-            "compat": { "thinkingFormat": "openrouter" }
+            "compat": {
+              "thinkingFormat": "openrouter"
+            }
           },
           {
             "id": "google/gemini-3.5-flash-lite",
@@ -76,22 +80,32 @@
 
   "mcp": {
     "servers": {
-      "litellm-readonly": {
-        "url": "http://litellm.ai.svc.cluster.local:4000/mcp",
+      "context7": {
+        "url": "http://litellm.ai.svc.cluster.local:4000/context7_mcp/mcp",
+        "transport": "streamable-http",
+        "headers": {
+          "Authorization": "Bearer ${LITELLM_KEY}"
+        }
+      },
+      "grafana": {
+        "url": "http://litellm.ai.svc.cluster.local:4000/grafana_mcp/mcp",
         "transport": "streamable-http",
         "headers": {
           "Authorization": "Bearer ${LITELLM_KEY}"
         }
       },
       "home-assistant": {
-        "url": "http://mcp-home-assistant.ai.svc.cluster.local:8086/mcp",
+        "url": "http://litellm.ai.svc.cluster.local:4000/home_assistant_mcp/mcp",
         "transport": "streamable-http",
-        "toolFilter": {
-          "include": [
-            "get_*",
-            "list_*",
-            "read_*"
-          ]
+        "headers": {
+          "Authorization": "Bearer ${LITELLM_KEY}"
+        }
+      },
+      "playwright": {
+        "url": "http://litellm.ai.svc.cluster.local:4000/playwright_mcp/mcp",
+        "transport": "streamable-http",
+        "headers": {
+          "Authorization": "Bearer ${LITELLM_KEY}"
         }
       }
     }
@@ -134,7 +148,6 @@
         "lockoutMs": 300000
       }
     },
-    "bundledDiscovery": "compat",
     // bind=lan requires the Control UI's browser origin to be listed explicitly (no
     // wildcards allowed) or the gateway rejects it with "Browser origin not allowed".
     // Localhost entries stay so port-forward/in-cluster access keeps working.
@@ -212,7 +225,8 @@
       "whatsapp": {
         "enabled": true
       }
-    }
+    },
+    "bundledDiscovery": "allowlist"
   },
 
   "skills": {
@@ -228,19 +242,67 @@
       "apple-notes": {
         "enabled": false
       },
+      "apple-reminders": {
+        "enabled": false
+      },
       "bear-notes": {
+        "enabled": false
+      },
+      "blogwatcher": {
+        "enabled": false
+      },
+      "blucli": {
+        "enabled": false
+      },
+      "camsnap": {
         "enabled": false
       },
       "clawhub": {
         "enabled": false
       },
-      "gemini": {
+      "coding-agent": {
         "enabled": false
       },
       "eightctl": {
         "enabled": false
       },
+      "gemini": {
+        "enabled": false
+      },
+      "gifgrep": {
+        "enabled": false
+      },
+      "gog": {
+        "enabled": false
+      },
+      "goplaces": {
+        "enabled": false
+      },
+      "himalaya": {
+        "enabled": false
+      },
+      "mcporter": {
+        "enabled": false
+      },
+      "model-usage": {
+        "enabled": false
+      },
+      "nano-pdf": {
+        "enabled": false
+      },
       "notion": {
+        "enabled": false
+      },
+      "obsidian": {
+        "enabled": false
+      },
+      "openai-whisper": {
+        "enabled": false
+      },
+      "openai-whisper-api": {
+        "enabled": false
+      },
+      "openhue": {
         "enabled": false
       },
       "ordercli": {
@@ -249,10 +311,40 @@
       "oracle": {
         "enabled": false
       },
+      "peekaboo": {
+        "enabled": false
+      },
+      "sag": {
+        "enabled": false
+      },
+      "sherpa-onnx-tts": {
+        "enabled": false
+      },
+      "songsee": {
+        "enabled": false
+      },
+      "sonoscli": {
+        "enabled": false
+      },
+      "spotify-player": {
+        "enabled": false
+      },
+      "summarize": {
+        "enabled": false
+      },
       "trello": {
         "enabled": false
       },
       "things-mac": {
+        "enabled": false
+      },
+      "tmux": {
+        "enabled": false
+      },
+      "video-frames": {
+        "enabled": false
+      },
+      "xurl": {
         "enabled": false
       }
     }
