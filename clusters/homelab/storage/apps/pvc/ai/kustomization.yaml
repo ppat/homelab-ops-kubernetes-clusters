@@ -4,6 +4,8 @@ kind: Kustomization
 
 resources:
 - openwebui.yaml
+- n8n-data.yaml
+- openclaw-data.yaml
 
 patches:
 # yamllint disable-line rule:indentation
@@ -19,4 +21,3 @@ patches:
         recurring-job-group.longhorn.io/backup-ops: enabled
   target:
     kind: PersistentVolumeClaim
-    name: openwebui
