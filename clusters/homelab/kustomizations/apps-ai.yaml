@@ -188,3 +188,132 @@ spec:
       kind: PersistentVolumeClaim
       name: openclaw-data
       namespace: openclaw
+  # Interim (homelab-ops-kubernetes-clusters#740): openclaw's config moves cluster-side
+  # (services/ai/openclaw/openclaw.json, generated into a ConfigMap of the same name/
+  # namespace by config-services) so it can carry the deepseek thinkingFormat fix below
+  # without an apps-repo module release. Same dual-ownership pattern as the PVC delete
+  # above -- delete the module's copy so only the cluster-provided ConfigMap exists.
+  # To be ported into apps/subsystems/ai/openclaw in one pass later.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: openclaw-config
+        namespace: openclaw
+    target:
+      kind: ConfigMap
+      name: openclaw-config
+      namespace: openclaw
+  # Consolidated openclaw Deployment patch -- all in-place edits to the openclaw Deployment
+  # live in this one strategic-merge entry (the module/PVC/ConfigMap/ES deletes stay
+  # separate since they target other resources). It does four things:
+  #  - Writable config seed (A): OpenClaw's CLI writes back to its own config file (e.g.
+  #    `openclaw channels login` rewrites credentials into openclaw.json), which fails with
+  #    EBUSY against the module's read-only ConfigMap subPath mount. An initContainer seeds
+  #    the writable `config-dir` emptyDir from the ConfigMap, and the main container's
+  #    read-only /etc/openclaw/openclaw.json subPath mount is dropped so /etc/openclaw is
+  #    fully writable. OPENCLAW_CONFIG_PATH already points at the writable copy.
+  #  - Readiness /healthz decouple (C): /readyz only reports ready once WhatsApp is paired;
+  #    probe /healthz instead (same endpoint startup/liveness already use) so pod Ready is
+  #    independent of that optional channel.
+  #  - STATE_DIR rename: OPENCLAW_DATA_DIR is not a real OpenClaw env var (no-op); the actual
+  #    state dir override is OPENCLAW_STATE_DIR. Renamed, same value.
+  #  - Config-coupled secret repoint (#740): the two secrets openclaw.json references --
+  #    OPENCLAW_HOOKS_TOKEN (hooks.token) and OWNER_WHATSAPP_NUMBER
+  #    (channels.whatsapp.allowFrom) -- now source from the cluster-owned
+  #    openclaw-config-secrets Secret (see the ES split patch below); the reloader annotation
+  #    lists both Secrets so a change to either restarts the pod. LITELLM_KEY /
+  #    OPENCLAW_GATEWAY_TOKEN stay on openclaw-secrets.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: openclaw
+        namespace: openclaw
+        annotations:
+          secret.reloader.stakater.com/reload: openclaw-secrets,openclaw-config-secrets
+      spec:
+        template:
+          spec:
+            initContainers:
+            - name: openclaw-config-seed
+              image: docker.io/ppatlabs/openclaw:2026.7.1@sha256:8efc9d2e7a02e137031534d82eeee94b66938d26a3013d96d42643e5ad69fedc
+              command:
+              - cp
+              - /etc/openclaw-seed/openclaw.json
+              - /etc/openclaw/openclaw.json
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                  - ALL
+              volumeMounts:
+              - name: config
+                mountPath: /etc/openclaw-seed
+                readOnly: true
+              - name: config-dir
+                mountPath: /etc/openclaw
+            containers:
+            - name: openclaw
+              env:
+              - name: OPENCLAW_HOOKS_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-config-secrets
+                    key: OPENCLAW_HOOKS_TOKEN
+              - name: OWNER_WHATSAPP_NUMBER
+                valueFrom:
+                  secretKeyRef:
+                    name: openclaw-config-secrets
+                    key: OWNER_WHATSAPP_NUMBER
+              - name: OPENCLAW_STATE_DIR
+                value: /home/node/.openclaw
+              - name: OPENCLAW_DATA_DIR
+                $patch: delete
+              readinessProbe:
+                httpGet:
+                  path: /healthz
+              volumeMounts:
+              - mountPath: /etc/openclaw/openclaw.json
+                $patch: delete
+    target:
+      kind: Deployment
+      name: openclaw
+      namespace: openclaw
+  # Secret split (homelab-ops-kubernetes-clusters#740): now that openclaw.json is
+  # cluster-owned, the two config-feature-coupled secrets it references -- the WhatsApp
+  # owner allowlist (OWNER_WHATSAPP_NUMBER) and the inbound hooks token
+  # (OPENCLAW_HOOKS_TOKEN) -- move to a cluster-owned ES co-located with the config
+  # (services/ai/openclaw/externalsecret-openclaw-config-secrets.yaml), so a config change
+  # that needs one of them stays a single-repo change. The module's openclaw-secrets ES
+  # keeps the universal LITELLM_KEY + OPENCLAW_GATEWAY_TOKEN. Same BWS keys, no new remote
+  # secrets. Drop the two moved entries from the module ES here.
+  #
+  # JSON6902 (by index) rather than a strategic-merge `$patch: delete` keyed by secretKey:
+  # ExternalSecret is a CRD with no schema known to kustomize, so a schema-less strategic
+  # merge can't match spec.data list items by key and instead replaces the whole list --
+  # it would drop LITELLM_KEY/OPENCLAW_GATEWAY_TOKEN too. The `test` ops guard the indices
+  # so this fails loudly if the module ever reorders its data entries (module order today:
+  # 0=OPENCLAW_GATEWAY_TOKEN, 1=LITELLM_KEY, 2=OPENCLAW_HOOKS_TOKEN, 3=OWNER_WHATSAPP_NUMBER).
+  # Remove the higher index first so the lower index stays valid.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: test
+        path: /spec/data/3/secretKey
+        value: OWNER_WHATSAPP_NUMBER
+      - op: remove
+        path: /spec/data/3
+      - op: test
+        path: /spec/data/2/secretKey
+        value: OPENCLAW_HOOKS_TOKEN
+      - op: remove
+        path: /spec/data/2
+    target:
+      group: external-secrets.io
+      kind: ExternalSecret
+      name: openclaw-secrets
+      namespace: openclaw
