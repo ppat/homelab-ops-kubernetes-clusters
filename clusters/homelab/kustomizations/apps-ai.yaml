@@ -208,30 +208,32 @@ spec:
       namespace: openclaw
   # Consolidated openclaw Deployment patch -- all in-place edits to the openclaw Deployment
   # live in this one strategic-merge entry (the module/PVC/ConfigMap/ES deletes stay
-  # separate since they target other resources). It does four things:
-  #  - Writable config seed (A): OpenClaw's CLI writes back to its own config file (e.g.
-  #    `openclaw channels login` rewrites credentials into openclaw.json), which fails with
-  #    EBUSY against the module's read-only ConfigMap subPath mount. An initContainer seeds
-  #    the writable `config-dir` emptyDir from the ConfigMap, and the main container's
-  #    read-only /etc/openclaw/openclaw.json subPath mount is dropped so /etc/openclaw is
-  #    fully writable. OPENCLAW_CONFIG_PATH already points at the writable copy.
-  #  - Readiness /healthz decouple (C): /readyz only reports ready once WhatsApp is paired;
-  #    probe /healthz instead (same endpoint startup/liveness already use) so pod Ready is
-  #    independent of that optional channel.
+  # separate since they target other resources). It does:
+  #  - New image digest: the custom ppatlabs/openclaw image now ships an entrypoint wrapper
+  #    that seeds openclaw.json from OPENCLAW_CONFIG_SEED into OPENCLAW_CONFIG_PATH
+  #    (copy-if-absent + chmod 600) and sets umask 077 so gateway-created state is owner-only.
+  #    This replaces the separate openclaw-config-seed initContainer (dropped) and clears the
+  #    fs.credentials_dir.perms_writable / fs.sessions_store.perms_readable audit findings at
+  #    file-creation time (see the openclaw.json suppression removal).
+  #  - Writable config seed via the wrapper: the ConfigMap is mounted read-only at
+  #    /etc/openclaw-seed and OPENCLAW_CONFIG_SEED points the wrapper at it; the wrapper copies
+  #    it into the writable config-dir emptyDir at OPENCLAW_CONFIG_PATH
+  #    (/etc/openclaw/openclaw.json, set by the module), so OpenClaw's CLI can rewrite its own
+  #    config (channels login, doctor) without EBUSY on a read-only subPath. The module's
+  #    read-only openclaw.json subPath mount is dropped.
+  #  - Readiness /healthz decouple: /readyz only reports ready once WhatsApp is paired; probe
+  #    /healthz instead (same endpoint startup/liveness use) so pod Ready is independent of
+  #    that optional channel.
   #  - STATE_DIR rename: OPENCLAW_DATA_DIR is not a real OpenClaw env var (no-op); the actual
   #    state dir override is OPENCLAW_STATE_DIR. Renamed, same value.
-  #  - Config-coupled secret repoint (#740): the two secrets openclaw.json references --
-  #    OPENCLAW_HOOKS_TOKEN (hooks.token) and OWNER_WHATSAPP_NUMBER
-  #    (channels.whatsapp.allowFrom) -- now source from the cluster-owned
+  #  - Config-coupled secret repoint (#740): OPENCLAW_HOOKS_TOKEN (hooks.token) and
+  #    OWNER_WHATSAPP_NUMBER (channels.whatsapp.allowFrom) source from the cluster-owned
   #    openclaw-config-secrets Secret (see the ES split patch below); the reloader annotation
   #    lists both Secrets so a change to either restarts the pod. LITELLM_KEY /
   #    OPENCLAW_GATEWAY_TOKEN stay on openclaw-secrets.
   #  - Control UI origin: OPENCLAW_CONTROL_UI_ORIGIN feeds gateway.controlUi.allowedOrigins
   #    in openclaw.json (expanded by OpenClaw itself, not Flux). ${domain_name} is a Flux
   #    postBuild var resolved after spec.patches, same as the ingress hostname.
-  #  - Config perms (`openclaw security audit` finding fs.config.perms_world_readable,
-  #    CRITICAL): the seed initContainer now chmods the copied config to 600 (shell form,
-  #    since a chmod needs a second command after the cp).
   # yamllint disable-line rule:indentation
   - patch: |-
       apiVersion: apps/v1
@@ -244,30 +246,12 @@ spec:
       spec:
         template:
           spec:
-            initContainers:
-            - name: openclaw-config-seed
-              image: docker.io/ppatlabs/openclaw:2026.7.1@sha256:8efc9d2e7a02e137031534d82eeee94b66938d26a3013d96d42643e5ad69fedc
-              # chmod 600 per `openclaw security audit` finding fs.config.perms_world_readable
-              # (CRITICAL): the ConfigMap-seeded copy lands 644 by default; the file is owned
-              # by uid 1000 (the gateway's runAsUser), so 600 stays readable by the gateway.
-              command:
-              - sh
-              - -c
-              - cp /etc/openclaw-seed/openclaw.json /etc/openclaw/openclaw.json && chmod 600 /etc/openclaw/openclaw.json
-              securityContext:
-                allowPrivilegeEscalation: false
-                readOnlyRootFilesystem: true
-                capabilities:
-                  drop:
-                  - ALL
-              volumeMounts:
-              - name: config
-                mountPath: /etc/openclaw-seed
-                readOnly: true
-              - name: config-dir
-                mountPath: /etc/openclaw
             containers:
             - name: openclaw
+              # New digest for the entrypoint-wrapper build (config seed + umask 077); overrides
+              # the module's pinned image. Published by ppat/images publish-openclaw for tag
+              # 2026.7.1 (amd64-only; see ppat/images#532).
+              image: docker.io/ppatlabs/openclaw:2026.7.1@sha256:718a0883ed998ee8a4428029f1aa78eb538f66c5c2f778576853627c84693ffa
               env:
               - name: OPENCLAW_HOOKS_TOKEN
                 valueFrom:
@@ -281,6 +265,10 @@ spec:
                     key: OWNER_WHATSAPP_NUMBER
               - name: OPENCLAW_STATE_DIR
                 value: /home/node/.openclaw
+              # Points the image's entrypoint wrapper at the read-only ConfigMap mount below; the
+              # wrapper copies it to OPENCLAW_CONFIG_PATH (copy-if-absent + chmod 600) at startup.
+              - name: OPENCLAW_CONFIG_SEED
+                value: /etc/openclaw-seed/openclaw.json
               - name: OPENCLAW_CONTROL_UI_ORIGIN
                 value: https://openclaw.${domain_name}
               - name: OPENCLAW_DATA_DIR
@@ -289,6 +277,11 @@ spec:
                 httpGet:
                   path: /healthz
               volumeMounts:
+              # Read-only seed source for the entrypoint wrapper (OPENCLAW_CONFIG_SEED). The
+              # writable /etc/openclaw (config-dir emptyDir) mount stays as the module defines it.
+              - name: config
+                mountPath: /etc/openclaw-seed
+                readOnly: true
               - mountPath: /etc/openclaw/openclaw.json
                 $patch: delete
     target:
