@@ -178,3 +178,5 @@ proxy_config:
     - deepseek/deepseek-v4-flash:
       - openai/gpt-5-nano
       - google/gemini-3.5-flash-lite
+    model_group_alias:
+      text-embedding-3-small: openai/text-embedding-3-small

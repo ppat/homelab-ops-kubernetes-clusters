@@ -1,6 +1,10 @@
 {
   "models": {
     "providers": {
+      "openai": {
+        "baseUrl": "http://litellm.ai.svc.cluster.local:4000/v1",
+        "apiKey": "${LITELLM_KEY}"
+      },
       "litellm": {
         "baseUrl": "http://litellm.ai.svc.cluster.local:4000/v1",
         "apiKey": "${LITELLM_KEY}",
@@ -94,7 +98,7 @@
           "Authorization": "Bearer ${LITELLM_KEY}"
         }
       },
-      "home-assistant": {
+      "home_assistant": {
         "url": "http://litellm.ai.svc.cluster.local:4000/home_assistant_mcp/mcp",
         "transport": "streamable-http",
         "headers": {
@@ -188,6 +192,7 @@
       "diagnostics-prometheus",
       "litellm",
       "lobster",
+      "memory-core",
       "memory-lancedb",
       "telegram",
       "whatsapp"
@@ -214,8 +219,9 @@
             "enabled": true
           },
           "embedding": {
-            "provider": "litellm",
-            "model": "openai/text-embedding-3-small"
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "baseUrl": "http://litellm.ai.svc.cluster.local:4000/v1"
           }
         }
       },
