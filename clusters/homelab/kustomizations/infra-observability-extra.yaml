@@ -19,7 +19,13 @@ spec:
   wait: true
   postBuild:
     substitute:
-      syslogng_loki_url: "loki-write.logging.svc.cluster.local:9095"
+      # loki-write belonged to Loki's simple-scalable topology and stopped existing when the
+      # install moved to monolithic mode, so syslog-ng has been timing out and discarding
+      # everything arriving on the syslog LoadBalancer ports. Corrected here rather than
+      # waiting on the module release, because this value overrides the module default and
+      # would keep the fixed default from taking effect. Drop this override once the module
+      # release carrying the same value is rolled out.
+      syslogng_loki_url: "loki.logging.svc.cluster.local:9095"
       secret_store: bitwarden-secret-manager-store
     substituteFrom:
     - kind: Secret
