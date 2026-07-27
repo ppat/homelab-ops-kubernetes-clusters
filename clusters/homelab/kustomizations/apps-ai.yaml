@@ -82,3 +82,22 @@ spec:
       group: postgresql.cnpg.io
       kind: Cluster
       namespace: n8n
+  # The Grafana generator's spec.serviceAccount.secondsToLive exists in the external-secrets
+  # CRD bundle the module targets, but not in the older CRD this cluster currently has
+  # installed, so server-side apply rejects the whole Kustomization with "field not declared
+  # in schema". Strip it here until the operator is upgraded.
+  #
+  # Cost of running without it: the generator mints a new token on every refresh and does not
+  # delete the previous one, so tokens accumulate on the Grafana service account instead of
+  # expiring on their own. Tolerable briefly, which is why this is a stopgap rather than a
+  # change to the module -- remove this patch once the CRD carries the field.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: remove
+        path: /spec/serviceAccount/secondsToLive
+    target:
+      group: generators.external-secrets.io
+      version: v1alpha1
+      kind: Grafana
+      name: mcp-grafana-token
+      namespace: ai
