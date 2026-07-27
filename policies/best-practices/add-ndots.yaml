@@ -12,7 +12,8 @@ metadata:
       The ndots value controls where DNS lookups are first performed in a cluster
       and needs to be set to a lower value than the default of 5 in some cases.
       This policy mutates all Pods to add the ndots option with a value of 1,
-      except those in core/system namespaces.
+      except those in core/system namespaces, and does not override a workload
+      that already declares its own ndots option.
 spec:
   rules:
   - name: add-ndots
@@ -21,6 +22,17 @@ spec:
       - resources:
           kinds:
           - Pod
+    # spec.dnsConfig.options has no patchMergeKey in the k8s API, so it's an atomic
+    # list under strategic merge: patchStrategicMerge below always replaces the whole
+    # array. The precondition (not a `+()` anchor) is what makes this idempotent —
+    # `+()` only tests field presence, so `+(options)` would skip a pod that already
+    # has sibling options (e.g. attempts, edns0) but no ndots entry, leaving it
+    # without the optimisation.
+    preconditions:
+      all:
+      - key: "{{ request.object.spec.dnsConfig.options[?name=='ndots'] || `[]` }}"
+        operator: Equals
+        value: []
     mutate:
       patchStrategicMerge:
         spec:
