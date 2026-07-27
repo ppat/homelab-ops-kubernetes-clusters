@@ -1,12 +1,17 @@
 ---
-# ClusterRole rules kept byte-identical to clusters/homelab/cluster/rbac/mcp-kubernetes-readonly.yaml.
-# Replaces a binding to the stock "view" ClusterRole: "view" excludes all
-# cluster-scoped resources outright and only picks up namespaced CRDs whose
-# operator opted in via the rbac.authorization.k8s.io/aggregate-to-view
-# label — inadequate on a cluster running ~160 CRDs, most of which never set
-# that label. Read-only by construction (verbs never exceed get/list/watch,
-# except two narrow, individually-justified exceptions below); core Secrets
-# are deliberately absent from every rule.
+# ClusterRole rules kept identical to clusters/homelab/cluster/rbac/mcp-kubernetes-readonly.yaml,
+# EXCEPT for a handful of apiGroups deliberately dropped from the group-wide
+# "*" rule below — see the comment there for what and why. Replaces a
+# binding to the stock "view" ClusterRole: "view" excludes all cluster-scoped
+# resources outright and only picks up namespaced CRDs whose operator opted
+# in via the rbac.authorization.k8s.io/aggregate-to-view label — inadequate
+# on a cluster running ~160 CRDs, most of which never set that label.
+# Read-only by construction: every rule is get/list/watch except one
+# exception, selfsubjectaccessreviews:create, which is self-scoped (a caller
+# can only ever probe its own permissions) and confers no cross-identity
+# information. Core Secrets are deliberately absent from every rule, though
+# note configmaps and pods/log ARE granted cluster-wide (including in the
+# bitwarden namespace) — see the comment on those resources below.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -15,11 +20,22 @@ rules:
 - apiGroups:
   - ""
   resources:
+  # configmaps and pods/log are granted cluster-wide, with no per-namespace
+  # carve-out for bitwarden — a deliberate accepted trade-off. Excluding one
+  # namespace's worth of ConfigMaps/logs would mean abandoning this
+  # ClusterRole for a set of per-namespace Roles, which this repo's RBAC
+  # model doesn't otherwise do.
   - configmaps
   - endpoints
   - events
   - limitranges
   - namespaces
+  # nodes/proxy deliberately absent: the API server maps HTTP method to RBAC
+  # verb for proxy subresources, and the kubelet registers GET routes (not
+  # only POST) for /exec/, /attach/ and /portForward/, so "get" on that
+  # subresource is exec-equivalent, not read-only. Trade-off: the nodes_log
+  # and nodes_stats_summary MCP tools 403 at call time; nodes_top is
+  # unaffected (needs only nodes:list + metrics.k8s.io).
   - nodes
   - nodes/status
   - persistentvolumeclaims
@@ -38,15 +54,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - ""
-  resources:
-  # required by the nodes_log and nodes_stats_summary tools, which hit the
-  # kubelet via /api/v1/nodes/{name}/proxy/. Accepted trade-off — kubelet GET
-  # can reach host log files; scoped to "get" and revocable.
-  - nodes/proxy
-  verbs:
-  - get
 - apiGroups:
   - apps
   resources:
@@ -254,37 +261,80 @@ rules:
   # - hub.traefik.io: Traefik Hub, unlicensed/unused; APIAuth/AccessControlPolicy
   #   hold auth config
   # - monitoring.grafana.com: Grafana Agent Operator, unused
+  # - generators.external-secrets.io: granted separately below, by explicit
+  #   resource list rather than "*" (some generator kinds carry plaintext)
+  #
+  # This nas copy additionally excludes four groups that clusters/homelab's
+  # copy grants, because nas structurally does not run the operators that
+  # own them — bitwarden lives here, so groups it doesn't run are not
+  # granted, to avoid this identity silently gaining read the moment someone
+  # installs the matching operator later:
+  # - longhorn.io: nas storage is NFS + MinIO, no Longhorn
+  # - tailscale.com: networking-extra (Tailscale operator) is not deployed
+  #   on nas
+  # - deviceplugin.intel.com / fpga.intel.com: kubernetes-extra is not
+  #   deployed on nas
   - acme.cert-manager.io
   - cert-manager.io
   - trust.cert-manager.io
   - external-secrets.io
-  - generators.external-secrets.io
   - externaldns.k8s.io
   - source.toolkit.fluxcd.io
   - kustomize.toolkit.fluxcd.io
   - helm.toolkit.fluxcd.io
   - notification.toolkit.fluxcd.io
+  # Harbor (apps-harbor) depends on infra-database-core (CloudNativePG) and
+  # DragonflyDB
   - postgresql.cnpg.io
   - barmancloud.cnpg.io
-  - longhorn.io
   - dragonflydb.io
+  # nas is getting prometheus exporters and promtail/alloy
   - monitoring.coreos.com
   - kyverno.io
   - policies.kyverno.io
   - reports.kyverno.io
   - wgpolicyk8s.io
+  # Middleware.spec.headers.customRequestHeaders can carry an inline
+  # "Authorization: Bearer ..." header, and spec.plugin config is free-form —
+  # both are residual read-only exposure. spec.basicAuth takes only a secret
+  # reference, not inline credentials.
   - traefik.io
   - frrk8s.metallb.io
   - gateway.networking.k8s.io
-  - tailscale.com
   - autoscaling.k8s.io
-  - deviceplugin.intel.com
-  - fpga.intel.com
   - nfd.k8s-sigs.io
   - upgrade.cattle.io
   - k3s.cattle.io
   resources:
   - "*"
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - generators.external-secrets.io
+  resources:
+  # explicit allow-list instead of "*": fakes.spec.data is literal plaintext
+  # key/value pairs, and webhooks.spec.headers are free-form strings that can
+  # carry an inline API key — both excluded. grafanas is granted: it exposes
+  # only a plaintext admin username (spec.auth.basic.username), never the
+  # password, which stays in an unreadable Secret.
+  - acraccesstokens
+  - beyondtrustworkloadcredentialsdynamicsecrets
+  - cloudsmithaccesstokens
+  - clustergenerators
+  - ecrauthorizationtokens
+  - gcraccesstokens
+  - generatorstates
+  - githubaccesstokens
+  - grafanas
+  - mfas
+  - passwords
+  - quayaccesstokens
+  - sshkeys
+  - stssessiontokens
+  - uuids
+  - vaultdynamicsecrets
   verbs:
   - get
   - list
@@ -308,14 +358,22 @@ rules:
   - watch
 ---
 # No apps-ai module runs on nas, so (unlike homelab) the ServiceAccount lives
-# here rather than in an apps repo module. kube-system is used for lack of a
-# more specific namespace: nas has no "ai"-equivalent namespace, and this
-# identity isn't tied to any workload running on this cluster.
+# here rather than in an apps repo module, in its own dedicated namespace
+# rather than kube-system: kube-system is conventionally exempted from PSA
+# enforcement and from Kyverno namespace selectors, so an identity placed
+# there could silently inherit future exemptions never intended for it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-access
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: mcp-kubernetes-nas
-  namespace: kube-system
+  namespace: mcp-access
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -328,18 +386,24 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: mcp-kubernetes-nas
-  namespace: kube-system
+  namespace: mcp-access
 ---
 # Kubernetes 1.24+ no longer auto-creates a ServiceAccount token Secret, so
 # this is minted explicitly: a remote MCP server running on the homelab
 # cluster needs a durable bearer token to reach nas's API server (no
 # in-cluster pod to use a projected/bound token). The minted token is
 # assembled into a kubeconfig and stored in Bitwarden as kubeconfig_nas_mcp.
+# This token is long-lived and non-expiring: automated rotation is
+# deliberately deferred until there is a consistent mechanism for it, so for
+# now rotation is a manual mint-and-reupload. Revocation, however, is
+# immediate and simple — `kubectl delete secret` on this object invalidates
+# the token straight away, unlike a JWT with a baked-in expiry that stays
+# valid until it lapses on its own.
 apiVersion: v1
 kind: Secret
 metadata:
   name: mcp-kubernetes-nas-token
-  namespace: kube-system
+  namespace: mcp-access
   annotations:
     kubernetes.io/service-account.name: mcp-kubernetes-nas
 type: kubernetes.io/service-account-token
