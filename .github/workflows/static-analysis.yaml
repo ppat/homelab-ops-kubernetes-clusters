@@ -38,28 +38,21 @@ jobs:
       # kyverno chart deployed by infra-security-core (see the apps repo's
       # infrastructure/subsystems/security-core/kyverno/helm-release-kyverno.yaml),
       # so the CLI's policy engine matches what's actually running.
-      KYVERNO_CLI_VERSION: v1.18.2
-      KYVERNO_CLI_SHA256: cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b
+      # renovate: datasource=github-releases depName=kyverno/kyverno
+      KYVERNO_CLI_VERSION: "v1.18.2"
     steps:
-    - name: Checkout
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - name: Setup repository and tools
+      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@f1ae73db4ab080b7e8dc66d078e5905d5ca526cb # v2.1.0
       with:
-        fetch-depth: 1
-        persist-credentials: false
-
-    - name: Install Kyverno CLI
-      shell: bash
-      # yamllint disable-line rule:indentation
-      run: |
-        set -euo pipefail
-        curl -sL -o /tmp/kyverno-cli.tar.gz \
-          "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_CLI_VERSION}/kyverno-cli_${KYVERNO_CLI_VERSION}_linux_x86_64.tar.gz"
-        echo "${KYVERNO_CLI_SHA256}  /tmp/kyverno-cli.tar.gz" | sha256sum -c -
-        mkdir -p "${RUNNER_TEMP}/kyverno-cli"
-        tar -xzf /tmp/kyverno-cli.tar.gz -C "${RUNNER_TEMP}/kyverno-cli" kyverno
-        echo "${RUNNER_TEMP}/kyverno-cli" >> "$GITHUB_PATH"
+        current_git_ref: ${{ github.head_ref || github.ref }}
+        current_repository: ${{ github.repository }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        mise_toml: |
+          [tools]
+          kyverno = "${{ env.KYVERNO_CLI_VERSION }}"
 
     - name: Validate RBAC ClusterRoles are read-only (Kyverno CLI, no cluster required)
+      working-directory: ./current
       shell: bash
       # yamllint disable-line rule:indentation
       run: |
@@ -73,7 +66,7 @@ jobs:
         status=0
         for dir in clusters/*/cluster/rbac; do
           echo "::group::${dir}"
-          if ! kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml --resource "${dir}/" --detailed-results; then
+          if ! mise exec -- kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml --resource "${dir}/" --detailed-results; then
             status=1
           fi
           echo "::endgroup::"
