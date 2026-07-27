@@ -302,13 +302,29 @@ rules:
   # carry an inline API key — both excluded. grafanas is granted: it exposes
   # only a plaintext admin username (spec.auth.basic.username), never the
   # password, which stays in an unreadable Secret.
+  #
+  # clustergenerators and generatorstates are ALSO excluded, not just
+  # fakes/webhooks, because RBAC allows and denies by kind, never by content:
+  # any kind that can embed another kind's content defeats a kind-level
+  # exclusion.
+  # - ClusterGenerator.spec is {kind, generator}, where generator
+  #   (GeneratorSpec) inlines fakeSpec/webhookSpec as struct fields (upstream
+  #   apis/generators/v1alpha1/types_cluster.go) — a ClusterGenerator with
+  #   kind: Fake carries the identical plaintext spec.data in a different
+  #   envelope, so denying fakes while allowing clustergenerators achieves
+  #   nothing. Field-level conditioning ("allow ClusterGenerator unless
+  #   spec.kind is Fake") isn't an option either — RBAC has no concept of it.
+  # - GeneratorState.spec.resource is a snapshot of the generator manifest at
+  #   the time the state was produced, and spec.state is the generator's
+  #   output (per the external-secrets v2.8.0 CRD bundle this repo pins) —
+  #   for vaultdynamicsecrets, which this role does grant, that output is
+  #   lease material. GeneratorStates are written by the controller, not a
+  #   person, so they appear without anyone choosing to create one.
   - acraccesstokens
   - beyondtrustworkloadcredentialsdynamicsecrets
   - cloudsmithaccesstokens
-  - clustergenerators
   - ecrauthorizationtokens
   - gcraccesstokens
-  - generatorstates
   - githubaccesstokens
   - grafanas
   - mfas

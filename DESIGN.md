@@ -229,8 +229,47 @@ diff.
 `cluster/rbac/` binds two Kubernetes API groups (`homelab-admins`,
 `homelab-users`) — backed by the OIDC identity provider from the apps repo's
 `security-extra` module — to the built-in `cluster-admin` and `view`
-`ClusterRole`s via `ClusterRoleBinding`s. These are cluster-wide and unrelated
-to any single module.
+`ClusterRole`s via `ClusterRoleBinding`s, plus any other cluster-wide
+`ClusterRole`/`ClusterRoleBinding` a specific identity needs. These are
+cluster-wide and unrelated to any single module: a cluster-wide grant is
+cluster policy, decided at the point of use, the same way `dependsOn` is (see
+[Wiring a module into a cluster](#wiring-a-module-into-a-cluster)) — a module
+ships only its own namespaced `ServiceAccount`, never a `ClusterRole` that
+binds itself into the wider cluster.
+
+Prefer an explicit read-only allow-list over binding the built-in `view`
+role. `view` excludes all cluster-scoped resources outright and only picks up
+namespaced CRDs whose operator opted in via the
+`rbac.authorization.k8s.io/aggregate-to-view` label, which most operators on
+a CRD-heavy cluster never set — so on this cluster `view` is both too narrow
+to be useful and misleading about its own coverage. Where an identity needs
+broad read-only visibility, build an explicit `ClusterRole` instead.
+
+RBAC allows and denies by kind, never by content: any kind that can embed
+another kind's content defeats a kind-level exclusion — wrapper kinds, or
+controller-written state/snapshot kinds that carry another kind's payload.
+When a group mixes credential-bearing and benign kinds, enumerate kinds
+rather than wildcarding the group, and re-check the enumeration whenever the
+operator adds a kind. `get`/`list`/`watch` is also not uniformly a read-only
+boundary: the API server maps HTTP method to RBAC verb for `*/proxy`
+subresources, and kubelet exposes GET routes for exec/attach/portForward, so
+`get` on `nodes/proxy` is code-execution-equivalent — treat proxy
+subresources as write access.
+
+Identities bound here must not live in `kube-system`: it's conventionally
+exempted from Pod Security Admission and from policy-engine namespace
+selectors, so a `ServiceAccount` placed there can silently inherit exemptions
+never intended for it. Where cross-cluster access forces a long-lived
+`ServiceAccount` token `Secret` (no in-cluster pod to hand a short-lived
+projected token to), document next to the `Secret` that revocation is
+deleting it — immediate, unlike a JWT that stays valid until its own expiry
+lapses.
+
+Identical RBAC across clusters aids review, but a cluster holding
+higher-value data warrants a narrower grant; where two clusters' otherwise-
+identical roles diverge, the narrower one should carry a comment stating it's
+a strict subset of the other and naming the exact divergence — the subset
+property itself isn't something CI can check.
 
 ## Policy enforcement
 
