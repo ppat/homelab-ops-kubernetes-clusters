@@ -13,9 +13,11 @@ on:
   pull_request:
     paths:
     - '.github/workflows/static-analysis.yaml'
-    - 'clusters/**/*.yaml'
-    - 'ci/**/*.yaml'
-    - 'policies/**/*.yaml'
+    # Scoped to exactly what this analyses and what does the analysing -- the RBAC
+    # manifests under test and the policy asserting their invariants. Broader globs would
+    # run it on every clusters/ or ci/ edit for no signal.
+    - 'clusters/*/cluster/rbac/**'
+    - 'ci/policy-tests/**'
   schedule:
   - cron: '0 5 * * 1'
   workflow_dispatch:
