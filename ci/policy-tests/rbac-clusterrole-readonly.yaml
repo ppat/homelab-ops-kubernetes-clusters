@@ -1,0 +1,138 @@
+---
+# TEST-ONLY Kyverno policy. This is NOT one of the policy groups in
+# policies/ (see policies/README.md) and is never applied to a cluster:
+# - It lives under ci/, which no Flux Kustomization in clusters/*/kustomization.yaml
+#   or clusters/*/kustomizations/*.yaml ever points `spec.path` at.
+# - Only policies/** is wired up via the policy-* Kustomizations
+#   (clusters/*/kustomizations/policy-*.yaml); ci/** has no equivalent.
+# It exists solely to be run offline with `kyverno apply` (no cluster
+# required) in CI — see the `rbac-clusterrole-readonly` job in
+# .github/workflows/lint.yaml — against clusters/*/cluster/rbac/*.yaml, to
+# catch a regression on the read-only RBAC ClusterRoles (currently
+# mcp-kubernetes-readonly.yaml on both clusters) before merge.
+#
+# Written with CEL (`validate.cel.expressions`), not the JMESPath
+# `deny.conditions`/`pattern` style used elsewhere in policies/: Kyverno's
+# JMESPath condition operators (In/AnyIn/AllIn/Equals/...) wildcard-match
+# any operand containing "*" against every string on the other side, so a
+# ClusterRole rule with `resources: ["*"]` or `verbs: ["*"]` — exactly the
+# shape rule 1 below must catch — silently satisfies a JMESPath "does not
+# contain nodes/proxy" or "is a subset of {get,list,watch}" check instead of
+# failing it. CEL's `in` and `==` are literal string comparisons with no
+# such wildcard behavior, so it's the only reliable way to test for the
+# literal "*" as RBAC data rather than as a glob pattern.
+#
+# Deliberately out of scope: the invariant that clusters/nas's ClusterRole
+# must stay a strict subset of clusters/homelab's. Kyverno validates one
+# resource at a time and has no way to compare two files against each other,
+# so that property is documented instead, in the header comment of
+# clusters/nas/cluster/rbac/mcp-kubernetes-readonly.yaml — diff the two
+# files by hand when reviewing a change to either.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: test-rbac-clusterrole-readonly
+  annotations:
+    policies.kyverno.io/title: RBAC ClusterRole Read-Only Invariants (CI test only)
+    policies.kyverno.io/category: CI
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: ClusterRole
+    policies.kyverno.io/description: >-
+      Statically validates that the read-only RBAC ClusterRoles under
+      clusters/*/cluster/rbac/ cannot mutate cluster state, cannot
+      exec/attach/portForward via nodes/proxy, cannot read core Secrets, and
+      cannot read plaintext-bearing generators.external-secrets.io kinds.
+      Run only via `kyverno apply` in CI; not deployed to a cluster.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+  - name: verbs-must-be-read-only
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: >-
+            object.rules.all(r,
+            r.verbs.all(v, v in ['get', 'list', 'watch']) ||
+            (r.apiGroups == ['authorization.k8s.io'] &&
+            r.resources == ['selfsubjectaccessreviews'] &&
+            r.verbs.all(v, v in ['get', 'list', 'watch', 'create']))
+            )
+          message: >-
+            A rule grants a verb outside {get, list, watch}. A dedicated
+            read-only ClusterRole must not be able to mutate cluster state
+            or escalate privileges: create/update/patch/delete
+            /deletecollection/impersonate/escalate/bind (and the "*"
+            wildcard, which includes all of them) all do one or the other,
+            so none of them belong here. The sole permitted exception is
+            "create" on selfsubjectaccessreviews in apiGroup
+            authorization.k8s.io — that call is self-scoped (a caller can
+            only ever probe its own permissions) and confers no
+            cross-identity information — and only when the rule grants
+            nothing else alongside it.
+  - name: no-nodes-proxy
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: "!object.rules.exists(r, 'nodes/proxy' in r.resources)"
+          message: >-
+            A rule grants the nodes/proxy resource. That is exec-equivalent,
+            not read-only: the API server maps HTTP method to RBAC verb for
+            proxy subresources, and the kubelet registers GET routes (not
+            only POST) for /exec/, /attach/, and /portForward/ — so even
+            "get" on nodes/proxy lets the holder execute commands inside a
+            container via the node's kubelet API. Remove nodes/proxy from
+            resources.
+  - name: no-core-secrets
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: "!object.rules.exists(r, ('' in r.apiGroups) && ('secrets' in r.resources))"
+          message: >-
+            A rule grants core Secrets (apiGroup ""). A read-only role must
+            never read Secrets: get/list/watch on Secrets exposes every
+            credential, token, and certificate cluster-wide — far more
+            blast radius than any read-only tool needs. Remove secrets from
+            resources.
+  - name: generators-external-secrets-io-allowlist
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: >-
+            !object.rules.exists(r,
+            ('generators.external-secrets.io' in r.apiGroups) &&
+            r.resources.exists(res, res in ['*', 'fakes', 'webhooks', 'clustergenerators', 'generatorstates']))
+          message: >-
+            The generators.external-secrets.io rule grants a resource kind
+            that must stay excluded, or the "*" wildcard that would
+            re-admit all of them. fakes.spec.data is literal plaintext
+            key/value pairs, and webhooks.spec.headers are free-form
+            strings that can carry an inline API key. clustergenerators and
+            generatorstates are excluded too, because RBAC allows/denies by
+            kind, never by content: a ClusterGenerator wrapping kind: Fake
+            carries the identical plaintext spec.data in a different
+            envelope, and a GeneratorState is a snapshot of a generator's
+            manifest plus its own (potentially lease-bearing) output —
+            denying fakes/webhooks alone does not deny either wrapper. Use
+            an explicit resource allow-list instead of "*", and keep
+            fakes/webhooks/clustergenerators/generatorstates off it.

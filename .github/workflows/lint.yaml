@@ -106,6 +106,58 @@ jobs:
     with:
       git_ref: ${{ github.head_ref || github.ref }}
 
+  rbac-clusterrole-readonly:
+    needs: [detect-changes]
+    if: ${{ github.event_name != 'pull_request' || fromJSON(needs.detect-changes.outputs.results).kubernetes_any_changed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      # Pinned to the Kyverno CLI release matching the appVersion of the
+      # kyverno chart deployed by infra-security-core (see the apps repo's
+      # infrastructure/subsystems/security-core/kyverno/helm-release-kyverno.yaml),
+      # so the CLI's policy engine matches what's actually running.
+      KYVERNO_CLI_VERSION: v1.18.2
+      KYVERNO_CLI_SHA256: cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b
+    steps:
+    - name: Checkout
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Install Kyverno CLI
+      shell: bash
+      # yamllint disable-line rule:indentation
+      run: |
+        set -euo pipefail
+        curl -sL -o /tmp/kyverno-cli.tar.gz \
+          "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_CLI_VERSION}/kyverno-cli_${KYVERNO_CLI_VERSION}_linux_x86_64.tar.gz"
+        echo "${KYVERNO_CLI_SHA256}  /tmp/kyverno-cli.tar.gz" | sha256sum -c -
+        mkdir -p "${RUNNER_TEMP}/kyverno-cli"
+        tar -xzf /tmp/kyverno-cli.tar.gz -C "${RUNNER_TEMP}/kyverno-cli" kyverno
+        echo "${RUNNER_TEMP}/kyverno-cli" >> "$GITHUB_PATH"
+
+    - name: Validate RBAC ClusterRoles are read-only (Kyverno CLI, no cluster required)
+      shell: bash
+      # yamllint disable-line rule:indentation
+      run: |
+        set -uo pipefail
+        # One `kyverno apply` invocation per cluster directory: every cluster
+        # defines a ClusterRole named mcp-kubernetes-readonly, and since
+        # ClusterRoles are cluster-scoped (no namespace to disambiguate them),
+        # loading two clusters' rbac/ directories into a single invocation
+        # makes the CLI's resource cache collide same-named resources from
+        # different clusters together, silently dropping one.
+        status=0
+        for dir in clusters/*/cluster/rbac; do
+          echo "::group::${dir}"
+          if ! kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml --resource "${dir}/" --detailed-results; then
+            status=1
+          fi
+          echo "::endgroup::"
+        done
+        exit "${status}"
+
   renovate-config-check:
     needs: [detect-changes]
     if: ${{ github.event_name != 'pull_request' || fromJSON(needs.detect-changes.outputs.results).renovate_any_changed == 'true' }}
