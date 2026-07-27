@@ -66,7 +66,16 @@ jobs:
         status=0
         for dir in clusters/*/cluster/rbac; do
           echo "::group::${dir}"
-          if ! mise exec -- kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml --resource "${dir}/" --detailed-results; then
+          echo "Resource files loaded from ${dir}:"
+          find "${dir}" -maxdepth 1 -type f -name '*.yaml' | sort
+          echo
+          # --table + --detailed-results renders one row per (rule, resource)
+          # pair with its pass/fail outcome and message, so the log itself
+          # shows every rule that ran against every matched resource, not
+          # just a pass/fail summary count. --remove-color strips ANSI codes
+          # that would otherwise print as raw escape sequences in the
+          # non-interactive Actions log.
+          if ! mise exec -- kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml --resource "${dir}/" --table --detailed-results --remove-color; then
             status=1
           fi
           echo "::endgroup::"

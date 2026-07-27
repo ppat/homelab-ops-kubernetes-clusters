@@ -36,12 +36,14 @@ metadata:
     policies.kyverno.io/title: RBAC ClusterRole Read-Only Invariants (CI test only)
     policies.kyverno.io/category: CI
     policies.kyverno.io/severity: high
-    policies.kyverno.io/subject: ClusterRole
+    policies.kyverno.io/subject: ClusterRole, ClusterRoleBinding
     policies.kyverno.io/description: >-
       Statically validates that the read-only RBAC ClusterRoles under
       clusters/*/cluster/rbac/ cannot mutate cluster state, cannot
       exec/attach/portForward via nodes/proxy, cannot read core Secrets, and
-      cannot read plaintext-bearing generators.external-secrets.io kinds.
+      cannot read plaintext-bearing generators.external-secrets.io kinds —
+      and that no ClusterRoleBinding subject named mcp-kubernetes* is ever
+      pointed at anything other than the mcp-kubernetes-readonly ClusterRole.
       Run only via `kyverno apply` in CI; not deployed to a cluster.
 spec:
   validationFailureAction: Enforce
@@ -75,6 +77,33 @@ spec:
             only ever probe its own permissions) and confers no
             cross-identity information — and only when the rule grants
             nothing else alongside it.
+  - name: mcp-kubernetes-serviceaccount-must-bind-readonly-role
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRoleBinding
+    validate:
+      cel:
+        expressions:
+        - expression: >-
+            !has(object.subjects) ||
+            !object.subjects.exists(s, s.kind == 'ServiceAccount' && s.name.startsWith('mcp-kubernetes')) ||
+            (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'mcp-kubernetes-readonly')
+          message: >-
+            A ClusterRoleBinding has a ServiceAccount subject named
+            mcp-kubernetes* but its roleRef is not exactly {kind: ClusterRole,
+            name: mcp-kubernetes-readonly}. The four rules above only
+            constrain what is inside the mcp-kubernetes-readonly ClusterRole
+            itself — they say nothing about which role a binding actually
+            points an identity at. Repointing roleRef.name (e.g. to
+            cluster-admin) leaves that ClusterRole's rules untouched and
+            still perfectly read-only, while handing the same ServiceAccount
+            whatever roleRef now names instead: the single edit that most
+            completely defeats this entire policy's purpose while leaving
+            every other invariant here intact. Point roleRef at {kind:
+            ClusterRole, name: mcp-kubernetes-readonly}, or rename the
+            ServiceAccount if it genuinely needs different access.
   - name: no-nodes-proxy
     match:
       any:
