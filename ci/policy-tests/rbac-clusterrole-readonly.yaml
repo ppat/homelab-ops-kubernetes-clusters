@@ -6,9 +6,9 @@
 # - Only policies/** is wired up via the policy-* Kustomizations
 #   (clusters/*/kustomizations/policy-*.yaml); ci/** has no equivalent.
 # It exists solely to be run offline with `kyverno apply` (no cluster
-# required) in CI — see the `rbac-clusterrole-readonly` job in
-# .github/workflows/lint.yaml — against clusters/*/cluster/rbac/*.yaml, to
-# catch a regression on the read-only RBAC ClusterRoles (currently
+# required) in CI — see the `rbac-clusterroles` job in
+# .github/workflows/static-analysis.yaml — against clusters/*/cluster/rbac/*.yaml,
+# to catch a regression on the read-only RBAC ClusterRoles (currently
 # mcp-kubernetes-readonly.yaml on both clusters) before merge.
 #
 # Written with CEL (`validate.cel.expressions`), not the JMESPath
