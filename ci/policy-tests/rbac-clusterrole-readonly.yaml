@@ -11,6 +11,15 @@
 # to catch a regression on the read-only RBAC ClusterRoles (currently
 # mcp-kubernetes-readonly.yaml on both clusters) before merge.
 #
+# Constrains what is INSIDE the mcp-kubernetes-readonly ClusterRole: no verb
+# outside get/list/watch, no nodes/proxy, no core Secrets, and an allow-list
+# on generators.external-secrets.io. The companion policy
+# rbac-clusterrolebinding-roleref.yaml (test-rbac-clusterrolebinding-roleref)
+# constrains which role is actually BOUND to the mcp-kubernetes ServiceAccount
+# — this file says nothing about that. Both must pass for the read-only
+# guarantee to hold: a role can be perfectly read-only in isolation and still
+# be defeated by a binding that points a subject at a different role instead.
+#
 # Written with CEL (`validate.cel.expressions`), not the JMESPath
 # `deny.conditions`/`pattern` style used elsewhere in policies/: Kyverno's
 # JMESPath condition operators (In/AnyIn/AllIn/Equals/...) wildcard-match
@@ -36,15 +45,15 @@ metadata:
     policies.kyverno.io/title: RBAC ClusterRole Read-Only Invariants (CI test only)
     policies.kyverno.io/category: CI
     policies.kyverno.io/severity: high
-    policies.kyverno.io/subject: ClusterRole, ClusterRoleBinding
+    policies.kyverno.io/subject: ClusterRole
     policies.kyverno.io/description: >-
       Statically validates that the read-only RBAC ClusterRoles under
       clusters/*/cluster/rbac/ cannot mutate cluster state, cannot
       exec/attach/portForward via nodes/proxy, cannot read core Secrets, and
-      cannot read plaintext-bearing generators.external-secrets.io kinds —
-      and that no ClusterRoleBinding subject named mcp-kubernetes* is ever
-      pointed at anything other than the mcp-kubernetes-readonly ClusterRole.
-      Run only via `kyverno apply` in CI; not deployed to a cluster.
+      cannot read plaintext-bearing generators.external-secrets.io kinds.
+      Companion to rbac-clusterrolebinding-roleref.yaml, which validates
+      which role is actually bound to the mcp-kubernetes ServiceAccount. Run
+      only via `kyverno apply` in CI; not deployed to a cluster.
 spec:
   validationFailureAction: Enforce
   background: false
@@ -77,33 +86,6 @@ spec:
             only ever probe its own permissions) and confers no
             cross-identity information — and only when the rule grants
             nothing else alongside it.
-  - name: mcp-kubernetes-serviceaccount-must-bind-readonly-role
-    match:
-      any:
-      - resources:
-          kinds:
-          - ClusterRoleBinding
-    validate:
-      cel:
-        expressions:
-        - expression: >-
-            !has(object.subjects) ||
-            !object.subjects.exists(s, s.kind == 'ServiceAccount' && s.name.startsWith('mcp-kubernetes')) ||
-            (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'mcp-kubernetes-readonly')
-          message: >-
-            A ClusterRoleBinding has a ServiceAccount subject named
-            mcp-kubernetes* but its roleRef is not exactly {kind: ClusterRole,
-            name: mcp-kubernetes-readonly}. The four rules above only
-            constrain what is inside the mcp-kubernetes-readonly ClusterRole
-            itself — they say nothing about which role a binding actually
-            points an identity at. Repointing roleRef.name (e.g. to
-            cluster-admin) leaves that ClusterRole's rules untouched and
-            still perfectly read-only, while handing the same ServiceAccount
-            whatever roleRef now names instead: the single edit that most
-            completely defeats this entire policy's purpose while leaving
-            every other invariant here intact. Point roleRef at {kind:
-            ClusterRole, name: mcp-kubernetes-readonly}, or rename the
-            ServiceAccount if it genuinely needs different access.
   - name: no-nodes-proxy
     match:
       any:

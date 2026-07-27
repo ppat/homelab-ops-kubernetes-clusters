@@ -2,11 +2,13 @@
 # yamllint disable rule:line-length
 # Static analysis of security invariants — distinct from lint.yaml (which
 # only checks style/formatting via yamllint/markdownlint/commitlint/etc).
-# rbac-clusterroles statically validates the read-only RBAC ClusterRoles in
-# clusters/*/cluster/rbac/ against ci/policy-tests/rbac-clusterrole-readonly.yaml
-# using the Kyverno CLI (`kyverno apply`, no cluster required). That policy
-# is test-only: it lives under ci/ and, unlike policies/**, is never wired
-# up to a Flux Kustomization or applied to a cluster.
+# rbac-clusterroles statically validates the read-only RBAC ClusterRoles and
+# their ClusterRoleBindings in clusters/*/cluster/rbac/ against the two
+# policies in ci/policy-tests/ (rbac-clusterrole-readonly.yaml and
+# rbac-clusterrolebinding-roleref.yaml) using the Kyverno CLI (`kyverno
+# apply`, no cluster required). Those policies are test-only: they live
+# under ci/ and, unlike policies/**, are never wired up to a Flux
+# Kustomization or applied to a cluster.
 name: static-analysis
 
 on:
@@ -75,7 +77,7 @@ jobs:
           # just a pass/fail summary count. --remove-color strips ANSI codes
           # that would otherwise print as raw escape sequences in the
           # non-interactive Actions log.
-          if ! mise exec -- kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml --resource "${dir}/" --table --detailed-results --remove-color; then
+          if ! mise exec -- kyverno apply ci/policy-tests/rbac-clusterrole-readonly.yaml ci/policy-tests/rbac-clusterrolebinding-roleref.yaml --resource "${dir}/" --table --detailed-results --remove-color; then
             status=1
           fi
           echo "::endgroup::"
