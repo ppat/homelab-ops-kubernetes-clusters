@@ -5,3 +5,4 @@ kind: Kustomization
 resources:
 - kubernetes-api-admin.yaml
 - kubernetes-api-readonly.yaml
+- mcp-kubernetes-readonly.yaml
