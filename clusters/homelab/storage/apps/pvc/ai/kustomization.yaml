@@ -6,6 +6,7 @@ resources:
 - openwebui.yaml
 - n8n-data.yaml
 - openclaw-data.yaml
+- vault-data.yaml
 
 patches:
 # yamllint disable-line rule:indentation
