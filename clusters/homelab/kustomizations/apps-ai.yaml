@@ -101,31 +101,3 @@ spec:
       kind: Grafana
       name: mcp-grafana-token
       namespace: ai
-  # Cluster-side prototype of an unverified image fix, ahead of a module release -- see
-  # homelab-ops-kubernetes-apps CLAUDE.md's "prototype cluster-side, then upstream" workflow.
-  #
-  # PROBLEM: the obsidian-local-rest-api plugin (coddingtonbear/obsidian-local-rest-api,
-  # bundled at 5.0.2) defaults its listener to 127.0.0.1 (DefaultBindingHost, applied to both
-  # the HTTPS and plaintext listeners). Loopback-only breaks two things at once: the kubelet's
-  # startup/readiness/liveness probes connect to the pod IP, not loopback, so they all fail and
-  # liveness restarts the container in a crash loop; and the two mcp-obsidian-* pods that proxy
-  # this API run on a different node, so they can never reach it either way.
-  #
-  # FIX: this digest forces `bindingHost: "0.0.0.0"` in the plugin's settings. Binding wider is
-  # not the security boundary and was never meant to be -- that boundary is the ClusterIP
-  # Service with no ingress, the NetworkPolicy admitting only the mcp-obsidian-* pods, and the
-  # plugin's own bearer token.
-  #
-  # This is a prototype: the digest has not shipped in a module release, only verified live.
-  # Retire this patch -- and carry the digest into
-  # apps/subsystems/ai/obsidian-vault/obsidian/deployment.yaml -- the next time apps-ai's tag
-  # is bumped past apps-ai-v0.6.13.
-  # yamllint disable-line rule:indentation
-  - patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/image
-        value: docker.io/ppatlabs/obsidian:1.12.7@sha256:81bbdf129b65c0787ba4b0d25b4d4e8d0688f7dfad3bd1b24bacaa73e7341266
-    target:
-      kind: Deployment
-      name: obsidian
-      namespace: obsidian-vault
