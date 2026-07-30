@@ -82,6 +82,37 @@ spec:
       group: postgresql.cnpg.io
       kind: Cluster
       namespace: n8n
+  # openclaw.json's `${VAR}` tokens are expanded by OpenClaw from its own container env at
+  # startup. Pulling the cluster-owned openclaw-plugin-secrets Secret in wholesale via envFrom
+  # keeps adding a plugin credential a single-repo change -- add the key to that ExternalSecret
+  # and reference `${VAR}` in openclaw.json -- instead of also editing the apps-ai module to
+  # declare another secretKeyRef env entry. Strategic merge rather than JSON6902 so the
+  # container is matched by name instead of by index; envFrom has no patch merge key and the
+  # module's Deployment declares none, so this adds the list rather than replacing anything.
+  # The Secret is read only at container start, and openclaw-config is generated with
+  # disableNameSuffixHash, so neither a new key here nor a config edit rolls the pod on its
+  # own -- restart the deployment after adding a credential.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: openclaw
+        namespace: openclaw
+      spec:
+        template:
+          spec:
+            containers:
+            - name: openclaw
+              envFrom:
+              - secretRef:
+                  name: openclaw-plugin-secrets
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: openclaw
+      namespace: openclaw
   # The Grafana generator's spec.serviceAccount.secondsToLive exists in the external-secrets
   # CRD bundle the module targets, but not in the older CRD this cluster currently has
   # installed, so server-side apply rejects the whole Kustomization with "field not declared

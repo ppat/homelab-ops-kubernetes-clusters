@@ -197,14 +197,13 @@
     },
     "web": {
       "search": {
-        // Pinned explicitly. Key-free providers never win provider auto-detection, so
-        // allowlisting the duckduckgo plugin alone leaves web search non-functional -- with
-        // `enabled: true` and no provider resolvable there is nothing to route to.
-        // duckduckgo is the default here because it needs no credentials. To switch: set this
-        // to "brave" once BRAVE_API_KEY is in the secret, or "searxng" once a SearXNG instance
-        // is deployed in-cluster (both plugins are already baked into the image).
+        // Pinned explicitly rather than left to auto-detection. duckduckgo stays allowlisted
+        // as a key-free fallback, but key-free providers never win auto-detection, so the
+        // provider in use is always whatever is named here. Switch to "searxng" once a
+        // SearXNG instance is deployed in-cluster (that plugin is already baked into the
+        // image and allowlisted), or "duckduckgo" to drop the third-party dependency.
         "enabled": true,
-        "provider": "duckduckgo"
+        "provider": "brave"
       },
       "fetch": {
         "enabled": true
@@ -243,12 +242,18 @@
       "memory": "memory-lancedb"
     },
     "entries": {
-      // Enabled but unconfigured: brave needs BRAVE_API_KEY and searxng needs a deployed
-      // instance before either can serve `tools.web.search.provider`. Neither being ready is
-      // why duckduckgo is the pinned provider for now; both are listed so flipping the
-      // provider is a one-line change.
+      // The active web-search provider (tools.web.search.provider above). BRAVE_API_KEY comes
+      // from the openclaw-plugin-secrets ExternalSecret, pulled into the container wholesale
+      // via the envFrom patch in kustomizations/apps-ai.yaml and expanded here by OpenClaw at
+      // startup. searxng is allowlisted below but unconfigured -- it needs an in-cluster
+      // instance before it can take over.
       "brave": {
-        "enabled": true
+        "enabled": true,
+        "config": {
+          "webSearch": {
+            "apiKey": "${BRAVE_API_KEY}"
+          }
+        }
       },
       "diagnostics-prometheus": {
         "enabled": true
