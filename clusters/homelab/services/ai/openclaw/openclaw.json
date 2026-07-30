@@ -220,18 +220,25 @@
   // (/app/dist/extensions) rather than installed by this repo's Dockerfile -- but bundled is
   // not enabled: a non-empty `allow` is a hard gate that bundled plugins do not bypass, even
   // ones whose manifest sets `enabledByDefault: true`. They load only because they are listed
-  // here. brave, diffs and searxng are npm installs baked in by the image.
-  // Deliberately absent despite being available in the image (see tools.deny for both):
+  // here. brave and searxng are npm installs baked in by the image.
+  // Deliberately absent despite being available in the image:
+  //   diffs      - its useful mode (mode=file, rendering a diff to PNG/PDF for delivery over a
+  //                chat channel) needs Chromium, which the -slim base image strips along with
+  //                Puppeteer. That leaves only mode=view, a gateway-hosted HTML viewer whose
+  //                links default to loopback and need `security.allowRemoteViewer` (default
+  //                false) plus a `viewerBaseUrl` before they resolve anywhere useful --
+  //                i.e. exposing tokenised viewer URLs through the ingress for a convenience
+  //                plugin. Revisit if the image ever moves off -slim.
   //   xai        - its only unique capability is x_search over X posts. Needs XAI_API_KEY and
   //                direct egress to api.x.ai, the one model-vendor path that would bypass
   //                LiteLLM and its spend tracking, and xAI bills X Search per call ($5/1000)
   //                with no per-day cap available in plugin config. Not worth it for now.
-  //   voice-call - baked in for a future outbound-alerting path, not wired yet.
+  //   voice-call - baked in for a future outbound-alerting path, not wired yet. See tools.deny;
+  //                code_execution is likewise pre-denied on xai's behalf.
   "plugins": {
     "allow": [
       "brave",
       "diagnostics-prometheus",
-      "diffs",
       "document-extract",
       "duckduckgo",
       "litellm",
@@ -261,9 +268,6 @@
         }
       },
       "diagnostics-prometheus": {
-        "enabled": true
-      },
-      "diffs": {
         "enabled": true
       },
       // Parses untrusted PDFs/attachments in-process via clawpdf. Acceptable only because
