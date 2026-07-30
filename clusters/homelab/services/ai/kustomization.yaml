@@ -6,6 +6,9 @@ resources:
 # Feature-coupled OpenClaw secrets, co-located with the cluster-owned openclaw.json
 # (homelab-ops-kubernetes-clusters#740). See the manifest header for the split rationale.
 - openclaw/externalsecret-openclaw-config-secrets.yaml
+# Plugin credentials referenced only from openclaw.json, pulled into the container wholesale
+# via an envFrom patch in kustomizations/apps-ai.yaml so new keys need no apps-ai change.
+- openclaw/externalsecret-openclaw-plugin-secrets.yaml
 
 configMapGenerator:
 - name: litellm-model-config
