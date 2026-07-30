@@ -173,17 +173,38 @@
 
   // Lockdown: computer/browser tool, elevated/shell/exec, and third-party in-process
   // plugins are all disabled.
+  //
+  // `deny` is matched on TOOL NAME, not plugin id, so a plugin can be allowlisted while the
+  // dangerous tool it registers stays unavailable. Two entries beyond the original lockdown:
+  //   code_execution - registered by the xai plugin (below), runs model-authored code in a
+  //                    remote xAI sandbox. `xai.config.codeExecution.enabled: false` already
+  //                    turns it off; this is the belt-and-braces that survives a default flip.
+  //   voice_call     - registered by the voice-call plugin, which is baked into the image but
+  //                    NOT allowlisted yet, so this is pre-emptive. That plugin has no outbound
+  //                    destination allowlist, so the agent must never hold the dialling tool;
+  //                    alerts should be driven from n8n/Alertmanager via the
+  //                    `voicecall.initiate` gateway RPC with `to` omitted (falls back to the
+  //                    configured `toNumber`). Denying the tool does not block that RPC path.
   "tools": {
     "deny": [
+      "browser",
+      "code_execution",
       "exec",
-      "browser"
+      "voice_call"
     ],
     "elevated": {
       "enabled": false
     },
     "web": {
       "search": {
-        "enabled": true
+        // Pinned explicitly. Key-free providers never win provider auto-detection, so
+        // allowlisting the duckduckgo plugin alone leaves web search non-functional -- with
+        // `enabled: true` and no provider resolvable there is nothing to route to.
+        // duckduckgo is the default here because it needs no credentials. To switch: set this
+        // to "brave" once BRAVE_API_KEY is in the secret, or "searxng" once a SearXNG instance
+        // is deployed in-cluster (both plugins are already baked into the image).
+        "enabled": true,
+        "provider": "duckduckgo"
       },
       "fetch": {
         "enabled": true
@@ -194,21 +215,55 @@
   // plugins.allow is keyed by plugin ID (e.g. "whatsapp"), NOT the npm package name
   // ("@openclaw/whatsapp") -- the package name is silently treated as "not found" and the
   // real plugin ends up omitted from the allowlist.
+  //
+  // document-extract, duckduckgo, web-readability and xai are BUNDLED in the base image
+  // (/app/dist/extensions) rather than installed by this repo's Dockerfile -- but bundled is
+  // not enabled: a non-empty `allow` is a hard gate that bundled plugins do not bypass, even
+  // ones whose manifest sets `enabledByDefault: true`. They load only because they are listed
+  // here. brave, diffs and searxng are npm installs baked in by the image.
+  // voice-call is baked into the image but deliberately NOT allowlisted yet (see tools.deny).
   "plugins": {
     "allow": [
+      "brave",
       "diagnostics-prometheus",
+      "diffs",
+      "document-extract",
+      "duckduckgo",
       "litellm",
       "lobster",
       "memory-core",
       "memory-lancedb",
+      "searxng",
       "telegram",
-      "whatsapp"
+      "web-readability",
+      "whatsapp",
+      "xai"
     ],
     "slots": {
       "memory": "memory-lancedb"
     },
     "entries": {
+      // Enabled but unconfigured: brave needs BRAVE_API_KEY and searxng needs a deployed
+      // instance before either can serve `tools.web.search.provider`. Neither being ready is
+      // why duckduckgo is the pinned provider for now; both are listed so flipping the
+      // provider is a one-line change.
+      "brave": {
+        "enabled": true
+      },
       "diagnostics-prometheus": {
+        "enabled": true
+      },
+      "diffs": {
+        "enabled": true
+      },
+      // Parses untrusted PDFs/attachments in-process via clawpdf. Acceptable only because
+      // WhatsApp DMs are pairing-gated to OWNER_WHATSAPP_NUMBER and groupPolicy is allowlist,
+      // so the set of senders who can reach the parser is effectively just the operator.
+      // Revisit if channels.whatsapp.allowFrom is ever widened.
+      "document-extract": {
+        "enabled": true
+      },
+      "duckduckgo": {
         "enabled": true
       },
       "litellm": {
@@ -232,11 +287,39 @@
           }
         }
       },
+      "searxng": {
+        "enabled": true
+      },
       "telegram": {
+        "enabled": true
+      },
+      // Extracts readable article text from web_fetch HTML responses via @mozilla/readability
+      // + linkedom (pure JS, no native code). Net reduction in prompt-injection surface: the
+      // model sees article text instead of raw HTML with nav, ads and inline script.
+      "web-readability": {
         "enabled": true
       },
       "whatsapp": {
         "enabled": true
+      },
+      // Enabled ONLY for the x_search tool (searching X posts) -- nothing else provides it.
+      // xAI is NOT a model provider here; every model routes through LiteLLM. Both tools this
+      // plugin registers are dormant by default ("with each tool's enabled setting omitted,
+      // OpenClaw exposes it only for an active xAI model", and no xAI model is ever active),
+      // so xSearch.enabled is the explicit opt-in that makes x_search usable alongside the
+      // LiteLLM models -- and codeExecution stays off, reinforced by tools.deny.
+      // Requires XAI_API_KEY (or xAI OAuth) and direct egress to api.x.ai, which is the one
+      // model-vendor call path that bypasses LiteLLM. Accepted for x_search only.
+      "xai": {
+        "enabled": true,
+        "config": {
+          "xSearch": {
+            "enabled": true
+          },
+          "codeExecution": {
+            "enabled": false
+          }
+        }
       }
     },
     "bundledDiscovery": "allowlist"
