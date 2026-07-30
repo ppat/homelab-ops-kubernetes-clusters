@@ -176,9 +176,10 @@
   //
   // `deny` is matched on TOOL NAME, not plugin id, so a plugin can be allowlisted while the
   // dangerous tool it registers stays unavailable. Two entries beyond the original lockdown:
-  //   code_execution - registered by the xai plugin (below), runs model-authored code in a
-  //                    remote xAI sandbox. `xai.config.codeExecution.enabled: false` already
-  //                    turns it off; this is the belt-and-braces that survives a default flip.
+  //   code_execution - registered by the xai plugin, which is bundled in the base image but
+  //                    deliberately NOT allowlisted, so this is pre-emptive. It runs
+  //                    model-authored code in a remote xAI sandbox; keep it denied if xai is
+  //                    ever enabled, since allowlisting the plugin alone would expose it.
   //   voice_call     - registered by the voice-call plugin, which is baked into the image but
   //                    NOT allowlisted yet, so this is pre-emptive. That plugin has no outbound
   //                    destination allowlist, so the agent must never hold the dialling tool;
@@ -215,12 +216,17 @@
   // ("@openclaw/whatsapp") -- the package name is silently treated as "not found" and the
   // real plugin ends up omitted from the allowlist.
   //
-  // document-extract, duckduckgo, web-readability and xai are BUNDLED in the base image
+  // document-extract, duckduckgo and web-readability are BUNDLED in the base image
   // (/app/dist/extensions) rather than installed by this repo's Dockerfile -- but bundled is
   // not enabled: a non-empty `allow` is a hard gate that bundled plugins do not bypass, even
   // ones whose manifest sets `enabledByDefault: true`. They load only because they are listed
   // here. brave, diffs and searxng are npm installs baked in by the image.
-  // voice-call is baked into the image but deliberately NOT allowlisted yet (see tools.deny).
+  // Deliberately absent despite being available in the image (see tools.deny for both):
+  //   xai        - its only unique capability is x_search over X posts. Needs XAI_API_KEY and
+  //                direct egress to api.x.ai, the one model-vendor path that would bypass
+  //                LiteLLM and its spend tracking, and xAI bills X Search per call ($5/1000)
+  //                with no per-day cap available in plugin config. Not worth it for now.
+  //   voice-call - baked in for a future outbound-alerting path, not wired yet.
   "plugins": {
     "allow": [
       "brave",
@@ -235,8 +241,7 @@
       "searxng",
       "telegram",
       "web-readability",
-      "whatsapp",
-      "xai"
+      "whatsapp"
     ],
     "slots": {
       "memory": "memory-lancedb"
@@ -306,25 +311,6 @@
       },
       "whatsapp": {
         "enabled": true
-      },
-      // Enabled ONLY for the x_search tool (searching X posts) -- nothing else provides it.
-      // xAI is NOT a model provider here; every model routes through LiteLLM. Both tools this
-      // plugin registers are dormant by default ("with each tool's enabled setting omitted,
-      // OpenClaw exposes it only for an active xAI model", and no xAI model is ever active),
-      // so xSearch.enabled is the explicit opt-in that makes x_search usable alongside the
-      // LiteLLM models -- and codeExecution stays off, reinforced by tools.deny.
-      // Requires XAI_API_KEY (or xAI OAuth) and direct egress to api.x.ai, which is the one
-      // model-vendor call path that bypasses LiteLLM. Accepted for x_search only.
-      "xai": {
-        "enabled": true,
-        "config": {
-          "xSearch": {
-            "enabled": true
-          },
-          "codeExecution": {
-            "enabled": false
-          }
-        }
       }
     },
     "bundledDiscovery": "allowlist"
