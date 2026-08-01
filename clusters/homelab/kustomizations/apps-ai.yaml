@@ -64,6 +64,34 @@ spec:
     - kind: Secret
       name: cluster-secrets
   patches:
+  # TEMPORARY, and the port-back is tracked -- this is a prototype, not a destination.
+  #
+  # apps-ai v0.6.20 pins obsidian-tools 0.3.0, whose image cannot start: its virtualenv console
+  # script carried a shebang naming the builder's interpreter path, so the container died with
+  # `exec .../obsidian-tools failed: No such file or directory` and crashlooped every 15 minutes.
+  # Fixed in ppat/obsidian-tools#33 and released as 0.3.1, which also adds a CI job that pulls the
+  # published image and runs its entrypoint -- the check whose absence let 0.3.0 build, publish,
+  # pass everything and deploy while being unable to exec.
+  #
+  # Patching here rather than waiting on an apps-ai release: the module change is one digest, and
+  # the round trip is commit -> release -> tag -> bump before a broken CronJob stops failing.
+  #
+  # Retirement is TWO commits, not one. This patch *substitutes* a fix rather than neutralising
+  # something, so bumping ref.tag and deleting the patch together leaves a window where the new
+  # revision has not been fetched yet but the override is already gone -- straight back to the
+  # unstartable image. Bump the tag first (this patch then sets the digest the module already
+  # names, and is inert), then remove it once that revision has actually landed.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: replace
+        path: /spec/jobTemplate/spec/template/spec/containers/0/image
+        value: docker.io/ppatlabs/obsidian-tools:0.3.1@sha256:5f0b80fe3b447363004b2a03f6910f1cd8ff34e220c73ac0a07d9b717949bcf3
+    target:
+      group: batch
+      version: v1
+      kind: CronJob
+      name: git-committer
+      namespace: obsidian-vault
   # yamllint disable-line rule:indentation
   - patch: |
       - op: add
