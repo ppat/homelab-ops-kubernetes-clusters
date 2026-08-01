@@ -17,10 +17,10 @@ manual, occasional, human-run procedures instead.
 `dockerd` (so unprivileged Coder workspace pods have a real Docker Engine to
 point `DOCKER_HOST` at) and a single-node Talos sandbox VM for AI agents,
 which doubles as a rehearsal of the eventual k3s → Talos migration. KubeVirt
-needs `/dev/kvm` and a few kernel modules present on whichever node schedules
-those VMs — this runbook gets a node ready and gives it a declarative label
+needs `/dev/kvm` present on whichever node schedules those VMs — this
+runbook verifies a node is actually capable and gives it a declarative label
 so KubeVirt VMs can be scheduled onto it deliberately (`nodeSelector`), not
-just wherever a node happens to have the modules loaded.
+just wherever a node happens to be capable.
 
 **Target nodes:**
 
@@ -32,6 +32,22 @@ just wherever a node happens to have the modules loaded.
 The two GMKtec nodes are deliberately excluded — roughly 7.5Gi of headroom
 each isn't enough for either VM.
 
+**Which path applies to you:**
+
+- **Both target nodes, today:** the pre-flight below has already been run
+  against `beelink-ser8-1` and `minisforum-nab9-1` and everything KubeVirt
+  needs is already present — modules loaded, `/dev/kvm` there, cgroup v2,
+  AppArmor active. Read [step 1](#1-pre-flight-verification-gate--do-not-skip)
+  to know what was checked, then skip straight to
+  [Path A](#path-a--these-two-nodes-today) in step 2 — it's one label.
+- **A fresh/rebuilt node, or a third node added later:** read step 1, run
+  the gate for real, then follow [Path B](#path-b--a-fresh-or-rebuilt-node)
+  in step 2 — the full sequence.
+
+Conflating the two paths means draining/cycling a node — and briefly
+shrinking etcd quorum — for zero reason on a node that already has
+everything it needs.
+
 ### 1. Pre-flight verification (gate — do not skip)
 
 Node Feature Discovery already reports `feature.node.kubernetes.io/cpu-cpuid.SVM=true`
@@ -39,8 +55,7 @@ on `beelink-ser8-1` and `feature.node.kubernetes.io/cpu-cpuid.VMX=true` on
 `minisforum-nab9-1` (confirmed directly against the live `Node` objects while
 writing this runbook). That's a CPUID read — it proves the CPU *can* do
 hardware virtualization, not that the kernel module is loaded and `/dev/kvm`
-exists. Whether `/dev/kvm` exists on these two nodes today is genuinely
-unknown and must be checked before anything else.
+exists.
 
 **If `/dev/kvm` cannot be made to exist on both nodes, stop — do not proceed
 with the KubeVirt plan.** The fallback is KubeVirt's `useEmulation: true`
@@ -49,11 +64,13 @@ magnitude slower and is documented upstream as a dev/test-only setting, not
 something to run either of these VMs on long-term.
 
 Run this on each target node (SSH in, no changes made — safe to run any
-time):
+time). It **exits non-zero on any FAIL** so it can gate a wrapper script, not
+just print a warning that scrolls past:
 
 ```bash
 #!/usr/bin/env bash
-# preflight-kubevirt-node.sh -- read-only; makes no changes.
+# preflight-kubevirt-node.sh -- read-only; makes no changes. Exits non-zero
+# if any gating check fails.
 set -uo pipefail
 
 echo "== KubeVirt host pre-flight: $(hostname) =="
@@ -69,20 +86,42 @@ check() {
   fi
 }
 
+# Informational only -- never gates. See "IOMMU" note below.
+info() {
+  local desc="$1" cmd="$2"
+  if eval "$cmd" >/dev/null 2>&1; then
+    echo "INFO  $desc: yes"
+  else
+    echo "INFO  $desc: no"
+  fi
+}
+
 check "/dev/kvm exists"             "[ -e /dev/kvm ]"
 check "kvm module loaded"           "lsmod | awk '{print \$1}' | grep -qx kvm"
 check "kvm_intel or kvm_amd loaded" "lsmod | awk '{print \$1}' | grep -qxE 'kvm_intel|kvm_amd'"
-check "vhost_net module loaded"     "lsmod | awk '{print \$1}' | grep -qx vhost_net"
-check "tun module loaded"           "lsmod | awk '{print \$1}' | grep -qx tun"
+# /dev/net/tun and /dev/vhost-net are checked by existence, not lsmod: on a
+# stock Ubuntu kernel both modules are wired to autoload the first time
+# something opens the device node (a udev "devname" alias), so the node can
+# be present and fully working before either module ever shows up in lsmod.
+# Checking lsmod here produces a false FAIL on a node that is actually fine
+# -- see "Why no kernel-module persistence step" below.
+check "/dev/vhost-net device node exists" "[ -e /dev/vhost-net ]"
+check "/dev/net/tun device node exists"   "[ -e /dev/net/tun ]"
 check "cgroup v2 unified hierarchy" "[ \"\$(stat -fc %T /sys/fs/cgroup)\" = cgroup2fs ]"
 check "AppArmor active"             "systemctl is-active --quiet apparmor"
+# IOMMU isn't required by anything in this runbook's plan, but it's what
+# makes PCI/GPU passthrough a real future option on a node -- recorded here
+# so a future reader doesn't have to re-derive it from virt-host-validate.
+info "IOMMU enabled by kernel"      "[ -d /sys/kernel/iommu_groups ] && [ -n \"\$(ls -A /sys/kernel/iommu_groups 2>/dev/null)\" ]"
 
 echo
 if $pass; then
   echo "All gating checks passed."
+  exit 0
 else
   echo "One or more gating checks FAILED -- do not schedule KubeVirt VMs on" \
        "this node until every check above passes."
+  exit 1
 fi
 ```
 
@@ -103,6 +142,26 @@ sudo apt-get purge -y libvirt-clients
 sudo apt-get autoremove -y
 ```
 
+Running this against both target nodes produced an all-PASS result with
+exactly two `WARN`s: a missing `/dev/cpu/0/msr` and "unknown if this
+platform has Secure Guest support". **Neither is part of the gate script
+above, and neither should become one:**
+
+- `/dev/cpu/0/msr` is raw Model-Specific-Register access, used by
+  CPU-introspection tooling (`turbostat`, `msr-tools`, some CPU-model
+  detection paths) — it has nothing to do with the KVM/QEMU virtualization
+  datapath, and KubeVirt's `virt-handler`/`virt-launcher` never touch it.
+  It's generic libvirt-host advice, not a KubeVirt requirement.
+- The Secure Guest warning is about confidential-computing support (AMD
+  SEV/SEV-ES/SEV-SNP, Intel TDX) — irrelevant unless a VM here is ever
+  configured to actually request a confidential-computing launch, which
+  neither the dockerd VM nor the Talos sandbox does.
+
+Gating on either would be a false positive: an operator would see a halted
+gate for a condition that doesn't affect anything in this plan, learn to
+distrust the gate, and start skipping it — the opposite of the goal. Expect
+both `WARN`s on this hardware and don't chase them.
+
 If `/dev/kvm` is missing, check first whether virtualization is disabled in
 firmware (BIOS/UEFI "SVM Mode" / "Intel Virtualization Technology") before
 assuming a kernel-side problem — that's the most common reason a CPU that
@@ -110,101 +169,141 @@ reports `SVM`/`VMX` still has no `/dev/kvm`.
 
 ### 2. The change
 
-Applied one node at a time, so the other three nodes keep etcd quorum and
-serve traffic while a given node is briefly out of rotation.
+#### Path A — these two nodes, today
 
-`prepare-kubevirt-node.sh` (copy to the node and run as root):
-
-```bash
-#!/usr/bin/env bash
-# prepare-kubevirt-node.sh -- idempotent; safe to re-run.
-set -euo pipefail
-
-LABEL_KEY="homelab.nikara.net/virtualization"
-LABEL_VALUE="enabled"
-
-echo "== Preparing $(hostname) for KubeVirt =="
-
-# 1. Kernel modules to load on every future boot.
-install -o root -g root -m 0644 /dev/stdin /etc/modules-load.d/kubevirt.conf <<'EOF'
-kvm
-kvm_intel
-kvm_amd
-vhost_net
-tun
-EOF
-
-# 2. Load them now -- no reboot needed. kvm_intel fails benignly on the AMD
-#    node, kvm_amd fails benignly on the Intel node: exactly one of the two
-#    is expected to succeed per node, the other's failure is not an error.
-for mod in kvm kvm_intel kvm_amd vhost_net tun; do
-  modprobe "$mod" 2>/dev/null || true
-done
-
-# 3. Declarative node label via a k3s config drop-in, so a fresh reinstall or
-#    disaster-recovery rejoin of this node picks the label back up
-#    automatically instead of relying on someone remembering to `kubectl
-#    label` it again. See the runbook's caveat below: on an *already*
-#    registered node (this one), this alone is not sufficient.
-mkdir -p /etc/rancher/k3s/config.yaml.d
-install -o root -g root -m 0644 /dev/stdin \
-  /etc/rancher/k3s/config.yaml.d/90-kubevirt.yaml <<EOF
-node-label:
-  - "${LABEL_KEY}=${LABEL_VALUE}"
-EOF
-
-echo "Done."
-```
-
-Full per-node sequence (repeat for `beelink-ser8-1`, then
-`minisforum-nab9-1`):
+Both nodes already pass every gating check — nothing about `/dev/kvm`, the
+kernel modules, cgroups, or AppArmor needs to change (see "Why no
+kernel-module persistence step" below for why that's true and expected to
+stay true across reboots). The only thing missing is the declarative label,
+and — per the k3s caveat below — that needs both the git-visible drop-in
+*and* one imperative `kubectl label`, applied directly, with no cordon and no
+`systemctl` restart:
 
 ```bash
-# From wherever you have kubectl access to the homelab cluster:
-kubectl cordon beelink-ser8-1
+# 1. Drop the declarative k3s config in place (see the block below for
+#    contents). This alone does NOT label an already-registered node -- see
+#    the caveat -- but it's what makes the label git-visible desired-state
+#    and what applies automatically on this node's next real registration
+#    (reinstall, disaster recovery). Plain file write: no k3s restart
+#    needed, no live effect until some *future* registration event.
+scp 90-kubevirt.yaml beelink-ser8-1:/tmp/
+ssh beelink-ser8-1 'sudo install -o root -g root -m 0644 -D /tmp/90-kubevirt.yaml /etc/rancher/k3s/config.yaml.d/90-kubevirt.yaml'
 
-# On the node itself:
-ssh beelink-ser8-1 'sudo systemctl stop k3s'
-scp prepare-kubevirt-node.sh beelink-ser8-1:/tmp/
-ssh beelink-ser8-1 'sudo bash /tmp/prepare-kubevirt-node.sh'
-ssh beelink-ser8-1 'sudo systemctl start k3s'
-
-# Wait for the node to report Ready again, then uncordon:
-kubectl wait --for=condition=Ready node/beelink-ser8-1 --timeout=180s
-kubectl uncordon beelink-ser8-1
-```
-
-**Caveat verified against current k3s docs, and it changes the plan:** k3s's
-`--node-label` (and therefore the `config.yaml.d` `node-label` drop-in above)
-"only add[s] labels ... at registration time, so they can only be set when
-the node is first joined to the cluster" — [k3s Advanced Options docs](https://docs.k3s.io/advanced).
-Both target nodes are already registered, so restarting k3s with the drop-in
-in place will **not** retroactively add the label. Apply it once, directly,
-right after the restart above:
-
-```bash
+# 2. Apply the label directly -- this is the part that actually takes effect
+#    today, since k3s only reads config.yaml.d node-label(+) at registration
+#    time and both nodes are already registered.
 kubectl label node beelink-ser8-1 homelab.nikara.net/virtualization=enabled
+
+# Repeat both steps for minisforum-nab9-1.
 ```
 
-Do this once per node. The `config.yaml.d` drop-in isn't wasted effort even
-though it doesn't take effect immediately here — it's what makes the label
-declarative desired-state (git-visible, not `kubectl`-applied drift) and it's
-what will actually apply automatically the next time either node re-registers
-from scratch (reinstall, disaster recovery). Keep the drop-in and the
-`kubectl label` in sync — if one is ever removed, remove the other too.
+No `kubectl cordon`, no `systemctl stop/start k3s` — this path makes no
+change that a running k3s process, or anything scheduled on the node, would
+ever observe.
 
-No reboot is required anywhere in this runbook: `modprobe` loads the kernel
-modules immediately, and `/etc/modules-load.d/kubevirt.conf` only governs
-what happens on some *future* boot.
+#### Path B — a fresh or rebuilt node
+
+Applies to a node reinstalled from scratch, a disaster-recovery rejoin, or a
+third node added to the KubeVirt pool later.
+
+1. **If the node is currently live and about to be taken down for
+   rebuild**, cordon it first — ordinary node-maintenance hygiene, not
+   specific to this runbook. Reuse the pattern this cluster's
+   `system-upgrade-controller` already applies for k3s upgrades: cordon,
+   *no* drain, because the operation completes fast enough that pods don't
+   migrate. Don't introduce a second, slower convention for the same kind of
+   operation:
+
+   ```bash
+   kubectl cordon <node>
+   ```
+
+2. Bake `/etc/rancher/k3s/config.yaml.d/90-kubevirt.yaml` into however the
+   node gets provisioned (image, cloud-init, Ansible, whatever replaces the
+   retired Packer/Ansible pipeline) so it's in place **before** `k3s` first
+   starts:
+
+   ```yaml
+   # 90-kubevirt.yaml
+   # A '+' suffix is required on node-label (verified against the current
+   # k3s config docs: https://docs.k3s.io/installation/configuration).
+   # config.yaml.d files merge by key, last-file-wins, UNLESS the key carries
+   # a '+' suffix, in which case it appends instead of replacing -- and every
+   # file that sets this key from then on must also use '+' or it silently
+   # reverts to overwrite. A bare `node-label:` here would mean any later
+   # drop-in that also sets `node-label:` (bare) erases this label with no
+   # error -- precisely the disaster-recovery re-registration scenario this
+   # file exists to serve.
+   node-label+:
+     - "homelab.nikara.net/virtualization=enabled"
+   ```
+
+3. Let the node join normally. Registration applies the label automatically
+   — no manual `kubectl label` step needed on a genuine fresh join, unlike
+   Path A.
+4. Once the node reports `Ready`, run the pre-flight script from step 1
+   against it before trusting it. The "no kernel-module step" reasoning
+   below was verified against stock Ubuntu kernel packaging on these two
+   specific nodes — confirm it still holds on whatever base image actually
+   provisioned this one before assuming it for granted.
+5. `kubectl uncordon <node>` if step 1 applied.
+
+**Caveat verified against current k3s docs, and it's why Path A and Path B
+differ:** k3s's `--node-label` (and therefore the `config.yaml.d`
+`node-label`/`node-label+` drop-in above) "only add[s] labels ... at
+registration time, so they can only be set when the node is first joined to
+the cluster" — [k3s Advanced Options docs](https://docs.k3s.io/advanced).
+Both target nodes are already registered, so the drop-in alone will
+**not** retroactively add the label to them (Path A's reason for the extra
+`kubectl label` step); a genuinely fresh or rejoining node picks it up
+automatically at registration (Path B's reason it doesn't need that step).
+Keep the drop-in and the `kubectl label` in sync on already-registered nodes
+— if one is ever removed, remove the other too.
+
+#### Why no kernel-module persistence step
+
+An earlier draft of this runbook also installed
+`/etc/modules-load.d/kubevirt.conf` listing `kvm`, `kvm_intel`, `kvm_amd`,
+`vhost_net`, `tun`. Running the pre-flight against the real nodes showed
+that's unnecessary — and, for two of the five, actively worse than doing
+nothing:
+
+- **`kvm_intel`/`kvm_amd` already autoload without any config.** Both
+  modules ship a `MODULE_DEVICE_TABLE(x86cpu, ...)` CPU-feature match (VMX /
+  SVM), which the kernel uses to auto-probe and load the correct one at boot
+  via udev's CPU coldplug — no `modprobe`, no `modules-load.d` entry. That's
+  exactly what the pre-flight found: `kvm_intel`+`kvm` loaded on the Intel
+  node, `kvm_amd`+`kvm`(+`ccp`) on the AMD node, with
+  `/etc/modules-load.d/*.conf` containing nothing but the stock "this file
+  is obsolete" comment. **Listing both vendor modules in a static
+  `modules-load.d` file is a regression, not a no-op:** no CPU has both VMX
+  and SVM, so exactly one of the two will fail to load on every boot,
+  forever, on both nodes — turning `systemd-modules-load.service` into a
+  unit that's permanently "failed" for a condition that isn't a problem.
+  That's the same false-positive-gate failure mode as the `msr`/Secure-Guest
+  `WARN`s above, just aimed at `systemctl --failed` instead of a human eye.
+- **`tun`/`vhost_net` also autoload, on first use.** Neither showed up in
+  `lsmod` on either node, yet `virt-host-validate` found `/dev/net/tun` and
+  `/dev/vhost-net` both present and passing. That combination — device node
+  present, module not (yet) resident — is the signature of the kernel's
+  "devname" module-alias mechanism: udev pre-creates the device node from
+  the module's alias metadata at boot, and the kernel `request_module()`s
+  the real module the first time something opens that node (which is
+  exactly what `virt-launcher` does when a VM starts). No persisted config
+  is needed for either the node or the eventual module load to happen.
+
+Net effect: the modules are already handled by the OS, on this specific
+hardware and kernel packaging, without this runbook's help. Declaring them
+in `modules-load.d` doesn't make anything more available — it implies a
+dependency that isn't real, and for the vendor-specific pair it actively
+breaks a systemd unit on every boot. That's why Path A above changes nothing
+about kernel modules, and why Path B doesn't either.
 
 ### 3. Post-change verification
 
 ```bash
 # Label present on both nodes:
 kubectl get nodes -l homelab.nikara.net/virtualization=enabled
-
-# Modules loaded (run on the node):
-lsmod | grep -E '^(kvm|kvm_intel|kvm_amd|vhost_net|tun)\b'
 ```
 
 `devices.kubevirt.io/kvm`, `devices.kubevirt.io/tun`, and
@@ -220,8 +319,7 @@ kubectl describe node beelink-ser8-1 | sed -n '/Allocatable/,/System Info/p'
 
 ### 4. Talos equivalent
 
-This is exactly why the change was split into "kernel modules" and "node
-label" as two independent, narrow primitives — both map to one field each in
+Both independent primitives from this runbook map to one field each in
 Talos's machine config, so this becomes a translation, not a rediscovery,
 when the migration happens:
 
@@ -230,16 +328,25 @@ machine:
   kernel:
     modules:
       - name: kvm
-      - name: kvm_intel # benign failure on the AMD node, same as k3s
-      - name: kvm_amd    # benign failure on the Intel node, same as k3s
+      - name: kvm_intel # benign failure on the AMD node, same caveat as k3s
+      - name: kvm_amd    # benign failure on the Intel node, same caveat as k3s
       - name: vhost_net
       - name: tun
   nodeLabels:
     homelab.nikara.net/virtualization: enabled
 ```
 
-Two things worth knowing before relying on this in the actual migration
-(verify on first use — sources disagree on the second one):
+**Unlike the Ubuntu nodes above, don't assume this module list is
+unnecessary on Talos without checking.** The "no kernel-module step"
+finding for `beelink-ser8-1`/`minisforum-nab9-1` rests on stock Ubuntu
+kernel packaging and udev's coldplug/devname-alias autoload machinery —
+Talos is a minimal, immutable OS with its own kernel build and no udev, so
+neither autoload path is guaranteed to carry over. Verify with the
+equivalent of the pre-flight script (or the Talos node's own `lsmod`) on
+first use before dropping this list; don't port the Ubuntu finding by
+assumption. Two more things worth knowing before relying on this in the
+actual migration (also verify on first use — sources disagree on the
+second one):
 
 - `machine.nodeLabels` is applied live by Talos's own controller — no
   restart needed — but is still subject to the same
@@ -256,21 +363,17 @@ Two things worth knowing before relying on this in the actual migration
 
 ### 5. Rollback
 
+Path A/B above never touch kernel modules, so there's nothing module-related
+to unwind — only the label and its declarative drop-in:
+
 ```bash
-# On the node (reverses step 2's persistence + immediate-effect changes):
-sudo rm -f /etc/modules-load.d/kubevirt.conf
+# On the node:
 sudo rm -f /etc/rancher/k3s/config.yaml.d/90-kubevirt.yaml
-# Only unload the modules if no VM is currently using /dev/kvm on this node:
-sudo modprobe -r vhost_net tun kvm_intel kvm_amd kvm 2>/dev/null || true
 
-# Remove the declarative label:
+# Remove the imperative label (Path A nodes only -- a Path B node that
+# picked the label up at registration only carries it via the drop-in
+# above, so removing the file is enough there):
 kubectl label node beelink-ser8-1 homelab.nikara.net/virtualization-
-
-# k3s doesn't need restarting to drop a removed config.yaml.d file's
-# already-applied label -- the label removal above already reflects the
-# node's true state going forward. Restart it anyway if you want the node's
-# process config to match the file state exactly:
-ssh beelink-ser8-1 'sudo systemctl restart k3s'
 ```
 
 ## Runbook: build and publish the Talos containerDisk
