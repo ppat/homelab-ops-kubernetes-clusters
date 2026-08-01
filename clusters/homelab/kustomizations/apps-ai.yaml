@@ -33,6 +33,19 @@ spec:
   postBuild:
     substitute:
       db_bootstrap_database: litellm
+      # Which repository the vault's git committer pushes derived history to. Module
+      # configuration, not a cluster-wide value, so it belongs here rather than in
+      # cluster-secrets alongside dns_zone and the IP addresses. It has no default in
+      # obsidian-tools -- a missing value fails the run at startup rather than silently
+      # defaulting to something wrong.
+      #
+      # git_committer_remote_nas_url is deliberately not set. The NAS bare repository is a
+      # second push target for independence insurance, and obsidian-tools treats it as
+      # optional: with the variable absent the committer pushes to origin only and logs
+      # which remotes are configured. Enabling it later means adding one line here, plus
+      # the NAS-side setup (bare repo, authorized_keys, and its host key via
+      # GIT_SSH_KNOWN_HOSTS_EXTRA, since it is published nowhere).
+      git_committer_remote_origin_url: git@github.com:ppat/obsidian-vault.git
       db_bootstrap_owner: litellm
       db_name: litellm-db
       db_namespace: ai
