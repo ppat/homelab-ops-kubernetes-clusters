@@ -384,6 +384,19 @@ sudo rm -f /etc/rancher/k3s/config.yaml.d/90-kubevirt.yaml
 kubectl label node beelink-ser8-1 homelab-ops.internal/virtualization-
 ```
 
+### 6. Sequencing hazard: label before `infra-virtualization-core` reconciles
+
+**As of this writing, no node carries `homelab-ops.internal/virtualization=enabled`
+yet** — step 2 above is written but not yet applied. If the
+`infra-virtualization-core` `Kustomization` reconciles first, `virt-handler` has
+nowhere to schedule and the `KubeVirt` custom resource sits un-`Deployed`
+indefinitely. From the outside that looks identical to a real failure
+(virt-operator crash-looping, a wrong monitor `ServiceAccount`, a bad
+`GitRepository` tag) but is just this precondition — check
+`kubectl get nodes -l homelab-ops.internal/virtualization=enabled` before
+assuming anything else is wrong. Run [Path A](#path-a--these-two-nodes-today)
+first, then let `infra-virtualization-core` reconcile.
+
 ## Runbook: build and publish the Talos containerDisk
 
 **Why:** the single-node Talos sandbox VM boots from a KubeVirt

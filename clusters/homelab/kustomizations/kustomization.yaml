@@ -15,6 +15,7 @@ resources:
 - infra-security-core.yaml
 - infra-security-extra.yaml
 - infra-storage-core.yaml
+- infra-virtualization-core.yaml
 - apps-ai.yaml
 - apps-coder.yaml
 - apps-downloaders.yaml
