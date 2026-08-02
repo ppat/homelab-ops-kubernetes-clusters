@@ -5,7 +5,7 @@ kind: Kustomization
 resources:
 - namespace.yaml
 - network-policy.yaml
-- cronjob-netpol-falsifiability-probe.yaml
+- deployment-netpol-falsifiability-probe.yaml
 
 commonAnnotations:
   # This namespace's own isolation is the point of the module -- prevent pruning

@@ -5,6 +5,22 @@
 # namespace is the one AI agents get full write access to (today they only have read-only
 # cluster access, via mcp-kubernetes-readonly), so egress from it has to be closed by
 # default on the same footing as ingress into it.
+#
+# CAVEAT -- and it matters more here than anywhere else in this repo, because this is the
+# namespace agents can write to: a pod is unpoliced for a window after it's created, not
+# from the instant it exists. k3s's bundled kube-router-derived NetworkPolicy controller
+# programs each pod's firewall chain and its KUBE-ROUTER-FORWARD dispatch rule
+# *reactively*, watching the API server for new pods -- a pod with no dispatch rule yet
+# falls straight through to `-P FORWARD ACCEPT`, fully unpoliced. An agent with pod-create
+# rights here could run a Job that exfiltrates toward the prod cluster or the LAN in its
+# first seconds and exits before enforcement ever arrives -- for a short-lived pod, this
+# window can span the pod's entire lifetime. It does not affect the sandbox VM itself
+# (long-lived, policed within seconds of creation), but it is a genuine, standing property
+# of this isolation model, not a bug to be fixed here. See
+# sandbox-docker/network-policy.yaml for how this was discovered (it produced a false
+# "everything reachable" result from this namespace's own falsifiability probe) and
+# OPERATIONS.md for the full writeup, including how to verify a given pod is actually
+# policed.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

@@ -619,28 +619,42 @@ of relying on someone else's automated image.
 
 **Why:** `clusters/homelab/services/sandbox-docker/` and
 `clusters/homelab/services/sandbox-talos/` each ship a
-`netpol-falsifiability-probe` CronJob (see each namespace's
-`cronjob-netpol-falsifiability-probe.yaml`) that asserts the namespace's
+`netpol-falsifiability-probe` Deployment (see each namespace's
+`deployment-netpol-falsifiability-probe.yaml`) that asserts the namespace's
 NetworkPolicies are actually being enforced, not just present — it probes
-targets that should now be unreachable (the prod kube-apiserver, Longhorn's
-manager API, kubelet, etcd, the UniFi gateway, the in-cluster `kubernetes`
-Service, and, from `sandbox-talos`, the `sandbox-docker` namespace's SSH
-Service) alongside two that must stay reachable (`api.github.com` and DNS
-resolution via CoreDNS), and fails the Job if any denial stops holding.
+targets that should now be unreachable (the prod kube-apiserver, kubelet,
+etcd, the UniFi gateway, the in-cluster `kubernetes` Service, and, from
+`sandbox-talos`, the `sandbox-docker` namespace's SSH Service) alongside two
+that must stay reachable (`api.github.com` and DNS resolution via CoreDNS),
+on a recurring loop (`PROBE_INTERVAL_SECONDS`, 300s by default).
 
 A probe that only ever runs *after* the policy exists proves nothing by
 itself: if every target were unreachable for some unrelated reason (a
-misconfigured CNI, a routing problem, the probe pod itself broken), the
-CronJob would report success against a namespace with no working isolation
-at all. The run documented here is the other half — a baseline taken
-*before* the NetworkPolicies exist, where every probe (including the ones
-later expected to fail) must succeed. Only a probe that flips from "succeeds
-before" to "denied after" is evidence the policy — not something else — is
-what changed the outcome.
+misconfigured CNI, a routing problem, the probe pod itself broken), it would
+report success against a namespace with no working isolation at all. The
+run documented here is the other half — a baseline taken *before* the
+NetworkPolicies exist, where every probed target must be genuinely
+reachable. Only a target that flips from "reachable before" to "denied
+after" is evidence the policy — not something else — is what changed the
+outcome.
+
+This Deployment used to be a CronJob/Job. It isn't anymore, because a
+short-lived Job pod can complete *before* k3s's kube-router-derived
+NetworkPolicy controller has programmed that pod's own firewall dispatch
+rule — an unpoliced pod passes every deny check for free, which is exactly
+what happened on this probe's first real run (see the CAVEAT in each
+namespace's `network-policy.yaml`, and the "Known limitation" section
+below). The Deployment's container runs a warm-up gate before every probe
+cycle starts, and refuses to report anything until it has independently
+confirmed *this* pod is actually policed — see the comments in
+`deployment-netpol-falsifiability-probe.yaml` for the full mechanism. That
+gate is per-container-start, not per-cycle, which is also why switching to
+a long-lived pod removes the race rather than re-running it every schedule
+tick: once warmed up, the same pod stays policed for the rest of its life.
 
 ### 1. Baseline: before the NetworkPolicy exists
 
-Apply the namespace and CronJob, but not `network-policy.yaml`, e.g. by
+Apply the namespace and Deployment, but not `network-policy.yaml`, e.g. by
 temporarily commenting the `network-policy.yaml` entry out of that
 namespace's `kustomization.yaml` `resources:` list before this reconciles,
 or by deleting the live `NetworkPolicy` objects in the namespace after a
@@ -648,27 +662,46 @@ normal reconcile (Flux will reassert them on its next reconcile, so this
 window is short — have the second command below ready before deleting
 them).
 
-Trigger a one-shot run of the CronJob's own template rather than waiting for
-its schedule:
+**With no NetworkPolicy in place, the Deployment's own warm-up gate can
+never succeed** — nothing is denied yet, so `UNIFI_GATEWAY:443` never flips
+to blocked, and the pod will loop `WARMUP-TIMEOUT` → crash → restart
+indefinitely (`kubectl get pods -n sandbox-docker` will show a rising
+restart count / `CrashLoopBackOff`). **That crash-loop is the expected,
+correct baseline signature now** — it's evidence this pod itself isn't
+being denied anything, i.e. a genuinely open network — don't mistake it for
+a broken probe and don't wait for it to "pass".
+
+To validate that the individual deny-targets are actually live (the
+concern this baseline step exists for — catching a bad IP/port before it
+ships, the same class of bug as the Longhorn `:9500` dead-port false pass
+documented in `deployment-netpol-falsifiability-probe.yaml`), run a one-off
+diagnostic pod with the warm-up gate skipped, using the same image:
 
 ```bash
-kubectl create job --from=cronjob/netpol-falsifiability-probe \
-  -n sandbox-docker netpol-baseline-preflight
-kubectl logs -f job/netpol-baseline-preflight -n sandbox-docker
+kubectl run netpol-baseline --rm -it --restart=Never -n sandbox-docker \
+  --image=busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616 \
+  -- sh -c '
+    for t in 192.168.8.65:6443 192.168.8.67:6443 192.168.8.68:6443 192.168.8.69:6443 \
+             192.168.8.65:10250 192.168.8.67:10250 192.168.8.68:10250 192.168.8.69:10250 \
+             192.168.8.65:2379 192.168.8.67:2379 192.168.8.68:2379 192.168.8.69:2379 \
+             192.168.8.1:443 10.43.0.1:443 api.github.com:443; do
+      host=${t%:*}; port=${t#*:}
+      nc -zv -w3 "$host" "$port" 2>&1
+    done
+    nslookup api.github.com'
 ```
 
-(swap `sandbox-docker` for `sandbox-talos` to baseline the other namespace).
+(swap `sandbox-docker`/its node-IP-only targets for `sandbox-talos` — same
+target list plus `docker-vm.sandbox-docker.svc.cluster.local:22`, which is
+expected to fail DNS resolution until Phase 4 creates that Service — to
+baseline the other namespace).
 
-**Expected result: every probe reports `PASS`**, including the ones the
-script itself labels as testing for denial — with no NetworkPolicy in
-place, nothing is blocked yet, so a target the design expects to be denied
-later should still be reachable now. A `FAIL` at this stage means the probe
-itself is wrong (bad IP, bad port, a target that was never reachable in the
-first place) — fix the probe, not the policy, and re-run this step before
-moving on. `DOCKER_SSH_SERVICE` in the `sandbox-talos` CronJob is expected
-to report `SKIP` here (and at every step, until Phase 4 creates that
-Service) rather than `PASS`/`FAIL` — that's the intended pre-VM behavior,
-see the CronJob's own comments.
+**Expected result: every target above connects (or resolves) successfully.**
+A connection failure here means the probe target itself is wrong (bad IP,
+bad port, a target that was never reachable in the first place, i.e. not
+actually exposed on a node IP) — fix
+`deployment-netpol-falsifiability-probe.yaml`, not the policy, and re-run
+this step before moving on.
 
 ### 2. Apply the NetworkPolicy
 
@@ -680,36 +713,138 @@ specifically so this doesn't require a manual nudge).
 ### 3. Confirm the flip
 
 ```bash
-kubectl create job --from=cronjob/netpol-falsifiability-probe \
-  -n sandbox-docker netpol-postpolicy-check
-kubectl logs -f job/netpol-postpolicy-check -n sandbox-docker
+kubectl logs -f -n sandbox-docker deploy/netpol-falsifiability-probe
 ```
 
-**Expected result:** every probe that was `PASS` in step 1 for a target the
-script labels as a denial check now reports `PASS: ... denied as expected`
-(connection now refused/times out), while `GitHub API` and `DNS resolution`
-still report `PASS`. Any probe that stays reachable here that the design
-says should be denied means the NetworkPolicy isn't doing what it looks
-like it does — a label selector matching zero pods, a typo'd namespace
-selector, or the CNI's policy controller not enforcing at all are the usual
-causes; this is exactly the "policy that silently stopped enforcing"
-failure mode the recurring CronJob exists to keep catching automatically
-after this one-time baseline.
-
-### 4. Clean up the one-shot Jobs
+If the pod was already crash-looping from step 1, Kubernetes' restart
+backoff may delay the next attempt by up to a few minutes; force an
+immediate retry against the now-present policy rather than waiting it out:
 
 ```bash
-kubectl delete job netpol-baseline-preflight -n sandbox-docker
-kubectl delete job netpol-postpolicy-check -n sandbox-docker
+kubectl delete pod -n sandbox-docker -l app.kubernetes.io/name=netpol-falsifiability-probe
 ```
 
-The recurring `netpol-falsifiability-probe` CronJob keeps running afterward
-on its own 15-minute schedule; its result is queryable via
-`kube_job_failed{namespace=~"sandbox-docker|sandbox-talos"}` in Prometheus.
-No AlertManager route is wired to it, deliberately: this is a homelab with
-no triage layer for alerts yet, so a failure is meant to be found by
+**Expected result:** `WARMUP: waiting for this pod's egress chain to be
+programmed...` followed shortly by `WARMUP-OK: denial observed after Ns`,
+then a full cycle of `BLOCKED (ok): ...` lines for every deny target,
+`REACHABLE (ok): ...` for `api.github.com`/DNS, and a closing
+`SUMMARY ... verdict=CLEAN` line. Any target still logging
+`REACHABLE (violation)` here means the NetworkPolicy isn't doing what it
+looks like it does — a label selector matching zero pods, a typo'd
+namespace selector, or the CNI's policy controller not enforcing at all are
+the usual causes; this is exactly the "policy that silently stopped
+enforcing" failure mode the recurring probe exists to keep catching
+automatically after this one-time baseline.
+
+### 4. Clean up
+
+No one-shot Jobs to delete — the ad hoc `netpol-baseline` pod in step 1
+already removes itself (`--rm`). If the Deployment crash-looped during step
+1, its restart count is cosmetic once step 3 confirms `SUMMARY ...
+verdict=CLEAN` cycles are landing; nothing further to clean up.
+
+### Querying the probe's ongoing state
+
+The recurring probe keeps running afterward on its own
+`PROBE_INTERVAL_SECONDS` loop (300s by default). There is no `kube_job_failed`
+metric anymore (no Job object) — instead, query Loki directly for the verdict
+lines (confirmed working against the live `loki` datasource; the probe's pod
+logs carry `namespace`/`pod`/`node_name`/`container` labels via promtail):
+
+```logql
+# Latest cycle summary per namespace:
+{namespace=~"sandbox-docker|sandbox-talos"} |= "SUMMARY"
+
+# Any violation, ever, in the lookback window:
+{namespace=~"sandbox-docker|sandbox-talos"} |= "(violation)"
+
+# The pod itself failing to become policed (crash-loop signature):
+{namespace=~"sandbox-docker|sandbox-talos"} |= "WARMUP-TIMEOUT"
+```
+
+An absent recent `SUMMARY` line is itself a signal worth treating as
+suspect — it means the probe stopped producing cycles, not that it found
+nothing wrong; a crash-looping pod (`WARMUP-TIMEOUT`, or a killed container)
+also shows up as `kube_pod_container_status_restarts_total{namespace=~
+"sandbox-docker|sandbox-talos"}` climbing in Prometheus, which is a
+reasonable proxy for what `kube_job_failed` used to surface directly. No
+AlertManager route is wired to any of this, deliberately: this is a homelab
+with no triage layer for alerts yet, so a failure is meant to be found by
 querying, not by paging — wiring an alert route is a follow-up for once
 that layer exists, not part of this change.
+
+## Known limitation: the per-pod NetworkPolicy enforcement window
+
+**What it is:** k3s's bundled NetworkPolicy controller (a kube-router fork)
+programs each pod's firewall chain (`KUBE-POD-FW-<hash>`) and its dispatch
+rule in the `KUBE-ROUTER-FORWARD` chain *reactively*, in response to
+watching the API server for new pods — not proactively, and not as part of
+pod admission. Between a pod's creation and the moment that chain is
+programmed, it has **no policy enforcement at all**: `KUBE-ROUTER-FORWARD`'s
+per-pod dispatch is the only place traffic gets handed to a
+`KUBE-POD-FW-*` chain, and a pod with no dispatch rule yet falls straight
+through to the chain's default (`-P FORWARD ACCEPT`).
+
+**Why it exists:** this is a property of the controller's design
+(event-driven, not synchronous with pod creation), not a misconfiguration —
+verified directly by re-testing against a pod that had been running long
+enough for its rule to land: `nc -zv -w3 192.168.8.1 443` returned exit 1
+(blocked) against a warmed-up `sandbox-docker` pod, while the identical
+check against a pod that completed before its chain was programmed showed
+every target reachable. That's also what
+`deployment-netpol-falsifiability-probe.yaml`'s warm-up gate now checks for
+directly, every time its container (re)starts, rather than assuming.
+
+**What it affects and what it doesn't:**
+
+- The sandbox VMs (dockerd, Talos) are long-lived — their `virt-launcher`
+  pod is policed within seconds of creation and stays policed for the VM's
+  entire lifetime. This window is irrelevant to them.
+- Any short-lived pod created in `sandbox-docker` or `sandbox-talos` — most
+  importantly, anything an agent with pod-create rights in `sandbox-talos`
+  runs — can complete its entire lifecycle inside this window. A Job that
+  opens an egress connection and exits within the first few seconds may
+  never be policed at all. **This is a real gap in the isolation model, not
+  a testing artifact:** the NetworkPolicies, though correct, are not a
+  complete mediation guarantee against a short-lived process — only against
+  anything that outlives the window.
+- The mechanism (`KUBE-ROUTER-FORWARD` dispatch) is symmetric for ingress
+  and egress, so the same gap exists for ingress in principle, though
+  nothing outside the sandbox namespaces currently has a reason to dial a
+  freshly-created pod inside this window in practice.
+
+**How to verify a given pod is actually policed:** the dispatch rule lives
+in the **legacy** iptables tables, invisible to `nft list ruleset` — k3s no
+longer bundles an `iptables` binary at all (the host only has `nft`), so
+checking requires a debug pod with `iptables-legacy` installed, run against
+**the specific node the target pod landed on** (the rule is node-local, not
+cluster-wide):
+
+```bash
+# Find which node the pod is on:
+kubectl get pod -n sandbox-docker <pod-name> -o wide
+
+# Debug pod on that node -- note "sysadmin" profile and chroot into the host:
+kubectl debug node/<node-name> -it --profile=sysadmin --image=alpine -- chroot /host sh
+apk add iptables-legacy
+iptables-legacy -S KUBE-ROUTER-FORWARD | grep <pod-ip>
+```
+
+A dispatch rule referencing the pod's IP means it's policed; no match means
+it isn't (yet, or ever, if the pod already exited). The pod's own
+`KUBE-POD-FW-<hash>` chain (`iptables-legacy -S | grep KUBE-POD-FW`) ends
+with `-j NFLOG --nflog-group 100` for anything it drops or rejects — dropped
+traffic is already being logged at the node via NFLOG, a second,
+independent signal that a denial actually happened, without relying on the
+probe's own self-reported result.
+
+**Standing mitigation:** the falsifiability probe's warm-up gate (above) is
+the automated version of this same check, run against its own pod every
+time it (re)starts. There is no equivalent gate today for pods an agent
+creates directly in `sandbox-talos` — that would require something like a
+validating admission policy or a delay before granting network access to
+new pods, neither of which exists. Treat this window as a standing,
+accepted property of the current isolation model, not a closed issue.
 
 ## Runbook: reach the sandbox VMs
 

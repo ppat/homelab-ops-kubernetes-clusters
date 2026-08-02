@@ -8,6 +8,24 @@
 # everything admitted below is a separate policy object whose rules union with this one
 # for whichever pod/direction they also select -- see the other files in this directory
 # for the same pattern.
+#
+# CAVEAT -- a pod is unpoliced for a window after it's created, not from the instant it
+# exists: k3s's bundled kube-router-derived NetworkPolicy controller programs each pod's
+# firewall chain and its dispatch rule in KUBE-ROUTER-FORWARD *reactively*, watching the
+# API server for new pods -- it does not pre-provision rules, and a pod with no dispatch
+# rule yet falls straight through to `-P FORWARD ACCEPT`, fully unpoliced. For a long-lived
+# pod (this namespace's real VM workload) that window is a few seconds and irrelevant. For
+# a short-lived pod it can span the pod's *entire* lifetime: a Job that exfiltrates in its
+# first seconds and exits can complete before the chain is ever programmed, unpoliced the
+# whole time it ran. This was discovered because it fooled
+# deployment-netpol-falsifiability-probe.yaml's first real run into reporting every deny
+# target reachable -- the probe pod itself was never policed, not the policy being broken.
+# That probe now runs as a long-lived Deployment specifically to sidestep this race for
+# itself, with an explicit warm-up gate that establishes enforcement before trusting
+# anything (see that file). This NetworkPolicy's own correctness is unaffected -- this is
+# a property of *how quickly* it takes effect for a brand-new pod, not of whether it's
+# correct once it does. Full detail, including how to verify a given pod is actually
+# policed, is in OPERATIONS.md.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
