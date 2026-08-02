@@ -697,3 +697,51 @@ No AlertManager route is wired to it, deliberately: this is a homelab with
 no triage layer for alerts yet, so a failure is meant to be found by
 querying, not by paging — wiring an alert route is a follow-up for once
 that layer exists, not part of this change.
+
+## Runbook: reach the sandbox VMs
+
+**Why:** `virtctl ssh`/`virtctl port-forward` do not work against either sandbox VM,
+deliberately — see the comment above `allow-coder-ingress` in
+`sandbox-docker/network-policy.yaml` and above `allow-coder-and-mcp-ingress` in
+`sandbox-talos/network-policy.yaml`. Both commands have `virt-api` (in the `kubevirt`
+namespace) dial the VM's masquerade pod IP directly, which crosses into the sandbox
+namespace — an ingress path that stays blocked on purpose, since nothing about running or
+managing either VM depends on it, and admitting it would also admit `virt-api`/
+`virt-operator`/`virt-controller`, not just the already-privileged `virt-handler`. This is
+pre-explained here so it reads as expected behavior, not a bug to debug.
+
+`kubectl port-forward` is the supported substitute — a completely different mechanism, not
+subject to that NetworkPolicy: containerd's CRI implementation enters the *pod's own*
+network namespace and dials `localhost`, so it never reaches the veth where policy is
+enforced. Target the VM's `virt-launcher` pod directly by its standard KubeVirt label
+(`kubevirt.io/domain=<vm-name>`) — substitute the actual VM name once the VM workload
+manifests (a separate, not-yet-merged phase) exist:
+
+```bash
+# Talos API (talosctl, :50000) -- sandbox-talos namespace
+kubectl port-forward -n sandbox-talos \
+  "$(kubectl get pod -n sandbox-talos -l kubevirt.io/domain=<talos-vm-name> -o name)" \
+  50000:50000
+# then point talosctl at the forwarded port:
+talosctl --talosconfig <path> config endpoint 127.0.0.1
+talosctl --talosconfig <path> config node 127.0.0.1
+
+# Sandbox Kubernetes API (:6443) -- sandbox-talos namespace
+kubectl port-forward -n sandbox-talos \
+  "$(kubectl get pod -n sandbox-talos -l kubevirt.io/domain=<talos-vm-name> -o name)" \
+  6443:6443
+# then point kubectl at it -- set `server: https://127.0.0.1:6443` in that sandbox
+# cluster's own kubeconfig, not this cluster's.
+
+# SSH to the Docker VM (:22) -- sandbox-docker namespace. cronjob-netpol-falsifiability-
+# probe.yaml's DOCKER_SSH_SERVICE already anticipates this landing as a Service named
+# docker-vm -- once Phase 4 creates it, `svc/docker-vm` replaces the pod lookup below.
+kubectl port-forward -n sandbox-docker \
+  "$(kubectl get pod -n sandbox-docker -l kubevirt.io/domain=<docker-vm-name> -o name)" \
+  2222:22
+ssh -p 2222 <user>@127.0.0.1
+```
+
+**Talos ships no SSH daemon at all** — it's API-only via `talosctl` on :50000 with mTLS —
+so for that VM the SSH question doesn't arise regardless of NetworkPolicy; only the Docker
+VM (a full Ubuntu install) has a real `sshd` to reach.

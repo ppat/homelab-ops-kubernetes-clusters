@@ -107,6 +107,21 @@ spec:
 # Docker host's own network namespace, not container-scoped. 6550-6560 is arbitrary but
 # fixed -- allocate one port per consumer by hand from this range and record the
 # assignment where that consumer's kind config lives; nothing here tracks allocation.
+#
+# No rule here admits the `kubevirt` namespace, and that's deliberate. Every operational
+# KubeVirt path is node-local and never crosses into this namespace: lifecycle
+# (start/stop/pause/exec, domain stats) is virt-handler -> virt-launcher over a unix
+# socket on a shared hostPath; console/VNC/serial dial virt-handler's own pod IP (inside
+# `kubevirt`, not here) and virt-handler reaches the guest via
+# /proc/<launcher-pid>/root using hostPID; metrics are scraped off virt-handler the same
+# way. The one exception is `virtctl ssh`/`virtctl port-forward` -- virt-api dials the
+# VM's masquerade pod IP directly for those, which *does* cross into this namespace, and
+# it stays blocked. Use `kubectl port-forward` instead: containerd's CRI implementation
+# enters the pod's own network namespace and dials localhost, so it never reaches the
+# veth NetworkPolicy enforces on and needs no rule -- a fully equivalent, unaffected
+# substitute. Admitting `kubevirt` would also be namespace-scoped, so it would admit
+# virt-api/virt-operator/virt-controller alongside virt-handler, not just the one already
+# privileged component -- not a cost worth paying for a path with a working substitute.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

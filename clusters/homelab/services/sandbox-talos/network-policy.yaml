@@ -97,6 +97,20 @@ spec:
 # Port 6443 is the sandbox's own Kubernetes API; 50000 is the Talos API (talosctl).
 # Neither the coder namespace nor the ai mcp-server pods can reach sandbox-docker from
 # here -- that omission is load-bearing, see sandbox-docker/network-policy.yaml.
+#
+# No rule here admits the `kubevirt` namespace either -- same reasoning as
+# sandbox-docker/network-policy.yaml: every operational KubeVirt path (lifecycle over a
+# node-local unix socket, console/VNC/serial and metrics via virt-handler's own pod IP
+# inside `kubevirt`) never crosses into this namespace, so nothing about running or
+# managing the VM depends on one existing. `virtctl ssh`/`virtctl port-forward` are the
+# one exception (virt-api dials the VM's masquerade pod IP directly) and stay blocked;
+# `kubectl port-forward` is the supported substitute (a different mechanism -- containerd's
+# CRI dials localhost inside the pod's own netns, never reaches the veth this policy
+# enforces on). For this VM specifically, `virtctl ssh` was never going to work anyway:
+# Talos ships no SSH daemon at all, API-only via talosctl on :50000 with mTLS. Admitting
+# `kubevirt` would also be namespace-scoped, pulling in virt-api/virt-operator/
+# virt-controller alongside virt-handler -- not worth it for a path with no daemon behind
+# it here and a working substitute for the Kubernetes-API case.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
