@@ -420,6 +420,18 @@ explicitly rejected in favor of building from Talos's own official artifact:
 it's more work, but it avoids depending on one person's unmaintained image
 and is a more realistic rehearsal of the eventual Talos migration.
 
+**Prerequisite — check before running this, don't discover it mid-run:**
+this runbook stages the Factory image in a PVC-backed scratch directory on
+the Docker VM (`/opt/build-scratch` — see "Where the ~4.4GB of scratch data
+has to live" below for why). That directory is created by the `docker-host`
+module in `homelab-ops-kubernetes-experiments`, as of this writing still
+open as experiments PR #212, not yet merged. This runbook cannot succeed
+until that PR is merged *and* the Docker VM has been restarted — the
+directory is created by cloud-init, which only runs at boot, so merging
+alone isn't enough. If `/opt/build-scratch` doesn't exist yet, that's why;
+don't route around it (see the script's own comments on why it fails
+instead of falling back to `sudo`).
+
 ### Choosing the build tool: `crane`, no daemon required
 
 KubeVirt's `containerDisk` requirement (verified against
@@ -551,19 +563,35 @@ plain `alpine:3.20` container, confirmed via `docker top` showing 0:00
 accumulated CPU time across several minutes), but the original diagnosis —
 Docker's default seccomp profile blocking `io_uring_setup` — turned out to
 be **wrong, and was never actually tested against the specific commands that
-hung.** Testing it directly this time: `--security-opt seccomp=unconfined`
-alone does **not** fix the hang — `qemu-img info` and `qemu-img convert`
-both still hang with seccomp fully disabled, reproduced at both a trivial
-10MiB file and the full 4.15GiB Talos image. The actual blocker is Docker's
-default **AppArmor** profile (`docker-default`): `--security-opt
-apparmor=unconfined` alone — seccomp left at its normal default — fixes
-`qemu-img info` and `qemu-img convert` immediately, verified at both scales
-and cross-checked against the host-OS conversion's output
-(`sha256sum`-identical qcow2 bytes). `qemu-img create` never hit this,
-which is why the first pass mistook the fix for "run it on the host" instead
-of "relax the right one of two possible confinements" — `create` never
-opens an existing file, and only operations that do (`info`, `convert`) hit
-whatever `docker-default` denies.
+hung.**
+
+**It is not seccomp. This was tested directly, twice, not assumed:**
+`--security-opt seccomp=unconfined` alone does **not** fix the hang —
+`qemu-img info` and `qemu-img convert` both still hang with seccomp fully
+disabled, reproduced at both a trivial 10MiB file and the full 4.15GiB
+Talos image. **Don't reach for `seccomp=unconfined` here** — it was the
+first, reasonable-looking guess and it doesn't work; trying it again is a
+dead end that's already been ruled out.
+
+The actual blocker is Docker's default **AppArmor** profile
+(`docker-default`): `--security-opt apparmor=unconfined` alone — seccomp
+left at its normal default — fixes `qemu-img info` and `qemu-img convert`
+immediately, verified at both scales and cross-checked against the host-OS
+conversion's output (`sha256sum`-identical qcow2 bytes). `qemu-img create`
+never hit this, which is why the first pass mistook the fix for "run it on
+the host" instead of "relax the right one of two possible confinements" —
+`create` never opens an existing file, and only operations that do (`info`,
+`convert`) hit whatever `docker-default` denies. The specific denied
+operation wasn't isolated with `strace` (tracing attempts inside the same
+container were themselves affected by the container's confinement, which is
+its own signal) — but the mechanism is AppArmor's default profile mediating
+a mount-related operation triggered when QEMU opens an *existing* image
+file, not a fresh one. This is not a one-off: it's the same root cause
+behind a separate, independently diagnosed failure — AppArmor blocking
+containerd's own mount operations is precisely what broke an earlier
+attempt to run rootless Docker inside a Coder workspace pod
+(`ppat/coder#846`). Same mechanism, different setting; worth knowing if
+either comes up again.
 
 **Security note, stated plainly rather than passed over:** `--security-opt
 apparmor=unconfined` is a real relaxation of Docker's default container
@@ -654,22 +682,36 @@ subdirectory back out to a neutral top-level path (`/opt/docker-install`,
 and is being extended, in parallel with this fix, to add a general-purpose
 scratch directory following the same pattern.
 
-**That scratch-directory addition had not landed as of this writing.** This
-runbook does not invent its own path for it — doing that risks exactly the
-kind of silent drift that broke the `apt`-based approach in the first place.
-Instead, the script below takes the scratch directory as a required
-`DOCKER_VM_SCRATCH_DIR` input with no default, so it fails loudly instead of
-guessing. **Confirm the actual path from the `docker-host` module's
-`cloud-init-secret.yaml`/`README.md` before running this** — this runbook's
-working assumption, matching that module's existing `/opt/docker-install`
-naming, is `/opt/docker-scratch`, but that is a guess pending the other
-change, not a confirmed value; if the two drift, fix this runbook rather
-than special-casing around it. Verified end to end against a bind-mounted
-directory of that shape (a temporary stand-in created and torn down for this
-verification, mirroring the module's own `.install`/`.cache`/`.log`
-bind-mount pattern exactly): the full 4.4GB scratch load landed entirely on
-the PVC (`/var/lib/docker` usage rose from 449MiB to 1.1GiB during the run),
-while the VM's root filesystem moved by only ~23MiB of incidental overhead.
+**That scratch directory is `/opt/build-scratch`**, added by the
+`docker-host` module as of `homelab-ops-kubernetes-experiments` PR #212 —
+open as of this writing, not yet merged. This runbook cannot succeed until
+that PR merges *and* the Docker VM is restarted (see the prerequisite note
+at the top of this section). This runbook does not invent its own path —
+doing that risks exactly the kind of silent drift that broke the
+`apt`-based approach in the first place — so the script below takes the
+scratch directory as a required `DOCKER_VM_SCRATCH_DIR` input with no
+default rather than hardcoding `/opt/build-scratch` outright, so a future
+rename on either side fails loudly instead of silently pointing at the
+wrong thing.
+
+One more deliberate design detail from #212, worth knowing before this
+fails in a way that looks like a bug: **the `/opt/build-scratch`
+*mountpoint* is root-owned; only the PVC directory bind-mounted onto it is
+`docker:docker`.** If the bind mount hasn't taken effect — #212 not yet
+merged, or merged but the VM not yet restarted — writing there fails
+immediately with `Permission denied` instead of silently succeeding onto
+the 2.3GB root filesystem this whole section exists to stay off of. That
+failure is the intended behavior, not a bug to work around: this script
+does not `sudo` its way past it, and does not `mkdir -p` a fallback. If you
+hit `Permission denied` here, the fix is to check whether #212 has landed
+and the VM has restarted, not to add a workaround to this script.
+
+Verified end to end against a bind-mounted directory of that shape (a
+temporary stand-in created and torn down for this verification, mirroring
+the module's own `.install`/`.cache`/`.log` bind-mount pattern exactly): the
+full 4.4GB scratch load landed entirely on the PVC (`/var/lib/docker` usage
+rose from 449MiB to 1.1GiB during the run), while the VM's root filesystem
+moved by only ~23MiB of incidental overhead.
 
 ### Is `qcow2` even worth the trouble? Measured, not assumed
 
@@ -724,20 +766,26 @@ have (see below).
 #!/usr/bin/env bash
 # build-talos-containerdisk.sh -- downloads a Talos Image Factory boot asset,
 # converts it to qcow2 in a throwaway container on the sandbox-docker VM (see
-# OPERATIONS.md for why it has to run there, why it needs
-# --security-opt apparmor=unconfined, and why the working directory has to be
-# an explicit PVC-backed bind mount rather than /tmp or a plain named
-# volume), and wraps the result as a KubeVirt containerDisk OCI image written
-# to a local tarball. Does NOT push -- prints the crane push command to run
-# by hand instead. Non-interactive; safe to re-run (each run uses its own
-# temp dir on both sides of the SSH hop).
+# OPERATIONS.md for why it has to run there, and why the working directory
+# has to be an explicit PVC-backed bind mount rather than /tmp or a plain
+# named volume), and wraps the result as a KubeVirt containerDisk OCI image
+# written to a local tarball. Does NOT push -- prints the crane push command
+# to run by hand instead. Non-interactive; safe to re-run (each run uses its
+# own temp dir on both sides of the SSH hop).
+#
+# --security-opt apparmor=unconfined below is required: qemu-img hangs
+# indefinitely under Docker's default AppArmor profile when opening an
+# existing image file (qemu-img info/convert, not create). It is NOT
+# seccomp -- --security-opt seccomp=unconfined was tested directly and does
+# NOT fix this; don't try it again. See OPERATIONS.md for the full
+# investigation and the mechanism.
 set -euo pipefail
 
 usage() {
   cat <<EOF
 Usage: TALOS_VERSION=v1.13.7 SCHEMATIC_ID=<id> REGISTRY=harbor.example.com \\
        DOCKER_VM_SSH=docker@docker-vm.sandbox-docker.svc.cluster.local \\
-       DOCKER_VM_SCRATCH_DIR=/opt/docker-scratch \\
+       DOCKER_VM_SCRATCH_DIR=/opt/build-scratch \\
        [DOCKER_VM_SSH_KEY=~/.ssh/sandbox_docker_vm] \\
        [IMAGE_PATH=talos/containerdisk] \\
        $0
@@ -749,7 +797,7 @@ EOF
 : "${SCHEMATIC_ID:?SCHEMATIC_ID is required -- see OPERATIONS.md for how to get one}"
 : "${REGISTRY:?REGISTRY is required, e.g. harbor.example.com (never hardcode this)}"
 : "${DOCKER_VM_SSH:?DOCKER_VM_SSH is required, e.g. docker@docker-vm.sandbox-docker.svc.cluster.local -- qemu-img has to run in a container on that VM, see OPERATIONS.md}"
-: "${DOCKER_VM_SCRATCH_DIR:?DOCKER_VM_SCRATCH_DIR is required -- a PVC-backed directory on the Docker VM, e.g. /opt/docker-scratch (confirm the actual path in the docker-host module, see OPERATIONS.md -- do not default this to /tmp, it is RAM-backed and not overcommitted)}"
+: "${DOCKER_VM_SCRATCH_DIR:?DOCKER_VM_SCRATCH_DIR is required -- the PVC-backed directory on the Docker VM, /opt/build-scratch as of docker-host module PR #212 (confirm this is still current, see OPERATIONS.md -- do not default this to /tmp, it is RAM-backed and not overcommitted)}"
 DOCKER_VM_SSH_KEY="${DOCKER_VM_SSH_KEY:-$HOME/.ssh/sandbox_docker_vm}"
 IMAGE_PATH="${IMAGE_PATH:-talos/containerdisk}"
 IMAGE_REF="${REGISTRY}/${IMAGE_PATH}:${TALOS_VERSION}-${SCHEMATIC_ID:0:12}"
@@ -809,8 +857,14 @@ echo "crane push ./talos-containerdisk.tar ${IMAGE_REF}"
 Notes on specific lines:
 
 - `[ -d "${DOCKER_VM_SCRATCH_DIR}" ]` fails fast with a specific explanation
-  if the assumed scratch path doesn't exist yet, instead of failing deep
-  inside the SSH pipeline with a confusing error.
+  if the path doesn't exist at all yet (docker-host module PR #212 not
+  merged, or merged but the VM not restarted). It deliberately does *not*
+  check writability — that's `mktemp`'s job on the next line, and the
+  distinction matters: `/opt/build-scratch`'s mountpoint is root-owned by
+  design (see above), so if the bind mount hasn't taken effect the
+  directory *exists* but isn't writable by the unprivileged `docker` user.
+  No `sudo`, no `mkdir -p` fallback here — a `Permission denied` from
+  `mktemp` in that case is the intended signal, not a bug to paper over.
 - `mktemp -d -p "${DOCKER_VM_SCRATCH_DIR}"` creates a fresh per-run
   subdirectory rather than writing straight into the shared scratch
   directory, so concurrent runs (or a stale leftover from an interrupted
