@@ -80,6 +80,18 @@ spec:
           value: "10.43.0.1"
         - name: UNIFI_GATEWAY
           value: "192.168.8.1"
+        - name: LB_INGRESS_VIP_HOMELAB
+          # Positive control for allow-egress-lb-ingress-vips in network-policy.yaml: the
+          # homelab cluster's MetalLB `standard-pool` VIP, which is also the live Traefik
+          # ingress VIP (confirmed live: `metallb.io/ip-allocated-from-pool: standard-pool`
+          # on the `traefik` Service). Must stay in lockstep with that NetworkPolicy's
+          # ipBlock -- see it for how this range was derived and why it's the only pool
+          # opened.
+          value: "192.168.8.80"
+        - name: LB_INGRESS_VIP_NAS
+          # Same as above, for the nas cluster's `standard-pool` -- also Harbor's VIP,
+          # since Harbor is ingress-fronted rather than a dedicated LoadBalancer Service.
+          value: "192.168.8.192"
         - name: TIMEOUT_SECONDS
           value: "3"
         - name: WARMUP_TIMEOUT_SECONDS
@@ -256,6 +268,19 @@ spec:
 
             probe_deny "UniFi gateway" "$UNIFI_GATEWAY" 443
             probe_deny "in-cluster kubernetes Service" "$IN_CLUSTER_KUBERNETES_SERVICE" 443
+
+            # Positive controls for allow-egress-lb-ingress-vips in network-policy.yaml.
+            # This stack REJECTs rather than DROPs, so every BLOCKED (ok) verdict above is
+            # "connection refused", indistinguishable via nc -z from "nothing is listening
+            # there" -- these two checks are the other half of that: proof the allow rule
+            # actually opens something live, not just that it doesn't error. Both VIPs are
+            # Traefik's own Service IP on their cluster (see network-policy.yaml for why),
+            # so TCP:443 accepting is expected regardless of which hostname would have
+            # routed there -- this only proves L3 reachability, not that any particular
+            # hostname (Harbor, the API server) is behind it, which is the whole point of
+            # the CAVEAT in that policy file: this layer can't tell those apart.
+            probe_allow "homelab standard-pool ingress VIP (LoadBalancer allow)" "$LB_INGRESS_VIP_HOMELAB" 443
+            probe_allow "nas standard-pool ingress VIP (LoadBalancer allow, fronts Harbor)" "$LB_INGRESS_VIP_NAS" 443
 
             probe_allow "GitHub API (internet egress)" "api.github.com" 443
 

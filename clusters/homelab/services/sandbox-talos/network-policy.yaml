@@ -121,6 +121,51 @@ spec:
         - 169.254.0.0/16
         - 127.0.0.0/8
 ---
+# See sandbox-docker/network-policy.yaml for the full rationale -- same punch-through,
+# same reasoning, applied here too because this namespace has the identical Harbor-pull
+# need (pulling base images for the Talos sandbox cluster) plus the containerDisk-push need
+# that surfaced this gap in the first place. Only the differences from that copy are noted
+# below; everything else (why `standard-pool` and not the other MetalLB pools, why no
+# `ipBlock.except` is needed, what this tolerates, why it's acceptable, what bounds it) is
+# identical and not repeated here. Deferral reasoning and conditions that would invalidate
+# this acceptance: https://github.com/ppat/homelab-ops-kubernetes-clusters/issues/828.
+#
+# The one thing that IS more acute here than in sandbox-docker: this is the namespace AI
+# agents get full write access to (see default-deny above), so "the prod API server's
+# ingress is now L3-reachable from this namespace" lands on the namespace with pod-create
+# rights and cluster-admin inside its own sandbox cluster, not just a single long-lived VM
+# workload. The "what bounds the risk" argument still holds -- no ambient credential exists
+# here to use against that ingress -- but it holds with less margin than in sandbox-docker,
+# precisely because this is the namespace built to run arbitrary agent-authored pods. #828
+# names this explicitly as one of the conditions worth re-checking.
+#
+# Ranges (same pools as sandbox-docker, repeated here so this file doesn't require reading
+# the other one to know what it allows):
+#   - homelab `standard-pool`: 192.168.8.80/28  (192.168.8.80-192.168.8.95)
+#   - nas     `standard-pool`: 192.168.8.192/28 (192.168.8.192-192.168.8.207; Harbor's VIP
+#     range -- Harbor is ingress-fronted, not a dedicated LoadBalancer Service)
+# Neither overlaps a node IP (192.168.8.65/.67/.68/.69) or the UniFi gateway (.1).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-lb-ingress-vips
+  namespace: sandbox-talos
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 192.168.8.80/28
+    - ipBlock:
+        cidr: 192.168.8.192/28
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+---
 # Two admitted sources, deliberately not sandbox-docker: the operator's own `coder`
 # workspace pods, and whichever MCP server pod in `ai` is the write-capable Kubernetes
 # access path for this sandbox. Selector shape mirrors apps/subsystems/ai/network-policy.yaml
