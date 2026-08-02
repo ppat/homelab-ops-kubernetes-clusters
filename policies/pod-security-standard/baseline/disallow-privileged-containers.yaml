@@ -55,3 +55,24 @@ spec:
           - 'node-problem-detector*'
           namespaces:
           - monitoring
+      # Grants virt-handler root plus every Linux capability on whichever node it lands on --
+      # it's the node agent that opens /dev/kvm and other host devices, drives libvirt/qemu
+      # process lifecycle, and edits cgroups directly, none of which an unprivileged container
+      # can do. Bounded by: once KubeVirt is installed, its CR's
+      # `spec.workloads.nodePlacement.nodeSelector` restricts virt-handler to the two nodes
+      # OPERATIONS.md's KubeVirt runbook prepares, not all four; and virt-launcher, where a VM's
+      # guest actually runs, is deliberately NOT privileged (its one, much narrower, exclusion
+      # is in restrict-seccomp-strict.yaml). Not bounded by anything here: a QEMU/KVM guest
+      # escape into virt-launcher is one more bug away from the host, at exactly the
+      # virt-handler<->virt-launcher boundary -- a boundary with a live CVE lineage
+      # (CVE-2025-64437, CVE-2025-64433; both fixed in 1.5.3/1.6.1). Keep KubeVirt patched;
+      # this exclusion doesn't defend against that class of bug, only the DaemonSet's own
+      # shape. `virt-operator`/`virt-api`/`virt-controller` aren't excluded anywhere in this
+      # repo: verified against upstream KubeVirt's generated manifests, none of them run
+      # privileged. See disallow-host-path.yaml for why every virt-handler exclusion here is
+      # name-scoped, not namespace-scoped, and why only the `kubevirt` namespace is listed.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt

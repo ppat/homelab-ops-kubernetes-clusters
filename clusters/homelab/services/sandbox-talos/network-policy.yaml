@@ -1,0 +1,138 @@
+---
+# Default-deny both directions -- see sandbox-docker/network-policy.yaml for why this
+# namespace also locks down egress, not just ingress like every other NetworkPolicy in the
+# apps repo. Here the reasoning is symmetric rather than about the workload itself: this
+# namespace is the one AI agents get full write access to (today they only have read-only
+# cluster access, via mcp-kubernetes-readonly), so egress from it has to be closed by
+# default on the same footing as ingress into it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: sandbox-talos
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# See sandbox-docker/network-policy.yaml -- identical rule, same reasoning: CoreDNS has no
+# NetworkPolicies of its own, so this podSelector-based rule is the only place DNS egress
+# is enforced, and it has to be podSelector-based (not the kube-dns ClusterIP) to avoid
+# landing inside the 10.0.0.0/8 `except` in allow-egress-internet.yaml below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sandbox-talos
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Same-namespace traffic, so the Talos VM's virt-launcher pod can reach any Service
+# fronting the sandbox cluster that also lives here (e.g. its own API server Service, if
+# one gets fronted that way). Scoped to this namespace only, same as sandbox-docker.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace-egress
+  namespace: sandbox-talos
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector: {}
+---
+# See sandbox-docker/network-policy.yaml for why this exact `except` list is most of this
+# namespace's security value: it closes the prod kube-apiserver, Longhorn's manager API,
+# kubelet, etcd, the UniFi gateway, and the NAS in one object, and it is the control this
+# whole design leans on hardest, because this namespace is the one agents can write to.
+# Internet egress stays open on purpose (package/image pulls for the sandbox cluster
+# itself); nothing about that weakens the boundary against the LAN and prod cluster, which
+# is the boundary that actually matters here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-internet
+  namespace: sandbox-talos
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 169.254.0.0/16
+        - 127.0.0.0/8
+---
+# Two admitted sources, deliberately not sandbox-docker: the operator's own `coder`
+# workspace pods, and whichever MCP server pod in `ai` is the write-capable Kubernetes
+# access path for this sandbox. Selector shape mirrors apps/subsystems/ai/network-policy.yaml
+# (mcp-servers-ingress) exactly -- app.kubernetes.io/component: mcp-server, not a name
+# list, so a server added to `ai` later (e.g. the write-capable Talos MCP this sandbox is
+# built for) is admitted automatically instead of silently falling outside every policy
+# that lists servers by name.
+#
+# Port 6443 is the sandbox's own Kubernetes API; 50000 is the Talos API (talosctl).
+# Neither the coder namespace nor the ai mcp-server pods can reach sandbox-docker from
+# here -- that omission is load-bearing, see sandbox-docker/network-policy.yaml.
+#
+# No rule here admits the `kubevirt` namespace either -- same reasoning as
+# sandbox-docker/network-policy.yaml: every operational KubeVirt path (lifecycle over a
+# node-local unix socket, console/VNC/serial and metrics via virt-handler's own pod IP
+# inside `kubevirt`) never crosses into this namespace, so nothing about running or
+# managing the VM depends on one existing. `virtctl ssh`/`virtctl port-forward` are the
+# one exception (virt-api dials the VM's masquerade pod IP directly) and stay blocked;
+# `kubectl port-forward` is the supported substitute (a different mechanism -- containerd's
+# CRI dials localhost inside the pod's own netns, never reaches the veth this policy
+# enforces on). For this VM specifically, `virtctl ssh` was never going to work anyway:
+# Talos ships no SSH daemon at all, API-only via talosctl on :50000 with mTLS. Admitting
+# `kubevirt` would also be namespace-scoped, pulling in virt-api/virt-operator/
+# virt-controller alongside virt-handler -- not worth it for a path with no daemon behind
+# it here and a working substitute for the Kubernetes-API case.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-coder-and-mcp-ingress
+  namespace: sandbox-talos
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: coder
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ai
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: mcp-server
+    ports:
+    - protocol: TCP
+      port: 6443
+    - protocol: TCP
+      port: 50000

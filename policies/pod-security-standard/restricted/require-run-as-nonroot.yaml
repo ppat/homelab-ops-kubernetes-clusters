@@ -54,3 +54,14 @@ spec:
           containers:
           - securityContext:
               runAsNonRoot: "true"
+    exclude:
+      any:
+      # Neither virt-handler's pod nor any of its containers set runAsNonRoot: true anywhere
+      # -- it runs as root by design (see
+      # ../baseline/disallow-privileged-containers.yaml), so there's no partial-compliance
+      # path here to preserve.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt

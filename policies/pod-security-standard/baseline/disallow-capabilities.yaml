@@ -62,3 +62,15 @@ spec:
           - metallb-system
           - system-upgrade
           - tailscale
+      # virt-handler sets no explicit capabilities.add list at all -- Privileged: true (see
+      # disallow-privileged-containers.yaml) already grants everything it needs, so this rule
+      # shouldn't trip in practice. Kept as a low-cost safety margin on the one component in
+      # this repo that runs privileged, rather than removed on that analysis alone.
+      # virt-launcher's default (non-root) capabilities are NET_BIND_SERVICE only, already
+      # inside this policy's allowed set, so it isn't excluded here or anywhere else in this
+      # file.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt

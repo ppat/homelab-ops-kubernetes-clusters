@@ -55,3 +55,19 @@ spec:
           - 'intel-gpu-plugin-gpu-device*'
           namespaces:
           - intel-device-plugins
+      # virt-handler hostPath-mounts libvirt/qemu runtime dirs, kubelet's pod and device
+      # dirs, and node-labeller state (see disallow-privileged-containers.yaml for what
+      # bounds it). Verified against upstream KubeVirt's generated manifests: virt-launcher
+      # gets /dev/kvm and friends through Kubernetes device-plugin resource requests, not a
+      # hostPath volume, and virt-operator/virt-api/virt-controller mount none at all --
+      # neither is excluded here. Name-scoped, not namespace-scoped, on purpose: a
+      # namespace-wide exclusion would silently admit hostPath for anything else later
+      # deployed into `kubevirt`, not just this one DaemonSet. `kubevirt` is the conventional
+      # install namespace for virt-handler; KubeVirt is not installed yet, so this exclusion
+      # grants nothing until it is, and no other namespace is listed since virt-handler never
+      # runs outside it.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [DESIGN.md](./DESIGN.md) — directory anatomy, how a module gets wired into a cluster (sources/kustomizations/dependsOn/components/postBuild/patches), the `services/` pattern, secrets/RBAC/storage model, CI, versioning
 - [clusters/homelab/README.md](./clusters/homelab/README.md) / [clusters/nas/README.md](./clusters/nas/README.md) — what's actually deployed on each cluster, with links to each module's own README in the apps repo
 - [policies/README.md](./policies/README.md) — Kyverno policy groups and what's enforced where
-- [OPERATIONS.md](./OPERATIONS.md) — manual, host-level runbooks (node prep, image builds) for procedures that happen outside Flux
+- [OPERATIONS.md](./OPERATIONS.md) — manual, occasional runbooks for procedures that happen outside Flux (node prep, image builds, sandbox policy verification/access)
 
 This is a GitOps repo (FluxCD) of Kustomize manifests — there is no application
 code to build. "Development" here means authoring/editing YAML and validating

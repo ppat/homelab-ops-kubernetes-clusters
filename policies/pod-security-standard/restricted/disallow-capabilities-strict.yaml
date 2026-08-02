@@ -40,6 +40,18 @@ spec:
             - key: ALL
               operator: AnyNotIn
               value: "{{ element.securityContext.capabilities.drop[] || `[]` }}"
+    exclude:
+      any:
+      # virt-handler's containers don't set capabilities.drop: [ALL] -- Privileged: true (see
+      # ../baseline/disallow-privileged-containers.yaml) already grants everything the
+      # drop-list would otherwise strip, so declaring it would be cosmetic. The sibling rule
+      # below (adding-capabilities-strict) isn't excluded: virt-handler's manifest never adds
+      # a named capability either, so that check already passes on its own.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt
   - name: adding-capabilities-strict
     match:
       any:

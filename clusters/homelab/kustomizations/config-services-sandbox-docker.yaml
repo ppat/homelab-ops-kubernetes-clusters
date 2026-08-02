@@ -1,0 +1,24 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-sandbox-docker
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  # Short interval, split out of config-services.yaml's 15m0s on purpose: this is the
+  # isolation boundary around a namespace with a root-equivalent dockerd behind it, so
+  # drift correction (a patch reverted, a policy hand-edited away) needs to converge fast.
+  interval: 1m0s
+  path: ./clusters/homelab/services/sandbox-docker
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
