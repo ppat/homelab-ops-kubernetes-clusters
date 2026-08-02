@@ -130,21 +130,33 @@ spec:
 # identical and not repeated here. Deferral reasoning and conditions that would invalidate
 # this acceptance: https://github.com/ppat/homelab-ops-kubernetes-clusters/issues/828.
 #
+# Only nas's `standard-pool` is allowed below -- NOT homelab's. homelab's was allowed here
+# too when this policy first shipped and does not work: it is *this cluster's own* MetalLB
+# VIP, so a pod's packet to it gets DNAT'd to a Traefik pod IP (10.42.x.x, inside the
+# 10.0.0.0/8 `except`) by k3s's embedded kube-proxy before kube-router's NetworkPolicy
+# controller ever evaluates it -- NetworkPolicy sees the post-DNAT destination, not the VIP
+# the pod dialed, so the ipBlock can never match. Confirmed on the live falsifiability probe
+# (BLOCKED on the homelab VIP, REACHABLE on nas's, identical ipBlock/port shape); full
+# mechanism in sandbox-docker's copy of this file, including why the fix -- if one is ever
+# needed -- is a podSelector on Traefik's pods, not a bigger ipBlock, and why that would
+# unavoidably expose homelab's own API server too.
+#
 # The one thing that IS more acute here than in sandbox-docker: this is the namespace AI
-# agents get full write access to (see default-deny above), so "the prod API server's
-# ingress is now L3-reachable from this namespace" lands on the namespace with pod-create
-# rights and cluster-admin inside its own sandbox cluster, not just a single long-lived VM
-# workload. The "what bounds the risk" argument still holds -- no ambient credential exists
-# here to use against that ingress -- but it holds with less margin than in sandbox-docker,
+# agents get full write access to (see default-deny above), so nas's API server ingress
+# being L3-reachable from this namespace lands on the namespace with pod-create rights and
+# cluster-admin inside its own sandbox cluster, not just a single long-lived VM workload.
+# The "what bounds the risk" argument still holds -- no ambient credential exists here to
+# use against that ingress -- but it holds with less margin than in sandbox-docker,
 # precisely because this is the namespace built to run arbitrary agent-authored pods. #828
 # names this explicitly as one of the conditions worth re-checking.
 #
-# Ranges (same pools as sandbox-docker, repeated here so this file doesn't require reading
-# the other one to know what it allows):
-#   - homelab `standard-pool`: 192.168.8.80/28  (192.168.8.80-192.168.8.95)
-#   - nas     `standard-pool`: 192.168.8.192/28 (192.168.8.192-192.168.8.207; Harbor's VIP
-#     range -- Harbor is ingress-fronted, not a dedicated LoadBalancer Service)
-# Neither overlaps a node IP (192.168.8.65/.67/.68/.69) or the UniFi gateway (.1).
+# Range (repeated here so this file doesn't require reading the other one to know what it
+# allows): nas `standard-pool`, 192.168.8.192/28 (192.168.8.192-192.168.8.207) -- Harbor's
+# VIP range, since Harbor is ingress-fronted rather than a dedicated LoadBalancer Service.
+# Doesn't overlap a node IP (192.168.8.65/.67/.68/.69) or the UniFi gateway (.1). Homelab's
+# API server is NOT reachable from here, for the DNAT reason above -- this sandbox can pull
+# images from the cluster it is NOT running on, but cannot reach the API server of the
+# cluster it IS running on.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -156,8 +168,6 @@ spec:
   - Egress
   egress:
   - to:
-    - ipBlock:
-        cidr: 192.168.8.80/28
     - ipBlock:
         cidr: 192.168.8.192/28
     ports:

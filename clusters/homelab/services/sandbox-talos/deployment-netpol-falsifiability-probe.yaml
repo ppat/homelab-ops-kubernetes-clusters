@@ -45,12 +45,17 @@ spec:
         - name: UNIFI_GATEWAY
           value: "192.168.8.1"
         - name: LB_INGRESS_VIP_HOMELAB
-          # See sandbox-docker's copy of this Deployment for the full rationale -- positive
-          # control for allow-egress-lb-ingress-vips in network-policy.yaml. Must stay in
-          # lockstep with that NetworkPolicy's ipBlock.
+          # DENY target, not an allow -- see sandbox-docker's copy of this Deployment and
+          # network-policy.yaml for the full DNAT-vs-NetworkPolicy mechanism: this is
+          # *this cluster's own* MetalLB VIP, so pod-originated traffic to it gets DNAT'd
+          # to a Traefik pod IP (inside the 10.0.0.0/8 `except`) before NetworkPolicy ever
+          # evaluates it, and the corresponding ipBlock allow deliberately excludes this
+          # range as a result.
           value: "192.168.8.80"
         - name: LB_INGRESS_VIP_NAS
-          # Also Harbor's VIP -- see sandbox-docker's copy and network-policy.yaml.
+          # Positive control -- also Harbor's VIP. See sandbox-docker's copy and
+          # network-policy.yaml: nas has no Service on this cluster, so no DNAT intercepts
+          # it and the ipBlock allow actually applies.
           value: "192.168.8.192"
         - name: DOCKER_SSH_SERVICE
           # Anticipated name/port of the Service Phase 4 fronts dockerd's SSH with, in the
@@ -183,11 +188,13 @@ spec:
               echo "SKIP: Docker namespace SSH Service ($DOCKER_SSH_SERVICE:$DOCKER_SSH_PORT) -- not deployed yet"
             fi
 
-            # Positive controls for allow-egress-lb-ingress-vips in network-policy.yaml --
-            # see sandbox-docker's copy of this Deployment for the full rationale (REJECT
-            # vs DROP, why this is the other half of the deny checks above, and why this
-            # only proves L3 reachability, not which hostname is behind the VIP).
-            probe_allow "homelab standard-pool ingress VIP (LoadBalancer allow)" "$LB_INGRESS_VIP_HOMELAB" 443
+            # LB_INGRESS_VIP_HOMELAB is a deny-assertion (DNAT to a Traefik pod IP before
+            # NetworkPolicy evaluates it), LB_INGRESS_VIP_NAS is the positive control -- see
+            # sandbox-docker's copy of this Deployment for the full rationale (REJECT vs
+            # DROP, why proof-of-liveness for the homelab target comes from outside this
+            # probe, and why the NAS check only proves L3 reachability, not which hostname
+            # is behind the VIP).
+            probe_deny "homelab standard-pool ingress VIP (DNAT to pod IP, expected denied)" "$LB_INGRESS_VIP_HOMELAB" 443
             probe_allow "nas standard-pool ingress VIP (LoadBalancer allow, fronts Harbor)" "$LB_INGRESS_VIP_NAS" 443
 
             probe_allow "GitHub API (internet egress)" "api.github.com" 443

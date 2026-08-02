@@ -138,63 +138,79 @@ spec:
 # API later -- "who can hit what" is governable there); reaching cluster-internal services
 # directly is not, and stays closed.
 #
-# What's allowed: each cluster's MetalLB `standard-pool` -- the one pool with no
-# `serviceAllocation` restriction, which is what Traefik's own LoadBalancer Service draws
-# its VIP from on both clusters (confirmed live: `metallb.io/ip-allocated-from-pool:
-# standard-pool` on both `traefik` Services). Every other MetalLB pool on either cluster
-# (e.g. the ones backing Pi-hole, the UniFi controller, syslog-ng, Plex, Jellyfin,
-# FreeRADIUS) is deliberately NOT opened: those are `serviceAllocation`-scoped to one
-# specific Service each and hand out a VIP that talks directly to that backend, bypassing
-# Traefik entirely -- exactly the "reach cluster-internal services directly" pattern this
-# design closes, not the ingress path it opens. Ports 80/443 only, matching what Traefik's
-# Service actually listens on (`web`/`websecure`) -- nothing else binds on these pools.
+# Only nas's MetalLB `standard-pool` is allowed below -- NOT homelab's, despite both pools
+# being the same kind of object. That asymmetry is deliberate, not an oversight: see "Why
+# only nas" below, which is the load-bearing part of this comment.
 #
-# Ranges, read live from each cluster's IPAddressPool object (the value is Bitwarden
-# secret-sourced via `metallb_standard_ip_pool`/`cluster_{homelab,nas}_metallb_ip_pool`,
-# never plaintext in git, so this was verified against the deployed objects, not inferred):
-#   - homelab `standard-pool`: 192.168.8.80/28  (192.168.8.80-192.168.8.95)
-#   - nas     `standard-pool`: 192.168.8.192/28 (192.168.8.192-192.168.8.207; this is
-#     Harbor's VIP range -- Harbor is `expose.type: ingress`, fronted by nas's Traefik,
-#     not a dedicated LoadBalancer Service of its own)
-# Neither range overlaps a node IP (192.168.8.65/.67/.68/.69) or the UniFi gateway (.1) --
-# checked by hand against both ranges before this was written; no `ipBlock.except` carve-out
-# is needed here as a result. If a future pool resize ever brought one of those addresses
-# into range, that check must be redone -- this comment recording today's ranges is exactly
-# so a future reader can tell without going back to MetalLB to look it up.
+# What's allowed: nas's `standard-pool`, 192.168.8.192/28 (192.168.8.192-192.168.8.207) --
+# the one pool with no `serviceAllocation` restriction, which is what Traefik's own
+# LoadBalancer Service draws its VIP from (confirmed live: `metallb.io/ip-allocated-from-pool:
+# standard-pool` on nas's `traefik` Service). This is also Harbor's VIP range -- Harbor is
+# `expose.type: ingress`, fronted by nas's Traefik, not a dedicated LoadBalancer Service of
+# its own. Every other MetalLB pool on either cluster (e.g. the ones backing Pi-hole, the
+# UniFi controller, syslog-ng, Plex, Jellyfin, FreeRADIUS) is deliberately NOT opened: those
+# are `serviceAllocation`-scoped to one specific Service each and hand out a VIP that talks
+# directly to that backend, bypassing Traefik entirely -- exactly the "reach cluster-internal
+# services directly" pattern this design closes, not the ingress path it opens. Ports 80/443
+# only, matching what Traefik's Service actually listens on (`web`/`websecure`).
 #
-# What this tolerates, plainly: both sandbox namespaces can now reach every service exposed
-# via either cluster's `standard-pool` VIP -- which includes the prod Kubernetes API server,
-# because Traefik hostname-routes behind one shared Service and there is no IP-level way to
-# separate it from Harbor. `kubernetes-api` Ingress in `default`, on both clusters, routes
-# straight to the real `kubernetes` Service on :443 off this same VIP (on nas, the identical
-# address as Harbor's). This is a DIFFERENT path from the raw `node-IP:6443` kube-apiserver
-# access probed and blocked below, which this change does not touch and stays fully closed.
+# Why only nas, not homelab too -- NetworkPolicy vs kube-proxy DNAT, verified against this
+# stack rather than assumed: homelab's `standard-pool` (192.168.8.80/28) was allowed here
+# too when this policy first shipped, and it does not work. Confirmed on the live
+# `netpol-falsifiability-probe`: 192.168.8.80:443 reported BLOCKED (a false negative --
+# nothing was denying it on purpose) while 192.168.8.192:443 reported REACHABLE, from the
+# identical ipBlock/port shape. The reason: 192.168.8.80 is *this cluster's own* LoadBalancer
+# VIP. A pod's packet to it never leaves the node as dialed -- k3s's embedded kube-proxy (no
+# separate kube-proxy DaemonSet exists on this cluster; confirmed live) programs Service DNAT,
+# including for LoadBalancer VIPs, in the nat table's PREROUTING/OUTPUT chains, which the
+# kernel always processes before any routing decision. kube-router's NetworkPolicy controller
+# enforces on the FORWARD chain (`KUBE-ROUTER-FORWARD`, see the default-deny CAVEAT above),
+# which is only reached *after* PREROUTING -- so by the time NetworkPolicy evaluates the
+# packet, its destination has already been rewritten to a Traefik pod IP (10.42.x.x). That
+# address falls inside the `10.0.0.0/8` `except` in allow-egress-internet.yaml above -- the
+# same catch-all that already denies the in-cluster kubernetes Service probed below (10.43.0.1,
+# also pod/Service-CIDR space) -- so it's denied, and the 192.168.8.80/28 ipBlock never gets
+# evaluated at all: NetworkPolicy sees the post-DNAT destination, not the one the pod dialed.
+# nas's VIP has no Service on *this* cluster, so no DNAT happens, the packet leaves as-is, and
+# the ipBlock matches normally.
 #
-# Why it's acceptable: reachability is not access. Agents reach Kubernetes only through the
-# MCP server (get/list/watch, no Secrets, no `pods/exec`, audited, zero RBAC write). The
-# workspace kubeconfig is OIDC-backed and has never been authenticated inside a workspace,
-# so there is no ambient credential to replay. And critically, OIDC is enforced by
-# kube-apiserver itself, not by Traefik -- verified: the Authentik forward-auth outpost's
-# Ingress lists 11 hostnames and `kubernetes-api` is not among them, so the bearer token is
-# passed straight through and validated by the API server regardless of route. The
-# authentication boundary is real and independent of the ingress path.
+# 192.168.8.80/28 is deliberately NOT in the ipBlock list below as a result -- it was dead
+# config that could never match, and removing it is a net improvement, not a loss: it keeps
+# homelab's own API server unreachable from these sandboxes, a better posture than what was
+# originally documented here.
 #
-# What bounds it: node IPs, the gateway, and the rest of RFC1918 remain denied (see the
-# `except` list above) -- only these two `standard-pool` ranges are permitted.
+# If a real need for homelab-ingress reachability appears later, it needs a different
+# mechanism, not a bigger ipBlock: an egress rule selecting Traefik's *pods* directly
+# (namespaceSelector matching the `traefik` namespace + a podSelector matching the Traefik
+# release) instead of an ipBlock -- pod-selector NetworkPolicy rules match the pod IP
+# directly and aren't affected by Service DNAT in front of it, so that path doesn't hit this
+# problem. Do not "fix" this by widening the ipBlock (e.g. to the whole /24 or to
+# 10.42.0.0/16 to chase the post-DNAT address) -- the destination is already rewritten before
+# any ipBlock is checked, so that doesn't restore the intended behavior, and widening it that
+# way would admit every pod in the cluster instead of just Traefik's. And doing this for real
+# would unavoidably expose homelab's own API server -- the identical shared-VIP/shared-Service
+# problem #828 documents for nas below, since selecting Traefik's pods doesn't distinguish
+# which hostname routes to them any more than the ipBlock did.
 #
-# What would make this wrong, and why not fixed now: see
-# https://github.com/ppat/homelab-ops-kubernetes-clusters/issues/828, which records the
-# full deferral reasoning (moving the API server to its own VIP on k3s is a TLS
-# trust-anchor migration, not a config tweak -- deferred to the Talos migration, where a
-# native control-plane VIP and Cilium L2 announcements make the separation structural and
-# the trust-anchor change costs nothing because certs/kubeconfigs are being regenerated
-# anyway) and the full list of conditions that would invalidate this acceptance. Sharpest
-# one, stated here because it's the realistic failure: any non-interactive auth path added
-# to that API ingress -- a static token, a service-account token accepted at the edge, an
-# automation bypass -- converts this reachability directly into usable access from the
-# sandboxes. Also note the allow is pool-scoped, not service-scoped: any future
-# LoadBalancer service placed in either cluster's `standard-pool` becomes reachable from
-# both sandbox namespaces automatically, with no change needed here.
+# What this tolerates, plainly, is narrower than a first read suggests: only nas's
+# `standard-pool` is actually reachable, which includes nas's prod Kubernetes API server
+# (`kubernetes-api` Ingress in `default`, routed by nas's Traefik straight to the real
+# `kubernetes` Service on :443, off the identical VIP as Harbor -- no IP-level way to
+# separate them). Homelab's equivalent Ingress is NOT reachable from here, for the DNAT
+# reason above -- this sandbox can pull images from the cluster it is NOT running on, but
+# cannot reach the API server of the cluster it IS running on. That asymmetry is a direct
+# side effect of the DNAT behavior, not something engineered on purpose, and it's worth
+# knowing rather than assuming both clusters are equally exposed.
+#
+# Why nas's exposure is accepted, and what would make it wrong: see
+# https://github.com/ppat/homelab-ops-kubernetes-clusters/issues/828 for the full reasoning
+# (deferred to the Talos migration -- a TLS trust-anchor migration, not a config tweak) and
+# the conditions that would invalidate the acceptance. Sharpest one, stated here because it's
+# the realistic failure: any non-interactive auth path added to that API ingress -- a static
+# token, a service-account token accepted at the edge, an automation bypass -- converts this
+# reachability directly into usable access from the sandboxes. The allow is pool-scoped, not
+# service-scoped: any future LoadBalancer service placed in nas's `standard-pool` becomes
+# reachable from both sandbox namespaces automatically, with no change needed here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -206,8 +222,6 @@ spec:
   - Egress
   egress:
   - to:
-    - ipBlock:
-        cidr: 192.168.8.80/28
     - ipBlock:
         cidr: 192.168.8.192/28
     ports:
