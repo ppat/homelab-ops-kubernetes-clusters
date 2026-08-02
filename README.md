@@ -36,3 +36,4 @@ flowchart LR
 | See what cluster-wide Kyverno policy is enforced | [policies/README.md](./policies/README.md) |
 | Run lint/validation locally | [DESIGN.md#ci-and-validation](./DESIGN.md#ci-and-validation) |
 | Understand release/versioning conventions | [DESIGN.md#versioning-and-updates](./DESIGN.md#versioning-and-updates) |
+| Run a manual, host-level procedure (node prep, image builds) | [OPERATIONS.md](./OPERATIONS.md) |
