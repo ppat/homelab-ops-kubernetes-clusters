@@ -44,6 +44,14 @@ spec:
           value: "10.43.0.1"
         - name: UNIFI_GATEWAY
           value: "192.168.8.1"
+        - name: LB_INGRESS_VIP_HOMELAB
+          # See sandbox-docker's copy of this Deployment for the full rationale -- positive
+          # control for allow-egress-lb-ingress-vips in network-policy.yaml. Must stay in
+          # lockstep with that NetworkPolicy's ipBlock.
+          value: "192.168.8.80"
+        - name: LB_INGRESS_VIP_NAS
+          # Also Harbor's VIP -- see sandbox-docker's copy and network-policy.yaml.
+          value: "192.168.8.192"
         - name: DOCKER_SSH_SERVICE
           # Anticipated name/port of the Service Phase 4 fronts dockerd's SSH with, in the
           # sandbox-docker namespace. Doesn't exist yet -- see the file-level comment above.
@@ -174,6 +182,13 @@ spec:
             else
               echo "SKIP: Docker namespace SSH Service ($DOCKER_SSH_SERVICE:$DOCKER_SSH_PORT) -- not deployed yet"
             fi
+
+            # Positive controls for allow-egress-lb-ingress-vips in network-policy.yaml --
+            # see sandbox-docker's copy of this Deployment for the full rationale (REJECT
+            # vs DROP, why this is the other half of the deny checks above, and why this
+            # only proves L3 reachability, not which hostname is behind the VIP).
+            probe_allow "homelab standard-pool ingress VIP (LoadBalancer allow)" "$LB_INGRESS_VIP_HOMELAB" 443
+            probe_allow "nas standard-pool ingress VIP (LoadBalancer allow, fronts Harbor)" "$LB_INGRESS_VIP_NAS" 443
 
             probe_allow "GitHub API (internet egress)" "api.github.com" 443
 
