@@ -1,0 +1,37 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-virtualization-core
+  namespace: flux-system
+spec:
+  # No dependsOn: infra-virtualization-core is self-contained (its own CRD,
+  # operator, RBAC) and its nodeSelector targets a manually-applied label,
+  # not a node-feature-discovery one -- see the module's own README
+  # (Dependencies: Depends On: None) in the apps repo.
+  interval: 15m0s
+  path: ./infrastructure/subsystems/virtualization-core
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-virtualization-core
+    namespace: flux-system
+  # The KubeVirt operator installs the KubeVirt CRD in the same reconcile as
+  # the KubeVirt CR that depends on it, so the first attempt(s) may hit "no
+  # matches for kind KubeVirt" before the CRD is established. A short
+  # retryInterval keeps that window seconds, not the default (== interval)
+  # 15m0s; timeout is generous enough for virt-operator plus per-node
+  # virt-handlers to come up.
+  retryInterval: 1m0s
+  timeout: 5m0s
+  wait: true
+  postBuild:
+    substitute:
+      kubevirt_use_emulation: "false"
+      kubevirt_monitor_namespace: monitoring
+      # The real kube-prometheus-stack Prometheus ServiceAccount (read from
+      # the live monitoring.coreos.com/v1 Prometheus's spec.serviceAccountName),
+      # not upstream's OpenShift-oriented "prometheus-k8s" default -- virt-operator
+      # silently skips creating its ServiceMonitor (no error, just a log line) if
+      # it can't find a ServiceAccount by this name in this namespace.
+      kubevirt_monitor_account: kube-prometheus-stack-prometheus
