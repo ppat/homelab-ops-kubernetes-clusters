@@ -16,6 +16,32 @@
 # name isn't evidence the policy works, it's evidence there's nothing there yet), and it
 # starts actually asserting the moment Phase 4 creates a Service at DOCKER_SSH_SERVICE
 # below with no change needed here. Update the env var if Phase 4 names it differently.
+#
+# A second probe here also has no sandbox-docker equivalent, and for a sharper reason than
+# "no such need there": same-namespace reachability of this VM's own Service, on both
+# ports it serves. This is a positive control (must stay reachable, like the
+# api.github.com/DNS checks below), added because the deny-only suite above would not have
+# caught the exact bug it exists to catch -- allow-same-namespace-ingress-to-vm in
+# network-policy.yaml admits this traffic today, but nothing before that fix ever asserted
+# it was reachable, so the policy silently regressing to "same-namespace ingress denied
+# again" would pass every deny probe here without comment. See network-policy.yaml for the
+# full incident (bootstrap-job.yaml's `talosctl bootstrap` call denied with `connection
+# refused`) and the general lesson (an egress allow doesn't imply the matching ingress
+# allow; same-namespace traffic is never exempt once an ingress policy selects the pod).
+#
+# Same "not deployed yet" problem as DOCKER_SSH_SERVICE above, handled the same way: the
+# VM and its Service are provisioned from a separate repo/process
+# (homelab-ops-kubernetes-experiments), not by this Flux module, so this probe has to make
+# sense running before that's ever applied to a given cluster, or after `talosctl reset`
+# wipes the VM's own state and before it's re-bootstrapped. TALOS_VM_SERVICE unresolvable
+# is SKIP, not a violation, for the same reason as DOCKER_SSH_SERVICE. Once it resolves,
+# though, this check is meaningful only once the VM is actually up and listening -- and
+# because this stack REJECTs a denied packet instead of dropping it (see network-policy.yaml
+# CAVEAT), a genuine policy regression is indistinguishable at the TCP level from the VM
+# still booting. That ambiguity is inherent to any positive-reachability probe against a
+# real workload, not something to paper over: this deliberately fails loud
+# (REACHABLE/BLOCKED (violation), never a silent pass) on either cause once the Service
+# exists, rather than guessing which one it is.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,6 +89,15 @@ spec:
           value: "docker-vm.sandbox-docker.svc.cluster.local"
         - name: DOCKER_SSH_PORT
           value: "22"
+        - name: TALOS_VM_SERVICE
+          # Same DNS name bootstrap-job.yaml/provision-agent-admin-cronjob.yaml target
+          # (ENDPOINT there) -- see the file-level comment above for why this is a
+          # positive control, not a deny target.
+          value: "talos-vm.sandbox-talos.svc.cluster.local"
+        - name: TALOS_VM_TALOS_PORT
+          value: "50000"
+        - name: TALOS_VM_K8S_PORT
+          value: "6443"
         - name: TIMEOUT_SECONDS
           value: "3"
         - name: WARMUP_TIMEOUT_SECONDS
@@ -186,6 +221,22 @@ spec:
               fi
             else
               echo "SKIP: Docker namespace SSH Service ($DOCKER_SSH_SERVICE:$DOCKER_SSH_PORT) -- not deployed yet"
+            fi
+
+            # Same-namespace positive control: the Talos VM's own Service, both ports it
+            # serves. See the file-level comment above for why this exists and why it's
+            # SKIP (not a violation) when the Service doesn't resolve yet. Two ports, so
+            # (unlike the single-target DOCKER_SSH_SERVICE check above) the SKIP branch
+            # bumps `probes` by 2 itself rather than sharing one outer increment --
+            # probe_allow already does its own increment for each port on the resolvable
+            # path, so this keeps the SKIP and checked paths counting the same total either
+            # way.
+            if nslookup "$TALOS_VM_SERVICE" >/dev/null 2>&1; then
+              probe_allow "Talos VM Talos API (same-namespace ingress)" "$TALOS_VM_SERVICE" "$TALOS_VM_TALOS_PORT"
+              probe_allow "Talos VM Kubernetes API (same-namespace ingress)" "$TALOS_VM_SERVICE" "$TALOS_VM_K8S_PORT"
+            else
+              probes=$((probes + 2))
+              echo "SKIP: Talos VM Service ($TALOS_VM_SERVICE) -- not deployed yet (both ports)"
             fi
 
             # LB_INGRESS_VIP_HOMELAB is a deny-assertion (DNAT to a Traefik pod IP before
