@@ -226,3 +226,54 @@ spec:
       port: 6443
     - protocol: TCP
       port: 50000
+---
+# Admits same-namespace ingress to the Talos VM's own ports -- the gap that left this VM
+# unreachable from its own namespace. allow-same-namespace-egress (above) only ever
+# admitted this namespace's own EGRESS; the sole ingress-admitting policy
+# (allow-coder-and-mcp-ingress, immediately above) lists `coder` and the `ai` mcp-server
+# pod, never pods in `sandbox-talos` itself. That's the general trap, not just a one-off
+# gap: an egress allow does not imply a matching ingress allow, and same-namespace traffic
+# is not exempt from an ingress policy once default-deny plus any ingress-admitting rule
+# selects a pod -- every client has to be listed explicitly, including ones that live right
+# next to the target. Concretely, that gap denied
+# homelab-ops-kubernetes-experiments/experiments/apps/sandbox-talos/bootstrap-job.yaml's
+# `talosctl bootstrap` call (port 50000, surfaced as `connection refused` -- this stack's
+# kube-router REJECTs a denied packet rather than dropping it, indistinguishable at the
+# TCP level from a closed port) and would equally have denied
+# provision-agent-admin-cronjob.yaml's kubectl calls against the sandbox cluster's own API
+# server (port 6443) the first time it ran after a bootstrap. Both Jobs/CronJobs run as
+# pods in this same namespace and have no other path to the VM.
+#
+# Scoped to the VM's pod specifically (app.kubernetes.io/name: talos-vm -- the exact label
+# service.yaml's Service selects on; see that module's virtual-machine.yaml for why this
+# label exists at all: KubeVirt passes VirtualMachineInstance labels through to the
+# virt-launcher pod but adds no label of its own meant for Service/NetworkPolicy selection)
+# rather than a blanket same-namespace ingress allow across every pod here, deliberately
+# asymmetric with allow-same-namespace-egress's blanket podSelector: {}: nothing else in
+# this namespace (the bootstrap Job, the two CronJobs, the falsifiability probe) listens on
+# anything another pod would ever need to reach, so admitting ingress to them too would
+# only widen the surface with no matching need. What this doesn't touch: the containment
+# that actually matters for this namespace -- default-deny Ingress for every other selector
+# (coder/ai-only, per allow-coder-and-mcp-ingress) and default-deny Egress entirely -- both
+# stay exactly as scoped as before. Ports match allow-coder-and-mcp-ingress's own pair for
+# the same reason they're needed there: 6443 is the sandbox cluster's own Kubernetes API,
+# 50000 is the Talos API (talosctl, mTLS).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace-ingress-to-vm
+  namespace: sandbox-talos
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: talos-vm
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 6443
+    - protocol: TCP
+      port: 50000

@@ -935,9 +935,13 @@ of relying on someone else's automated image.
 NetworkPolicies are actually being enforced, not just present — it probes
 targets that should now be unreachable (the prod kube-apiserver, kubelet,
 etcd, the UniFi gateway, the in-cluster `kubernetes` Service, and, from
-`sandbox-talos`, the `sandbox-docker` namespace's SSH Service) alongside two
-that must stay reachable (`api.github.com` and DNS resolution via CoreDNS),
-on a recurring loop (`PROBE_INTERVAL_SECONDS`, 300s by default).
+`sandbox-talos`, the `sandbox-docker` namespace's SSH Service) alongside
+targets that must stay reachable (`api.github.com`, DNS resolution via
+CoreDNS, and, from `sandbox-talos`, its own Talos VM's Service on both
+ports it serves — the same-namespace ingress path that went silently
+missing until it denied `bootstrap-job.yaml`'s `talosctl bootstrap` call;
+see `sandbox-talos/network-policy.yaml`'s `allow-same-namespace-ingress-
+to-vm`), on a recurring loop (`PROBE_INTERVAL_SECONDS`, 300s by default).
 
 A probe that only ever runs *after* the policy exists proves nothing by
 itself: if every target were unreachable for some unrelated reason (a
