@@ -22,6 +22,12 @@ runbook verifies a node is actually capable and gives it a declarative label
 so KubeVirt VMs can be scheduled onto it deliberately (`nodeSelector`), not
 just wherever a node happens to be capable.
 
+The label key below, `homelab-ops.internal/virtualization`, is a fixed
+constant the `infra-virtualization-core` module itself hardcodes (see that
+module's README in the apps repo) — it's this cluster's scheduling contract
+with the module, not a value chosen per-cluster, so every command in this
+runbook uses it verbatim.
+
 **Target nodes:**
 
 | Node | IP | CPU | Memory | Why it qualifies |
@@ -192,7 +198,7 @@ ssh beelink-ser8-1 'sudo install -o root -g root -m 0644 -D /tmp/90-kubevirt.yam
 # 2. Apply the label directly -- this is the part that actually takes effect
 #    today, since k3s only reads config.yaml.d node-label(+) at registration
 #    time and both nodes are already registered.
-kubectl label node beelink-ser8-1 homelab.nikara.net/virtualization=enabled
+kubectl label node beelink-ser8-1 homelab-ops.internal/virtualization=enabled
 
 # Repeat both steps for minisforum-nab9-1.
 ```
@@ -235,7 +241,7 @@ third node added to the KubeVirt pool later.
    # error -- precisely the disaster-recovery re-registration scenario this
    # file exists to serve.
    node-label+:
-     - "homelab.nikara.net/virtualization=enabled"
+     - "homelab-ops.internal/virtualization=enabled"
    ```
 
 3. Let the node join normally. Registration applies the label automatically
@@ -303,7 +309,7 @@ about kernel modules, and why Path B doesn't either.
 
 ```bash
 # Label present on both nodes:
-kubectl get nodes -l homelab.nikara.net/virtualization=enabled
+kubectl get nodes -l homelab-ops.internal/virtualization=enabled
 ```
 
 `devices.kubevirt.io/kvm`, `devices.kubevirt.io/tun`, and
@@ -333,7 +339,7 @@ machine:
       - name: vhost_net
       - name: tun
   nodeLabels:
-    homelab.nikara.net/virtualization: enabled
+    homelab-ops.internal/virtualization: enabled
 ```
 
 **Unlike the Ubuntu nodes above, don't assume this module list is
@@ -352,7 +358,7 @@ second one):
   restart needed — but is still subject to the same
   `NodeRestriction` admission-controller boundary Kubernetes applies
   everywhere: a kubelet cannot self-assign labels under a handful of
-  reserved prefixes (`kubernetes.io/`, `k8s.io/`, etc.). `homelab.nikara.net/*`
+  reserved prefixes (`kubernetes.io/`, `k8s.io/`, etc.). `homelab-ops.internal/*`
   isn't one of them, so this isn't a blocker here, but it's the reason a
   reserved-prefix label would need a different mechanism.
 - Whether `machine.kernel.modules` changes apply immediately or require a
@@ -373,7 +379,7 @@ sudo rm -f /etc/rancher/k3s/config.yaml.d/90-kubevirt.yaml
 # Remove the imperative label (Path A nodes only -- a Path B node that
 # picked the label up at registration only carries it via the drop-in
 # above, so removing the file is enough there):
-kubectl label node beelink-ser8-1 homelab.nikara.net/virtualization-
+kubectl label node beelink-ser8-1 homelab-ops.internal/virtualization-
 ```
 
 ## Runbook: build and publish the Talos containerDisk
