@@ -58,6 +58,21 @@ spec:
           value: "2"
         - name: PROBE_INTERVAL_SECONDS
           value: "300"
+        - name: HEARTBEAT_FILE
+          # See sandbox-docker's copy of this Deployment for the full rationale (Fix 2:
+          # liveness heartbeat). Backed by the `heartbeat` emptyDir volume below, since the
+          # root filesystem is read-only.
+          value: "/var/run/probe/heartbeat"
+        - name: HEARTBEAT_MAX_AGE_SECONDS
+          # See sandbox-docker's copy for the derivation (PROBE_INTERVAL_SECONDS plus
+          # headroom for a cycle's own bounded probe time plus a safety margin). This
+          # namespace probes one extra target per cycle (the cross-sandbox SSH check
+          # below), which is still well within the same ~120s of headroom.
+          value: "420"
+        - name: MIDLIFE_REVERIFY_EVERY_N_CYCLES
+          # See sandbox-docker's copy for the derivation (Fix 3: ~1 hour at the default
+          # PROBE_INTERVAL_SECONDS).
+          value: "12"
         command:
         - /bin/sh
         - -c
@@ -85,6 +100,10 @@ spec:
             echo "WARMUP-TIMEOUT: ${UNIFI_GATEWAY}:443 was still reachable after ${WARMUP_TIMEOUT_SECONDS}s -- this pod's egress was never policed within the warm-up window. This is NOT evidence the NetworkPolicy is broken: it means enforcement could not be established for THIS pod before the deadline, so nothing below can be trusted yet. See the kube-router per-pod dispatch-rule race documented in network-policy.yaml / OPERATIONS.md. Exiting non-zero so this is loud (pod restart, CrashLoopBackOff) rather than a silent false pass."
             exit 1
           fi
+
+          # --- Heartbeat: evidence for the liveness probe that the loop is still alive ---
+          # See sandbox-docker's copy of this Deployment for the full rationale (Fix 2).
+          date +%s > "$HEARTBEAT_FILE"
 
           # --- Main probe suite: runs on a loop once warm-up has succeeded ---
           probe_deny() {
@@ -114,6 +133,19 @@ spec:
             cycle=$((cycle + 1))
             probes=0
             violations=0
+
+            # --- Mid-life re-verification (Fix 3) ---
+            # See sandbox-docker's copy of this Deployment for the full rationale: why this
+            # is a separate, rarer check rather than reusing the ordinary per-cycle "UniFi
+            # gateway" deny probe below, and why a lapse restarts the pod instead of
+            # logging and continuing.
+            if [ $((cycle % MIDLIFE_REVERIFY_EVERY_N_CYCLES)) -eq 0 ]; then
+              if nc -z -w "$TIMEOUT_SECONDS" "$UNIFI_GATEWAY" 443 2>/dev/null; then
+                echo "MIDLIFE-ENFORCEMENT-LAPSE: ${UNIFI_GATEWAY}:443 reachable at cycle ${cycle} -- this pod was policed at start (WARMUP-OK) but is not policed now. Exiting non-zero to force a restart and re-prove enforcement from a clean pod."
+                exit 1
+              fi
+              echo "MIDLIFE-CHECK-OK: enforcement re-confirmed at cycle ${cycle} (next re-check in ${MIDLIFE_REVERIFY_EVERY_N_CYCLES} cycles)"
+            fi
 
             for node in $NODE_IPS; do
               probe_deny "prod kube-apiserver" "$node" 6443
@@ -159,9 +191,42 @@ spec:
               echo "SUMMARY namespace=$NAMESPACE cycle=$cycle probes=$probes violations=$violations verdict=VIOLATIONS-DETECTED"
             fi
 
+            date +%s > "$HEARTBEAT_FILE"
             sleep "$PROBE_INTERVAL_SECONDS"
           done
         # yamllint enable rule:line-length
+        livenessProbe:
+          # See sandbox-docker's copy of this Deployment for the full rationale (Fix 2):
+          # catches the probe loop hanging mid-cycle on something with no timeout of its
+          # own (the plain `nslookup api.github.com` call above, or -- unique to this
+          # namespace -- a DNS lookup on DOCKER_SSH_SERVICE before Phase 4 creates that
+          # Service, though `nslookup` failing fast on NXDOMAIN is the expected case there,
+          # not a hang). Every `nc` call in this script is `-w`-bounded, so a hung `nc`
+          # can't happen here either. `exec: ["true"]` would satisfy Kyverno's
+          # require-pod-probes policy too, and would detect nothing; this is deliberately
+          # not that.
+          #
+          # This exec probe's own stdout goes to kubelet's probe result, not this
+          # container's log stream -- see sandbox-docker's copy for how a failure here is
+          # actually surfaced.
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+                now=$(date +%s)
+                hb=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null) || exit 1
+                [ $((now - hb)) -le "$HEARTBEAT_MAX_AGE_SECONDS" ]
+          initialDelaySeconds: 45
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # No readinessProbe/startupProbe -- see sandbox-docker's copy of this Deployment
+        # for why (no traffic to gate readiness on; the warm-up gate already self-bounds
+        # startup).
+        volumeMounts:
+        - name: heartbeat
+          mountPath: /var/run/probe
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -173,3 +238,9 @@ spec:
             - ALL
           seccompProfile:
             type: RuntimeDefault
+      volumes:
+      - name: heartbeat
+        # Backs HEARTBEAT_FILE -- readOnlyRootFilesystem: true above means the image
+        # itself isn't writable, so the liveness heartbeat needs its own writable spot.
+        emptyDir:
+          sizeLimit: 1Mi

@@ -31,6 +31,24 @@ kind: NetworkPolicy
 metadata:
   name: default-deny
   namespace: sandbox-docker
+  # Kubernetes strips YAML comments before persisting to etcd, so the CAVEAT comment
+  # above is invisible to `kubectl get netpol -o yaml` or any MCP/API client -- only
+  # someone reading git or OPERATIONS.md ever sees it. This annotation survives onto the
+  # live object as the discoverable half of that same warning; the comment stays too, for
+  # the git/PR reader who wants the full mechanism. `homelab-ops.internal/*` is this
+  # platform's established self-defined-key prefix (see the `homelab-ops.internal/
+  # virtualization` node label in OPERATIONS.md) -- `.internal` is the RFC 9476 reserved,
+  # non-delegatable TLD, so it can never collide with or be mistaken for a domain anyone
+  # actually owns, unlike `.example`, which is a fill-in-the-value placeholder (e.g.
+  # harbor.example.com elsewhere in OPERATIONS.md) and would read as "someone forgot to
+  # set this" on a key meant to ship permanently.
+  annotations:
+    homelab-ops.internal/netpol-caveat: >-
+      CAVEAT: pods here are unpoliced for a short window right after creation (k3s's
+      kube-router netpol controller programs firewall rules reactively); a short-lived
+      pod can complete its entire life inside that window with zero enforcement. Full
+      explanation and how to verify a given pod is actually policed: OPERATIONS.md,
+      "Known limitation: the per-pod NetworkPolicy enforcement window".
 spec:
   podSelector: {}
   policyTypes:

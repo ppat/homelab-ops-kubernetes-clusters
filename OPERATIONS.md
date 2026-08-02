@@ -758,20 +758,55 @@ logs carry `namespace`/`pod`/`node_name`/`container` labels via promtail):
 # Any violation, ever, in the lookback window:
 {namespace=~"sandbox-docker|sandbox-talos"} |= "(violation)"
 
-# The pod itself failing to become policed (crash-loop signature):
+# The pod itself failing to become policed at startup (crash-loop signature):
 {namespace=~"sandbox-docker|sandbox-talos"} |= "WARMUP-TIMEOUT"
+
+# The pod losing enforcement mid-life, after having passed the warm-up gate
+# (see "Mid-life re-verification" below) -- distinct from WARMUP-TIMEOUT
+# because it's a materially more alarming event:
+{namespace=~"sandbox-docker|sandbox-talos"} |= "MIDLIFE-ENFORCEMENT-LAPSE"
 ```
 
 An absent recent `SUMMARY` line is itself a signal worth treating as
 suspect — it means the probe stopped producing cycles, not that it found
-nothing wrong; a crash-looping pod (`WARMUP-TIMEOUT`, or a killed container)
-also shows up as `kube_pod_container_status_restarts_total{namespace=~
+nothing wrong; a crash-looping pod (`WARMUP-TIMEOUT`, `MIDLIFE-ENFORCEMENT-
+LAPSE`, or a killed container) also shows up as
+`kube_pod_container_status_restarts_total{namespace=~
 "sandbox-docker|sandbox-talos"}` climbing in Prometheus, which is a
 reasonable proxy for what `kube_job_failed` used to surface directly. No
 AlertManager route is wired to any of this, deliberately: this is a homelab
 with no triage layer for alerts yet, so a failure is meant to be found by
 querying, not by paging — wiring an alert route is a follow-up for once
 that layer exists, not part of this change.
+
+The container also carries a `livenessProbe` that restarts it if its internal
+heartbeat file goes stale (`HEARTBEAT_MAX_AGE_SECONDS`, 420s by default) —
+this catches the loop hanging mid-cycle on something with no timeout of its
+own (concretely, the plain `nslookup` calls in the script). That probe's
+result is **not** in this Loki stream: exec probe output goes to kubelet's
+probe result, not the container's stdout, so a heartbeat-triggered restart is
+visible via `kubectl describe pod` (`Warning  Unhealthy`) and the same
+`kube_pod_container_status_restarts_total` climb, not by grepping logs.
+
+### Mid-life re-verification
+
+The warm-up gate (above) only proves a pod was policed **at container
+start**. Every `MIDLIFE_REVERIFY_EVERY_N_CYCLES` cycles (12 by default, ~1
+hour at `PROBE_INTERVAL_SECONDS=300s`), the probe loop re-runs that same
+deny-check against `UNIFI_GATEWAY:443` on its own, outside the ordinary
+per-cycle target list, specifically so a mid-life enforcement lapse (a
+kube-router restart racing this pod, a full iptables resync gone wrong) is
+distinguishable from an ordinary probe violation rather than just adding one
+more line to that cycle's `violations` count. If that re-check finds the
+target reachable, the container logs `MIDLIFE-ENFORCEMENT-LAPSE` and exits
+non-zero rather than logging and continuing — restarting re-runs the warm-up
+gate on the replacement pod, re-proving enforcement before the loop is
+trusted again, at the cost of losing that pod's running history. The
+alternative (log loudly, keep running) was rejected: continuing would mean
+the probe keeps emitting `BLOCKED (ok)` results for every other target built
+on a premise — "this pod is policed" — that this very check just disproved,
+which is the same class of check-that-can't-fail bug the whole
+CronJob→Deployment redesign exists to close.
 
 ## Known limitation: the per-pod NetworkPolicy enforcement window
 

@@ -101,6 +101,33 @@ spec:
           # polite to the prod targets being probed (kube-apiserver, etcd): one denied
           # connection attempt per target per cycle, not a tight port-scan loop.
           value: "300"
+        - name: HEARTBEAT_FILE
+          # Written once warm-up succeeds and again after every full cycle -- see the
+          # livenessProbe below for what reads it. Must be writable; the container's root
+          # filesystem is read-only, so this lives on the `heartbeat` emptyDir volume, not
+          # the image itself.
+          value: "/var/run/probe/heartbeat"
+        - name: HEARTBEAT_MAX_AGE_SECONDS
+          # How stale HEARTBEAT_FILE can get before the liveness probe below decides the
+          # loop is wedged. PROBE_INTERVAL_SECONDS (one full cycle between writes) plus
+          # headroom for a cycle's own bounded probe time (worst case, every deny target
+          # times out instead of refusing instantly: ~17 checks x TIMEOUT_SECONDS(3s) =
+          # ~51s) plus a safety margin, rounded up. Not derived from PROBE_INTERVAL_SECONDS
+          # automatically -- an exec probe command can't reach into another env var's
+          # arithmetic cleanly -- so keep this above PROBE_INTERVAL_SECONDS + ~120s if that
+          # value changes.
+          value: "420"
+        - name: MIDLIFE_REVERIFY_EVERY_N_CYCLES
+          # How often (in cycles, not seconds) to re-run the warm-up gate's own
+          # enforcement check instead of only trusting the one done at container start.
+          # At the default PROBE_INTERVAL_SECONDS=300s, 12 cycles is ~1 hour: tight enough
+          # to bound how long an undetected mid-life enforcement lapse (a kube-router
+          # restart racing this pod, a full iptables resync gone wrong) could persist
+          # unnoticed in a homelab with no alerting, and deliberately slower than the
+          # ordinary per-cycle "UniFi gateway" deny probe already below -- see the
+          # MIDLIFE-* block in the loop for why this is a separate, rarer check rather
+          # than reusing that one.
+          value: "12"
         command:
         - /bin/sh
         - -c
@@ -139,6 +166,17 @@ spec:
             exit 1
           fi
 
+          # --- Heartbeat: evidence for the liveness probe that the loop is still alive ---
+          # Touched here and again after every full cycle below. The liveness probe fails
+          # this container if HEARTBEAT_FILE's mtime is older than HEARTBEAT_MAX_AGE_SECONDS
+          # -- the one failure mode this specifically catches: the loop hangs mid-cycle on
+          # something with no bound of its own, e.g. the plain `nslookup api.github.com`
+          # call below has no explicit timeout and can wedge forever against a
+          # broken/unreachable DNS server. A liveness probe that just execs `true` would
+          # satisfy Kyverno's require-pod-probes policy too, without detecting anything --
+          # this is deliberately not that.
+          date +%s > "$HEARTBEAT_FILE"
+
           # --- Main probe suite: runs on a loop once warm-up has succeeded ---
           # Observation-first wording (REACHABLE / BLOCKED) rather than PASS/FAIL: a line
           # like "FAIL: ... -- connected, expected denial" reads, at a skim, like the
@@ -175,6 +213,32 @@ spec:
             probes=0
             violations=0
 
+            # --- Mid-life re-verification (Fix 3) ---
+            # The warm-up gate above only proves this pod was policed at container start --
+            # a CLEAN verdict on cycle 50 otherwise rests on that one assumption from cycle
+            # 0. Re-run the same check on a slower, distinguishable cadence
+            # (MIDLIFE_REVERIFY_EVERY_N_CYCLES) so a mid-life lapse gets its own token
+            # instead of blending into the ordinary per-cycle "UniFi gateway" deny probe
+            # below as just one more line in a violations count.
+            if [ $((cycle % MIDLIFE_REVERIFY_EVERY_N_CYCLES)) -eq 0 ]; then
+              if nc -z -w "$TIMEOUT_SECONDS" "$UNIFI_GATEWAY" 443 2>/dev/null; then
+                # Deliberately a distinct token from WARMUP-TIMEOUT: this is a materially
+                # more alarming event -- the pod passed the warm-up gate at start and isn't
+                # policed anymore, so every verdict from here on is untrustworthy, not just
+                # this one target. Exit non-zero rather than log-and-continue: restarting
+                # re-runs the warm-up gate on the new pod, re-proving enforcement before the
+                # loop is trusted again, the same reasoning the warm-up gate itself uses.
+                # The cost is losing this pod's running history (cycle count, any violation
+                # trend) -- accepted, because continuing would mean this probe keeps
+                # reporting BLOCKED (ok) results built on a premise that's already false,
+                # which is exactly the "check that can't fail" class of bug this whole
+                # redesign exists to close.
+                echo "MIDLIFE-ENFORCEMENT-LAPSE: ${UNIFI_GATEWAY}:443 reachable at cycle ${cycle} -- this pod was policed at start (WARMUP-OK) but is not policed now. Exiting non-zero to force a restart and re-prove enforcement from a clean pod."
+                exit 1
+              fi
+              echo "MIDLIFE-CHECK-OK: enforcement re-confirmed at cycle ${cycle} (next re-check in ${MIDLIFE_REVERIFY_EVERY_N_CYCLES} cycles)"
+            fi
+
             for node in $NODE_IPS; do
               probe_deny "prod kube-apiserver" "$node" 6443
               # Longhorn manager (:9500) used to be probed here too, and always reported
@@ -209,9 +273,58 @@ spec:
               echo "SUMMARY namespace=$NAMESPACE cycle=$cycle probes=$probes violations=$violations verdict=VIOLATIONS-DETECTED"
             fi
 
+            date +%s > "$HEARTBEAT_FILE"
             sleep "$PROBE_INTERVAL_SECONDS"
           done
         # yamllint enable rule:line-length
+        livenessProbe:
+          # Catches exactly one failure mode: the probe loop hung mid-cycle on something
+          # with no timeout of its own -- concretely, the plain `nslookup api.github.com`
+          # call above has no explicit bound and can wedge forever against a
+          # broken/unreachable DNS server (the other named failure mode, a hung `nc`,
+          # can't happen: every `nc` call in this script is already `-w`-bounded). It does
+          # NOT check whether the probe suite's findings are correct -- that's what
+          # SUMMARY/violations in this container's own logs are for -- only whether the
+          # loop producing them is still moving. `exec: ["true"]` would satisfy Kyverno's
+          # require-pod-probes policy too, and would detect nothing; this is deliberately
+          # not that.
+          #
+          # A restart here is desirable, not just tolerated: it re-runs the warm-up gate
+          # on the new pod, re-proving enforcement before the loop resumes -- same
+          # reasoning as MIDLIFE_REVERIFY_EVERY_N_CYCLES choosing restart over
+          # log-and-continue above.
+          #
+          # This exec probe's own stdout goes to kubelet's probe result, not this
+          # container's log stream -- a failure here shows up via `kubectl describe pod`
+          # (`Warning  Unhealthy`) and the same `kube_pod_container_status_restarts_total`
+          # climb already used as a proxy for WARMUP-TIMEOUT restarts (see OPERATIONS.md),
+          # not by grepping Loki for a token.
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+                now=$(date +%s)
+                hb=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null) || exit 1
+                [ $((now - hb)) -le "$HEARTBEAT_MAX_AGE_SECONDS" ]
+          # Covers the warm-up gate's own worst case (WARMUP_TIMEOUT_SECONDS=30s) plus
+          # slack to reach the first heartbeat write, which happens the moment warm-up
+          # succeeds -- not only after the first full cycle -- so this doesn't also need
+          # to cover a full PROBE_INTERVAL_SECONDS.
+          initialDelaySeconds: 45
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # No readinessProbe: this pod fronts no Service and receives no traffic, so there
+        # is nothing for "ready to receive traffic" to mean here. Adding one anyway would
+        # only be to placate Kyverno's require-pod-probes policy, which livenessProbe
+        # above already satisfies -- the same always-passing-probe trap this fix exists to
+        # avoid. No startupProbe either: the warm-up gate already self-bounds startup and
+        # exits non-zero on its own timeout, and initialDelaySeconds above already covers
+        # that window for the liveness probe.
+        volumeMounts:
+        - name: heartbeat
+          mountPath: /var/run/probe
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -223,3 +336,9 @@ spec:
             - ALL
           seccompProfile:
             type: RuntimeDefault
+      volumes:
+      - name: heartbeat
+        # Backs HEARTBEAT_FILE -- readOnlyRootFilesystem: true above means the image
+        # itself isn't writable, so the liveness heartbeat needs its own writable spot.
+        emptyDir:
+          sizeLimit: 1Mi
