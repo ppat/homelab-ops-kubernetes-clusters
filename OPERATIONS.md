@@ -1,15 +1,17 @@
 # Operations
 
-This document holds manual, host-level runbooks: procedures that happen
-*outside* Flux, against a physical node or an external registry, because they
-can't be expressed as a reconciled manifest. Everything else in this repo is
-declarative and covered by [DESIGN.md](./DESIGN.md) instead — start here only
-for the operations listed below.
+This document holds manual, occasional runbooks: procedures that happen
+*outside* Flux — against a physical node, an external registry, or as an
+on-demand check of a reconciled resource's actual runtime behavior — because
+they can't be expressed as, or fully verified by, a reconciled manifest
+alone. Everything else in this repo is declarative and covered by
+[DESIGN.md](./DESIGN.md) instead — start here only for the operations listed
+below.
 
-These runbooks used to be automated by a Packer/Ansible pipeline that is now
-unmaintained and being archived; until the planned k3s → Talos migration
-removes the need for host-level node prep entirely, they're accepted as
-manual, occasional, human-run procedures instead.
+The host-level runbooks below used to be automated by a Packer/Ansible
+pipeline that is now unmaintained and being archived; until the planned k3s →
+Talos migration removes the need for host-level node prep entirely, they're
+accepted as manual, occasional, human-run procedures instead.
 
 ## Runbook: prepare a node for KubeVirt
 
@@ -599,3 +601,99 @@ nothing actually builds or pushes the image automatically, and setting up
 that watch is a separate follow-up, not done as part of this runbook. Accept
 this as a standing, real cost of building from the official artifact instead
 of relying on someone else's automated image.
+
+## Runbook: verify the sandbox NetworkPolicy falsifiability probes before/after rollout
+
+**Why:** `clusters/homelab/services/sandbox-docker/` and
+`clusters/homelab/services/sandbox-talos/` each ship a
+`netpol-falsifiability-probe` CronJob (see each namespace's
+`cronjob-netpol-falsifiability-probe.yaml`) that asserts the namespace's
+NetworkPolicies are actually being enforced, not just present — it probes
+targets that should now be unreachable (the prod kube-apiserver, Longhorn's
+manager API, kubelet, etcd, the UniFi gateway, the in-cluster `kubernetes`
+Service, and, from `sandbox-talos`, the `sandbox-docker` namespace's SSH
+Service) alongside two that must stay reachable (`api.github.com` and DNS
+resolution via CoreDNS), and fails the Job if any denial stops holding.
+
+A probe that only ever runs *after* the policy exists proves nothing by
+itself: if every target were unreachable for some unrelated reason (a
+misconfigured CNI, a routing problem, the probe pod itself broken), the
+CronJob would report success against a namespace with no working isolation
+at all. The run documented here is the other half — a baseline taken
+*before* the NetworkPolicies exist, where every probe (including the ones
+later expected to fail) must succeed. Only a probe that flips from "succeeds
+before" to "denied after" is evidence the policy — not something else — is
+what changed the outcome.
+
+### 1. Baseline: before the NetworkPolicy exists
+
+Apply the namespace and CronJob, but not `network-policy.yaml`, e.g. by
+temporarily commenting the `network-policy.yaml` entry out of that
+namespace's `kustomization.yaml` `resources:` list before this reconciles,
+or by deleting the live `NetworkPolicy` objects in the namespace after a
+normal reconcile (Flux will reassert them on its next reconcile, so this
+window is short — have the second command below ready before deleting
+them).
+
+Trigger a one-shot run of the CronJob's own template rather than waiting for
+its schedule:
+
+```bash
+kubectl create job --from=cronjob/netpol-falsifiability-probe \
+  -n sandbox-docker netpol-baseline-preflight
+kubectl logs -f job/netpol-baseline-preflight -n sandbox-docker
+```
+
+(swap `sandbox-docker` for `sandbox-talos` to baseline the other namespace).
+
+**Expected result: every probe reports `PASS`**, including the ones the
+script itself labels as testing for denial — with no NetworkPolicy in
+place, nothing is blocked yet, so a target the design expects to be denied
+later should still be reachable now. A `FAIL` at this stage means the probe
+itself is wrong (bad IP, bad port, a target that was never reachable in the
+first place) — fix the probe, not the policy, and re-run this step before
+moving on. `DOCKER_SSH_SERVICE` in the `sandbox-talos` CronJob is expected
+to report `SKIP` here (and at every step, until Phase 4 creates that
+Service) rather than `PASS`/`FAIL` — that's the intended pre-VM behavior,
+see the CronJob's own comments.
+
+### 2. Apply the NetworkPolicy
+
+Restore `network-policy.yaml` to the namespace's `kustomization.yaml` (or
+let Flux's next reconcile reassert the deleted objects — `config-services-
+sandbox-docker`/`config-services-sandbox-talos` run on a 1-minute interval
+specifically so this doesn't require a manual nudge).
+
+### 3. Confirm the flip
+
+```bash
+kubectl create job --from=cronjob/netpol-falsifiability-probe \
+  -n sandbox-docker netpol-postpolicy-check
+kubectl logs -f job/netpol-postpolicy-check -n sandbox-docker
+```
+
+**Expected result:** every probe that was `PASS` in step 1 for a target the
+script labels as a denial check now reports `PASS: ... denied as expected`
+(connection now refused/times out), while `GitHub API` and `DNS resolution`
+still report `PASS`. Any probe that stays reachable here that the design
+says should be denied means the NetworkPolicy isn't doing what it looks
+like it does — a label selector matching zero pods, a typo'd namespace
+selector, or the CNI's policy controller not enforcing at all are the usual
+causes; this is exactly the "policy that silently stopped enforcing"
+failure mode the recurring CronJob exists to keep catching automatically
+after this one-time baseline.
+
+### 4. Clean up the one-shot Jobs
+
+```bash
+kubectl delete job netpol-baseline-preflight -n sandbox-docker
+kubectl delete job netpol-postpolicy-check -n sandbox-docker
+```
+
+The recurring `netpol-falsifiability-probe` CronJob keeps running afterward
+on its own 15-minute schedule; its result is queryable via
+`kube_job_failed{namespace=~"sandbox-docker|sandbox-talos"}` in Prometheus.
+No AlertManager route is wired to it, deliberately: this is a homelab with
+no triage layer for alerts yet, so a failure is meant to be found by
+querying, not by paging — wiring an alert route is a follow-up for once
+that layer exists, not part of this change.

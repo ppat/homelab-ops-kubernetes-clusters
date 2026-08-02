@@ -55,3 +55,17 @@ spec:
           - 'node-problem-detector*'
           namespaces:
           - monitoring
+      # virt-handler runs privileged to manage VM lifecycle (libvirt/qemu process
+      # supervision, cgroup/device management) on the node it's scheduled to; some
+      # virt-launcher configurations also require it. See disallow-host-path.yaml for why
+      # this is name-scoped rather than namespace-scoped, and why `kubevirt` is listed
+      # even though nothing runs there yet.
+      - resources:
+          names:
+          - 'virt-handler*'
+          - 'virt-launcher*'
+          - 'virt-operator*'
+          namespaces:
+          - kubevirt
+          - sandbox-docker
+          - sandbox-talos

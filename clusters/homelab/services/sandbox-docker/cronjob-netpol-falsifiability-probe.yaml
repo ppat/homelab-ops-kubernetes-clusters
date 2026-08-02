@@ -1,0 +1,129 @@
+---
+# A NetworkPolicy that has never been tested in the failing direction proves nothing --
+# it could select zero pods (label typo), or the CNI's policy controller could have
+# stopped enforcing (upgrade, restart, config drift) while the object itself still reads
+# as correct. This CronJob is that test: it runs from inside the namespace the policy in
+# network-policy.yaml protects, using the exact same pod network the protected workload
+# will use, and asserts every denial *and* the two paths that must stay open. A probe that
+# only checked denials would pass against a totally broken network (e.g. no policy
+# enforcement at all) just as easily as against a correctly locked-down one.
+#
+# AlertManager is deliberately not wired up yet (no triage layer exists for a one-person
+# homelab), so this leans entirely on the Job failing and being queryable via
+# `kube_job_failed{namespace="sandbox-docker"}` in Prometheus -- see OPERATIONS.md for the
+# "run before the policy exists, expect success" half of this test, which is the other
+# half of what makes this falsifiable rather than decorative.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: netpol-falsifiability-probe
+  namespace: sandbox-docker
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  # Kept longer than successful runs so a regression is still queryable well after it
+  # first fires, not just until the next history-limit eviction.
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # One attempt per scheduled run -- a retry can't fix a policy that stopped
+      # enforcing, and backoffLimit: 0 means the Job (and kube_job_failed) reflects a
+      # single probe run's outcome rather than blurring several attempts together.
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: netpol-falsifiability-probe
+        spec:
+          # No selector needed to be caught by the sandbox's default-deny/allow policies:
+          # they use podSelector: {}, which matches every pod in the namespace, including
+          # this one -- that's what makes this pod a faithful stand-in for the VM's own
+          # virt-launcher pod rather than a special-cased exception to it.
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          containers:
+          - name: probe
+            # Digest-only pin, no floating tag -- matches the busybox reference already in
+            # use (and Renovate-tracked) elsewhere in this repo, e.g. traefik's log-rotate
+            # init-container.
+            image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+            env:
+            - name: NODE_IPS
+              value: "192.168.8.65 192.168.8.67 192.168.8.68 192.168.8.69"
+            - name: IN_CLUSTER_KUBERNETES_SERVICE
+              # The well-known first usable address in the service CIDR
+              # (10.43.0.0/16, inferred from observed ClusterIPs -- there is no
+              # in-cluster way to read the CIDR itself at runtime).
+              value: "10.43.0.1"
+            - name: UNIFI_GATEWAY
+              value: "192.168.8.1"
+            - name: TIMEOUT_SECONDS
+              value: "3"
+            command:
+            - /bin/sh
+            - -c
+            # yamllint disable rule:line-length
+            # yamllint disable-line rule:indentation
+            - |
+              set -u
+              fail=0
+
+              # Expect the connection to be refused or time out. A successful connect
+              # here means the egress `except` list (or the policy controller enforcing
+              # it) has stopped doing its job.
+              probe_deny() {
+                desc="$1"; host="$2"; port="$3"
+                if nc -z -w "$TIMEOUT_SECONDS" "$host" "$port" 2>/dev/null; then
+                  echo "FAIL: $desc ($host:$port) -- connected, expected denial"
+                  fail=1
+                else
+                  echo "PASS: $desc ($host:$port) -- denied as expected"
+                fi
+              }
+
+              # Expect the connection to succeed. Exists so this probe can't pass against
+              # a network that's simply broken end-to-end rather than correctly scoped.
+              probe_allow() {
+                desc="$1"; host="$2"; port="$3"
+                if nc -z -w "$TIMEOUT_SECONDS" "$host" "$port" 2>/dev/null; then
+                  echo "PASS: $desc ($host:$port) -- reached as expected"
+                else
+                  echo "FAIL: $desc ($host:$port) -- blocked, expected success"
+                  fail=1
+                fi
+              }
+
+              for node in $NODE_IPS; do
+                probe_deny "prod kube-apiserver" "$node" 6443
+                probe_deny "Longhorn manager" "$node" 9500
+                probe_deny "kubelet" "$node" 10250
+                probe_deny "etcd" "$node" 2379
+              done
+
+              probe_deny "UniFi gateway" "$UNIFI_GATEWAY" 443
+              probe_deny "in-cluster kubernetes Service" "$IN_CLUSTER_KUBERNETES_SERVICE" 443
+
+              probe_allow "GitHub API (internet egress)" "api.github.com" 443
+
+              if nslookup api.github.com >/dev/null 2>&1; then
+                echo "PASS: DNS resolution via CoreDNS -- succeeded as expected"
+              else
+                echo "FAIL: DNS resolution via CoreDNS -- failed, expected success"
+                fail=1
+              fi
+
+              exit "$fail"
+            # yamllint enable rule:line-length
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              runAsUser: 65534
+              runAsGroup: 65534
+              capabilities:
+                drop:
+                - ALL
+              seccompProfile:
+                type: RuntimeDefault

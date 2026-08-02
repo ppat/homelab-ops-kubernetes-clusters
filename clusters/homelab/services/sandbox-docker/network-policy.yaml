@@ -1,0 +1,129 @@
+---
+# Default-deny both directions. Every NetworkPolicy in the apps repo up to now is
+# ingress-only (egress stays open by omission) -- that pattern doesn't hold here: this
+# namespace fronts a real dockerd, and a reachable Docker socket/daemon is root-equivalent
+# on the VM behind it, so an unconstrained egress path out of this namespace is as
+# dangerous as an unconstrained ingress path into it. An empty podSelector with both
+# policyTypes and no ingress/egress rules denies everything in both directions;
+# everything admitted below is a separate policy object whose rules union with this one
+# for whichever pod/direction they also select -- see the other files in this directory
+# for the same pattern.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: sandbox-docker
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# DNS is the only path out that isn't the big allow-list below. CoreDNS lives in
+# kube-system, which carries no NetworkPolicies of its own, so this is the only place the
+# boundary is enforced. Scoped by podSelector, not by the kube-dns ClusterIP: matching on
+# IP would put this rule inside the 10.0.0.0/8 `except` carved out in
+# allow-egress-internet.yaml below, which would close it right back off.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sandbox-docker
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Same-namespace traffic, so the dockerd VM's own virt-launcher pod can reach any Service
+# fronting it that also lives in this namespace. podSelector with no namespaceSelector is
+# implicitly scoped to this namespace only -- it does not reach into sandbox-talos or
+# anywhere else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace-egress
+  namespace: sandbox-docker
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector: {}
+---
+# Open internet egress (dockerd needs to pull images from arbitrary registries), with an
+# `except` list that is most of this namespace's security value in one object: it closes
+# the prod kube-apiserver, Longhorn's manager API, kubelet's :10250, etcd, the UniFi
+# gateway, and the NAS, because every one of those targets sits inside one of these five
+# blocks. Do not narrow this to a smaller CIDR or drop a block to "simplify" it -- that
+# reopens a specific internal target, not just tidies the object. RFC1918 (10/8, 172.16/12,
+# 192.168/16) plus link-local (169.254/16) and loopback (127/8) covers every private range
+# in use on this network, including all pod/Service traffic (both CIDRs nest inside 10/8),
+# which is why the two policies above exist as separate carve-outs instead of just being
+# narrower `except` entries here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-internet
+  namespace: sandbox-docker
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 169.254.0.0/16
+        - 127.0.0.0/8
+---
+# Only the `coder` namespace may reach the dockerd VM -- that's the Coder workspace pods
+# that point DOCKER_HOST at it. Nothing in `sandbox-talos` (or anywhere else) is admitted
+# here: a write-capable Talos sandbox that could also reach this namespace would own the
+# Docker VM through it, since a reachable dockerd is root-equivalent on that host. That's
+# the reason these two sandboxes are separate namespaces rather than one.
+#
+# Port 22 is SSH (DOCKER_HOST=ssh://...). The range below is the kind API-server port
+# range: kind is deliberately retained against the remote daemon, and each consumer
+# (each Coder workspace's `kind create cluster`) needs its own unique
+# `networking.apiServerPort` on this shared dockerd, since kind exposes that port on the
+# Docker host's own network namespace, not container-scoped. 6550-6560 is arbitrary but
+# fixed -- allocate one port per consumer by hand from this range and record the
+# assignment where that consumer's kind config lives; nothing here tracks allocation.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-coder-ingress
+  namespace: sandbox-docker
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: coder
+    ports:
+    - protocol: TCP
+      port: 22
+    - protocol: TCP
+      port: 6550
+      endPort: 6560

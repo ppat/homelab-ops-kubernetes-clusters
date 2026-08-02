@@ -62,3 +62,16 @@ spec:
           - metallb-system
           - system-upgrade
           - tailscale
+      # virt-handler and virt-launcher add capabilities beyond this policy's default-safe
+      # set (e.g. NET_ADMIN, SYS_ADMIN, SYS_NICE, SYS_PTRACE, SYS_RESOURCE) to manage VM
+      # networking and CPU/scheduling. See disallow-host-path.yaml for why this is
+      # name-scoped rather than namespace-scoped.
+      - resources:
+          names:
+          - 'virt-handler*'
+          - 'virt-launcher*'
+          - 'virt-operator*'
+          namespaces:
+          - kubevirt
+          - sandbox-docker
+          - sandbox-talos

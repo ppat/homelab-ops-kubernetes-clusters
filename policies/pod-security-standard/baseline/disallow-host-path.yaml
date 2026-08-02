@@ -55,3 +55,19 @@ spec:
           - 'intel-gpu-plugin-gpu-device*'
           namespaces:
           - intel-device-plugins
+      # KubeVirt needs hostPath for virt-handler's access to /dev, libvirt/qemu sockets,
+      # and cgroup paths on the node; virt-launcher mounts a handful of host device nodes
+      # (e.g. /dev/kvm) the same way. Name-scoped, not namespace-scoped, on purpose: a
+      # namespace-wide exclusion would silently admit hostPath for anything else later
+      # deployed into these namespaces, not just KubeVirt's own components. `kubevirt` is
+      # the conventional install namespace for virt-operator/virt-handler; KubeVirt is not
+      # installed yet, so this exclusion grants nothing until it is.
+      - resources:
+          names:
+          - 'virt-handler*'
+          - 'virt-launcher*'
+          - 'virt-operator*'
+          namespaces:
+          - kubevirt
+          - sandbox-docker
+          - sandbox-talos

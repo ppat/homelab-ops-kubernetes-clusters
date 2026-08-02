@@ -1,0 +1,13 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- namespace.yaml
+- network-policy.yaml
+- cronjob-netpol-falsifiability-probe.yaml
+
+commonAnnotations:
+  # This namespace's own isolation is the point of the module -- prevent pruning
+  # unintentionally, same convention as clusters/nas/outpost.
+  kustomize.toolkit.fluxcd.io/prune: disabled

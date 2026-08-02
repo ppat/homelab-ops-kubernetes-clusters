@@ -43,6 +43,18 @@ spec:
           - 'kube-prometheus-stack-prometheus-node-exporter*'
           namespaces:
           - monitoring
+      # virt-handler manages VM network binding (bridge/masquerade) from the node's own
+      # network namespace. See disallow-host-path.yaml for why this is name-scoped rather
+      # than namespace-scoped.
+      - resources:
+          names:
+          - 'virt-handler*'
+          - 'virt-launcher*'
+          - 'virt-operator*'
+          namespaces:
+          - kubevirt
+          - sandbox-docker
+          - sandbox-talos
   - name: host-pid-namespaces
     match:
       any:
@@ -63,6 +75,18 @@ spec:
           - 'kube-prometheus-stack-prometheus-node-exporter*'
           namespaces:
           - monitoring
+      # virt-handler shares the host PID namespace to supervise qemu processes running
+      # directly on the node. See disallow-host-path.yaml for why this is name-scoped
+      # rather than namespace-scoped.
+      - resources:
+          names:
+          - 'virt-handler*'
+          - 'virt-launcher*'
+          - 'virt-operator*'
+          namespaces:
+          - kubevirt
+          - sandbox-docker
+          - sandbox-talos
   - name: host-ipc-namespaces
     match:
       any:
@@ -76,3 +100,16 @@ spec:
       pattern:
         spec:
           =(hostIPC): "false"
+    exclude:
+      any:
+      # No prior exclusions on this rule. See disallow-host-path.yaml for why this is
+      # name-scoped rather than namespace-scoped.
+      - resources:
+          names:
+          - 'virt-handler*'
+          - 'virt-launcher*'
+          - 'virt-operator*'
+          namespaces:
+          - kubevirt
+          - sandbox-docker
+          - sandbox-talos
