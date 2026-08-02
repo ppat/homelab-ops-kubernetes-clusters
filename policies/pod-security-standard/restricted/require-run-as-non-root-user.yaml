@@ -42,3 +42,15 @@ spec:
           containers:
           - =(securityContext):
               =(runAsUser): ">0"
+    exclude:
+      any:
+      # virt-handler's node-labeller init container explicitly sets runAsUser: 0 (it needs
+      # root to read/write host device and label state before the main container starts); the
+      # main container leaves runAsUser unset, which this policy already treats as compliant
+      # on its own. See ../baseline/disallow-privileged-containers.yaml for what bounds
+      # virt-handler generally.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt

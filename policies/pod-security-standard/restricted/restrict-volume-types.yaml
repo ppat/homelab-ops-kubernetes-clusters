@@ -50,3 +50,15 @@ spec:
             - projected
             - secret
             - ''
+    exclude:
+      any:
+      # virt-handler mounts hostPath volumes for libvirt/qemu runtime state, kubelet's
+      # pod/device dirs, and node-labeller data (see ../baseline/disallow-host-path.yaml) --
+      # hostPath isn't in this policy's allow-list at all, so anything using it needs this
+      # exclusion. virt-launcher gets its device access (kvm/tun/vhost-net) through Kubernetes
+      # device-plugin resource requests instead, not a volume, so it isn't excluded here.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt

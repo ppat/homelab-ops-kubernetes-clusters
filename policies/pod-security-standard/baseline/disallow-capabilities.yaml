@@ -62,16 +62,15 @@ spec:
           - metallb-system
           - system-upgrade
           - tailscale
-      # virt-handler and virt-launcher add capabilities beyond this policy's default-safe
-      # set (e.g. NET_ADMIN, SYS_ADMIN, SYS_NICE, SYS_PTRACE, SYS_RESOURCE) to manage VM
-      # networking and CPU/scheduling. See disallow-host-path.yaml for why this is
-      # name-scoped rather than namespace-scoped.
+      # virt-handler sets no explicit capabilities.add list at all -- Privileged: true (see
+      # disallow-privileged-containers.yaml) already grants everything it needs, so this rule
+      # shouldn't trip in practice. Kept as a low-cost safety margin on the one component in
+      # this repo that runs privileged, rather than removed on that analysis alone.
+      # virt-launcher's default (non-root) capabilities are NET_BIND_SERVICE only, already
+      # inside this policy's allowed set, so it isn't excluded here or anywhere else in this
+      # file.
       - resources:
           names:
           - 'virt-handler*'
-          - 'virt-launcher*'
-          - 'virt-operator*'
           namespaces:
           - kubevirt
-          - sandbox-docker
-          - sandbox-talos

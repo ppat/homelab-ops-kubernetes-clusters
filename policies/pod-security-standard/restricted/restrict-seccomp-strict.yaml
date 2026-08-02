@@ -64,3 +64,25 @@ spec:
           - securityContext:
               seccompProfile:
                 type: "RuntimeDefault | Localhost"
+    exclude:
+      any:
+      # virt-handler sets no seccompProfile at pod or container level -- a privileged
+      # DaemonSet gets no practical extra containment from a seccomp filter anyway. See
+      # ../baseline/disallow-privileged-containers.yaml for what bounds it instead.
+      - resources:
+          names:
+          - 'virt-handler*'
+          namespaces:
+          - kubevirt
+      # virt-launcher (unprivileged -- see ../baseline/disallow-privileged-containers.yaml)
+      # only gets a declared seccompProfile when the KubeVirt CR's
+      # spec.configuration.seccompConfiguration is set, which this repo doesn't do yet; the
+      # container runtime still applies RuntimeDefault regardless, so this is a
+      # manifest-declaration gap, not an actually-unconfined process. Closing it for real
+      # means setting that CR field once KubeVirt is installed, not widening this exclusion.
+      - resources:
+          names:
+          - 'virt-launcher*'
+          namespaces:
+          - sandbox-docker
+          - sandbox-talos
