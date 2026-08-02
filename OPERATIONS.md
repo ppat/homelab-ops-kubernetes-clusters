@@ -502,87 +502,209 @@ this runbook) — but generate your own from the exact `schematic.yaml` you
 intend to use rather than hardcoding that value, since it's only correct for
 the *empty* customization.
 
+### The `qemu-img` gap in this environment, and how it's actually solved
+
+`qemu-img` (needed to convert the Factory's raw image to qcow2) is not
+available anywhere in a Coder workspace, and can't be made available: these
+workspaces run as unprivileged Kubernetes pods — no root, no `sudo`, no `apt`
+— and neither `mise registry` nor the `aqua` registry carry it or an
+equivalent (checked directly, not assumed). Three ways around that were
+considered and rejected before landing on the one below:
+
+- **An unofficial static `qemu-img` binary.** This is the same trade already
+  rejected for the disk image itself — the `docker.io/containercraft/talos`
+  community image, a single maintainer with no ceremony around it. Trusting a
+  random prebuilt binary from outside the distro/project for a tool that
+  writes boot disks is the identical risk in a different shape, for no better
+  reason than convenience.
+- **A pure-Python qcow2 encoder.** A previous attempt at this exact problem
+  wrote a pure-Python qcow2 *reader* and got far enough to see how much of
+  the format that touches — L1/L2 tables, refcount tables, cluster
+  allocation. That's tractable for reading; it is nowhere near enough
+  confidence to trust a hand-rolled *writer* with no independent tool
+  available to validate its own output. A subtly wrong qcow2 file doesn't
+  fail loudly at build time — it fails when Talos tries to boot from it,
+  which is exactly the failure mode this runbook exists to avoid.
+- **Run `qemu-img` in a throwaway container on the Docker VM**, the obvious
+  option since that VM already runs a real `dockerd`. This looked right and
+  doesn't work: `qemu-img convert`, and even a trivial `qemu-img create -f
+  raw test.raw 1G`, hang indefinitely inside an `alpine:3.20` container on
+  that VM — confirmed via `docker top`, which showed 0:00 accumulated CPU
+  time across several minutes of wall-clock, not just a slow command. The
+  *identical* command against the *identical* disk, run directly on the VM's
+  host OS instead of inside a container, completed in under a second. The
+  exact mechanism wasn't chased down further, but Docker's default seccomp
+  profile blocking a syscall `qemu-img` wants — `io_uring_setup` is the
+  leading suspect, a documented target of that default denylist — is the
+  most likely explanation. Whatever it is, the fix that was actually proven
+  by running it is simpler than working around the container: don't use a
+  container.
+
+That leaves the option this runbook now uses: **`qemu-img` runs on the
+Docker VM's host OS**, not inside anything — `apt-get install qemu-utils`
+(a few MB; the VM already has passwordless `sudo`), reached over SSH
+directly from a Coder workspace at
+`docker@docker-vm.sandbox-docker.svc.cluster.local:22`. That address
+resolves and connects with no `kubectl port-forward` needed, because Coder
+workspace pods are explicitly allow-listed for ingress on that port (see
+`allow-coder-ingress` in `sandbox-docker/network-policy.yaml`); use `kubectl
+port-forward` per "Runbook: reach the sandbox VMs" above instead if running
+this from anywhere other than a Coder workspace. Leave `qemu-utils` installed
+afterward rather than removing it each run — Talos version bumps are a
+recurring manual procedure (see below), so the next run needs it again
+regardless.
+
+This does mean the pipeline now spans two machines with different network
+reachability, which is a real cost, not a free abstraction: the Coder
+workspace can reach the public internet (Image Factory, crane's own tooling)
+but not Harbor (no Tailscale in this environment); the Docker VM can also
+reach the public internet, but its NetworkPolicy denies all RFC1918 egress —
+exactly what reaching Harbor on the LAN would require. No single machine in
+this environment can download, convert, build, *and* push in one hop. The
+script below is split into phases along exactly that boundary, each one
+stating where it has to run and why.
+
+### Is `qcow2` even worth the trouble? Measured, not assumed
+
+The ~100–200MB qcow2 vs ~1GB raw estimate this runbook originally carried
+was never actually measured. Running the real pipeline end to end (Talos
+v1.13.7, the empty/no-extensions schematic) gives real numbers instead:
+
+| | size |
+| --- | --- |
+| Factory `nocloud-amd64.raw.xz` download | 204 MiB |
+| Decompressed raw disk — logical size / actual allocated blocks | 4.15 GiB / ~205 MiB (already >95% sparse) |
+| `qemu-img convert -O qcow2` output | 206 MiB (0.26s) |
+| containerDisk image built from that **qcow2** (gzip layer — what actually gets pushed) | 204 MiB |
+| containerDisk image built from the **raw** disk instead, same source (gzip layer) | 209 MiB |
+
+The push-size argument barely holds up: gzip crushes the raw file's zeros
+almost as effectively as qcow2's own sparse-cluster encoding does, because
+the disk is already mostly empty before either format touches it. **The
+argument that does hold is what happens after the pull, not before the
+push.** Extracting the raw layer with a plain `tar -xzf` — i.e. what a
+non-hole-aware unpacker does, and there's no guarantee this cluster's
+containerd is hole-aware on this path — materializes the full 4.15GiB on
+disk: verified by extracting it and checking the result's actual allocated
+blocks (`stat`), which matched its apparent size, not the ~205MiB the source
+had. A qcow2 file's compactness, in contrast, is encoded in its own bytes,
+not in filesystem holes, so it survives any copy/tar/gzip round-trip
+unchanged — verified by hashing the qcow2 before packaging it and again
+after a full tar→gzip→crane→un-tar→un-gzip round trip: byte-identical both
+times. This cluster has already hit a containerDisk/`emptyDir`-sizing
+surprise once — see the exclusion comment in
+`policies/best-practices/add-emptydir-sizelimit.yaml` for the `docker-vm`
+eviction loop it caused — so a raw containerDisk that might silently balloon
+to ~20x its nominal size on a node's local disk isn't a bet worth taking
+just to skip a two-line `apt-get install`. qcow2 stays.
+
 ### The build script
 
-Takes the Talos version and schematic ID as required inputs — no defaults,
-so this never silently builds a stale version. Registry host is a required
-variable too, per this repo's convention of never hardcoding a domain.
+Takes the Talos version, schematic ID, and Docker VM SSH target as required
+inputs — no defaults, so this never silently builds a stale version or
+guesses at reachability. Registry host is a required variable too, per this
+repo's convention of never hardcoding a domain. The script covers Phases
+1–3 (download, convert, build) end to end and stops with a built local
+tarball plus the exact command to run next — it deliberately does not push,
+since Phase 4 needs Harbor credentials and Tailscale connectivity that a
+Coder workspace in this environment doesn't have (see below).
 
 `build-talos-containerdisk.sh`:
 
 ```bash
 #!/usr/bin/env bash
 # build-talos-containerdisk.sh -- downloads a Talos Image Factory boot asset,
-# converts it to qcow2, wraps it as a KubeVirt containerDisk OCI image, and
-# pushes it to a registry. Non-interactive; safe to re-run (each run uses its
-# own temp dir and overwrites the destination tag on push).
+# converts it to qcow2 on the sandbox-docker VM's host OS (see OPERATIONS.md
+# for why it has to run there, and not locally or in a container), and wraps
+# it as a KubeVirt containerDisk OCI image written to a local tarball. Does
+# NOT push -- prints the crane push command to run by hand instead. Non-
+# interactive; safe to re-run (each run uses its own temp dir).
 set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: TALOS_VERSION=v1.8.3 SCHEMATIC_ID=<id> REGISTRY=harbor.example.com \\
-       [IMAGE_PATH=talos/containerdisk] [HARBOR_USER=...] [HARBOR_PASSWORD=...] \\
+Usage: TALOS_VERSION=v1.13.7 SCHEMATIC_ID=<id> REGISTRY=harbor.example.com \\
+       DOCKER_VM_SSH=docker@docker-vm.sandbox-docker.svc.cluster.local \\
+       [DOCKER_VM_SSH_KEY=~/.ssh/sandbox_docker_vm] \\
+       [IMAGE_PATH=talos/containerdisk] \\
        $0
 EOF
   exit 1
 }
 
-: "${TALOS_VERSION:?TALOS_VERSION is required, e.g. v1.8.3}"
+: "${TALOS_VERSION:?TALOS_VERSION is required, e.g. v1.13.7}"
 : "${SCHEMATIC_ID:?SCHEMATIC_ID is required -- see OPERATIONS.md for how to get one}"
 : "${REGISTRY:?REGISTRY is required, e.g. harbor.example.com (never hardcode this)}"
+: "${DOCKER_VM_SSH:?DOCKER_VM_SSH is required, e.g. docker@docker-vm.sandbox-docker.svc.cluster.local -- qemu-img has to run directly on that VM, see OPERATIONS.md}"
+DOCKER_VM_SSH_KEY="${DOCKER_VM_SSH_KEY:-$HOME/.ssh/sandbox_docker_vm}"
 IMAGE_PATH="${IMAGE_PATH:-talos/containerdisk}"
 IMAGE_REF="${REGISTRY}/${IMAGE_PATH}:${TALOS_VERSION}-${SCHEMATIC_ID:0:12}"
 
 command -v crane >/dev/null || { echo "crane not found -- mise use -g crane" >&2; exit 1; }
-command -v qemu-img >/dev/null || { echo "qemu-img not found -- apt install qemu-utils" >&2; exit 1; }
 command -v xz >/dev/null || { echo "xz not found -- apt install xz-utils" >&2; exit 1; }
 
-if [ -n "${HARBOR_USER:-}" ] && [ -n "${HARBOR_PASSWORD:-}" ]; then
-  crane auth login "${REGISTRY}" -u "${HARBOR_USER}" --password-stdin <<<"${HARBOR_PASSWORD}"
-fi
+ssh_vm() { ssh -i "${DOCKER_VM_SSH_KEY}" -o StrictHostKeyChecking=accept-new "${DOCKER_VM_SSH}" "$@"; }
 
 workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 
+# --- Phase 1: download + decompress (this host; needs only curl/xz) ---
 asset_url="https://factory.talos.dev/image/${SCHEMATIC_ID}/${TALOS_VERSION}/nocloud-amd64.raw.xz"
 echo "Downloading ${asset_url}"
 curl -fL -o "${workdir}/talos.raw.xz" "${asset_url}"
 
-echo "Decompressing"
-xz -d "${workdir}/talos.raw.xz"
+# --- Phase 2: convert to qcow2 on the Docker VM's host OS ---
+echo "Ensuring qemu-utils is installed on ${DOCKER_VM_SSH}"
+ssh_vm 'command -v qemu-img >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-utils'
 
-echo "Converting to sparse qcow2"
-qemu-img convert -O qcow2 "${workdir}/talos.raw" "${workdir}/talos.qcow2"
-du -h "${workdir}/talos.raw" "${workdir}/talos.qcow2"
+remote_dir="$(ssh_vm mktemp -d)"
+echo "Streaming compressed image to ${DOCKER_VM_SSH}:${remote_dir}"
+ssh_vm "cat > ${remote_dir}/talos.raw.xz" < "${workdir}/talos.raw.xz"
+ssh_vm "cd ${remote_dir} && xz -d talos.raw.xz && qemu-img convert -O qcow2 talos.raw talos.qcow2 && rm -f talos.raw"
+echo "Retrieving qcow2"
+ssh_vm "cat ${remote_dir}/talos.qcow2" > "${workdir}/talos.qcow2"
+ssh_vm "rm -rf ${remote_dir}"
+du -h "${workdir}/talos.qcow2"
 
+# --- Phase 3: build the containerDisk image locally (this host; needs only crane) ---
 echo "Building containerDisk layer (disk/talos.qcow2, owned 107:107)"
 mkdir -p "${workdir}/layer/disk"
 cp "${workdir}/talos.qcow2" "${workdir}/layer/disk/talos.qcow2"
 tar --owner=107 --group=107 -C "${workdir}/layer" -cf "${workdir}/layer.tar" disk
 
-echo "Pushing ${IMAGE_REF}"
-crane append -f "${workdir}/layer.tar" -t "${IMAGE_REF}"
+echo "Building OCI image (local tarball, no push)"
+crane append -f "${workdir}/layer.tar" --oci-empty-base -t "${IMAGE_REF}" \
+  -o ./talos-containerdisk.tar
 
 echo
-echo "containerDisk image: ${IMAGE_REF}"
+echo "Built: ./talos-containerdisk.tar"
+echo
+echo "--- Phase 4 (by hand, from a machine with Tailscale reachability to"
+echo "    Harbor and HARBOR_USER/HARBOR_PASSWORD -- neither exists in a"
+echo "    Coder workspace in this environment) ---"
+echo "crane auth login ${REGISTRY} -u \$HARBOR_USER --password-stdin <<<\"\$HARBOR_PASSWORD\""
+echo "crane push ./talos-containerdisk.tar ${IMAGE_REF}"
 ```
 
 Notes on specific lines:
 
 - `qemu-img convert -O qcow2` produces a sparse file by default (no
-  preallocation flag needed) — this is what keeps the pushed image small.
-  The ~100–200MB qcow2 vs ~1GB raw figures from the design brief are
-  estimates, not something measured while writing this runbook — confirm
-  actual sizes on the first real run via the `du -h` line above.
-- `crane append` with no `-b` (base image) flag builds a new image from an
-  empty/scratch base per its own docs — exactly what `FROM scratch` means in
-  Dockerfile terms.
+  preallocation flag needed) — see "Is qcow2 even worth the trouble?" above
+  for measured sizes.
+- `crane append --oci-empty-base` builds a new image from an empty/scratch
+  base per its own docs — exactly what `FROM scratch` means in Dockerfile
+  terms. `-o` writes that image to a local tarball instead of pushing, which
+  is what makes Phase 3 possible without any registry reachability at all —
+  verified by inspecting the tarball's `manifest.json` and layer contents
+  directly (single layer, `disk/talos.qcow2`, owned `107:107`, no base
+  image) rather than trusting it.
 - The Harbor **project** in `IMAGE_PATH` (e.g. `talos`) must already exist —
   Harbor doesn't auto-create projects on push the way some registries do.
-- `crane auth login` is skipped entirely if `HARBOR_USER`/`HARBOR_PASSWORD`
-  aren't set, in which case `crane` falls back to whatever's already in
-  `~/.docker/config.json` (e.g. a prior interactive `docker login` or `crane
-  auth login`). Either path is non-interactive.
+- `crane push` accepts a local docker-style tarball directly as its `PATH`
+  argument (`crane push PATH IMAGE`) — Phase 4 needs nothing from Phases
+  1–3 except the tarball itself, so it can run from any machine that has
+  `crane`, Harbor reachability, and credentials, not necessarily the one
+  that built the image.
 
 Reference the resulting image in a `VirtualMachine` manifest as a
 `containerDisk` volume, e.g.:
@@ -597,17 +719,17 @@ spec:
   volumes:
     - name: talos-system
       containerDisk:
-        image: harbor.example.com/talos/containerdisk:v1.8.3-376567988ad3
+        image: harbor.example.com/talos/containerdisk:v1.13.7-376567988ad3
 ```
 
 ### Talos version bumps are now a manual re-run
 
 There's no CI wired up for this — bumping Talos means re-running the script
 above with the new `TALOS_VERSION` (same `SCHEMATIC_ID` unless the
-customization also changed) and updating whichever `VirtualMachine` manifest
-references the resulting tag. Renovate *can* be configured to watch
-`siderolabs/talos` GitHub releases and open an informational PR the same way
-it's already annotated for k3s
+customization also changed), running the Phase 4 push by hand, and updating
+whichever `VirtualMachine` manifest references the resulting tag. Renovate
+*can* be configured to watch `siderolabs/talos` GitHub releases and open an
+informational PR the same way it's already annotated for k3s
 (`# renovate: datasource=github-releases depName=k3s-io/k3s` in
 `clusters/homelab/cluster/kubernetes-version/server-upgrade.yaml`) — but
 nothing actually builds or pushes the image automatically, and setting up
