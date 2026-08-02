@@ -50,3 +50,49 @@ spec:
           namespaces:
           - kube-system
           - longhorn-system
+      # IMPORTANT for whoever next tunes a *mutate* policy's exclusions: validationFailureAction
+      # only exists on *validate* rules. Every virt-handler/virt-launcher exclusion elsewhere in
+      # this repo was added to *validate* policies that already run in Audit mode, so "Audit"
+      # felt like a low-stakes backstop while the exclusion list was worked out. A mutate rule
+      # has no such backstop -- it always applies, unconditionally, the moment it matches. That
+      # gap is exactly what caused docker-vm to eviction-loop: this policy silently added a
+      # 256Mi sizeLimit to virt-launcher's internal "ephemeral-disks" emptyDir (the containerDisk
+      # copy-on-write overlay backing every write the guest makes to its root filesystem), and
+      # nothing surfaced it as a violation anywhere because a mutate rule doesn't report one --
+      # it just rewrites the object.
+      #
+      # virt-launcher pods run in the VM's own namespace (sandbox-docker, sandbox-talos here),
+      # not in `kubevirt` -- unlike virt-handler, which is a DaemonSet confined to that one
+      # namespace. A namespace-scoped exclusion targeting `kubevirt` would exclude nothing.
+      #
+      # Whole-pod, not per-volume: every emptyDir a virt-launcher pod carries (private, public,
+      # sockets, virt-bin-dir, libvirt-runtime, ephemeral-disks, and container-disks when image
+      # volumes aren't in use) is created internally by virt-controller for KubeVirt's own
+      # bookkeeping -- kubelet already tears the whole pod down when a VM is deleted, so none of
+      # them benefit from an externally imposed cap. Verified against KubeVirt v1.9.0 source
+      # (pkg/virt-controller/services/rendervolumes.go, the emptyDirVolume() helper all of them
+      # go through): it unconditionally emits EmptyDirVolumeSource{} with no SizeLimit, and
+      # there is no KubeVirt/VirtualMachine CR field that feeds one in -- this isn't a case of
+      # "KubeVirt could set its own limit but doesn't"; it has no such knob.
+      #
+      # Deliberately left uncapped rather than re-added at a bigger, hand-picked number: this
+      # volume backs a real VM's disk writes, so any fixed number is a guess divorced from the
+      # workload, and a long-lived VM's overlay only grows -- a bigger cap just relocates the
+      # same eviction loop further down the timeline, most convincingly right after whoever hit
+      # it has stopped watching. The actual backstop is the one Kubernetes already ships for
+      # exactly this shape of problem: kubelet's node-level ephemeral-storage eviction
+      # (nodefs.available). A VM that needs real persistent capacity belongs on a PVC-backed
+      # virtio disk (KubeVirt dataVolumeTemplates/PVC volumes), not written into this
+      # containerDisk overlay -- that's a workload-level fix, not a policy one, and is out of
+      # scope here.
+      #
+      # Name-scoped like every other virt-launcher/virt-handler exclusion in this repo, even
+      # though these pods also carry a stable `kubevirt.io: virt-launcher` label that would work
+      # equally well: kept consistent with the 8 existing name-glob exclusions elsewhere rather
+      # than introducing a second selector style for the same controller-owned pods.
+      - resources:
+          names:
+          - 'virt-launcher*'
+          namespaces:
+          - sandbox-docker
+          - sandbox-talos
