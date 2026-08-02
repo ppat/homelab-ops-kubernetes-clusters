@@ -81,16 +81,25 @@ spec:
         - name: UNIFI_GATEWAY
           value: "192.168.8.1"
         - name: LB_INGRESS_VIP_HOMELAB
-          # Positive control for allow-egress-lb-ingress-vips in network-policy.yaml: the
-          # homelab cluster's MetalLB `standard-pool` VIP, which is also the live Traefik
-          # ingress VIP (confirmed live: `metallb.io/ip-allocated-from-pool: standard-pool`
-          # on the `traefik` Service). Must stay in lockstep with that NetworkPolicy's
-          # ipBlock -- see it for how this range was derived and why it's the only pool
-          # opened.
+          # DENY target, not an allow -- despite being the same kind of object as
+          # LB_INGRESS_VIP_NAS below. This is *this cluster's own* MetalLB `standard-pool`
+          # VIP (Traefik's), so a pod's packet to it gets DNAT'd by k3s's embedded
+          # kube-proxy to a Traefik pod IP (10.42.x.x) before kube-router's NetworkPolicy
+          # controller ever evaluates it -- NetworkPolicy sees the post-DNAT destination,
+          # inside the 10.0.0.0/8 `except`, not the VIP this dials. allow-egress-lb-ingress-
+          # vips in network-policy.yaml deliberately does NOT include this range as a
+          # result (it would be dead config -- it can never match); this probe asserting
+          # BLOCKED is expected and correct, not a gap. See that NetworkPolicy for the full
+          # mechanism -- this is the same DNAT effect the in-cluster kubernetes Service
+          # check below already exercises.
           value: "192.168.8.80"
         - name: LB_INGRESS_VIP_NAS
-          # Same as above, for the nas cluster's `standard-pool` -- also Harbor's VIP,
-          # since Harbor is ingress-fronted rather than a dedicated LoadBalancer Service.
+          # Positive control for allow-egress-lb-ingress-vips in network-policy.yaml: nas's
+          # MetalLB `standard-pool` VIP -- also Harbor's VIP, since Harbor is
+          # ingress-fronted rather than a dedicated LoadBalancer Service. Unlike
+          # LB_INGRESS_VIP_HOMELAB above, this has no Service on *this* cluster, so no DNAT
+          # intercepts it and the ipBlock allow actually applies. Must stay in lockstep with
+          # that NetworkPolicy's ipBlock.
           value: "192.168.8.192"
         - name: TIMEOUT_SECONDS
           value: "3"
@@ -269,17 +278,23 @@ spec:
             probe_deny "UniFi gateway" "$UNIFI_GATEWAY" 443
             probe_deny "in-cluster kubernetes Service" "$IN_CLUSTER_KUBERNETES_SERVICE" 443
 
-            # Positive controls for allow-egress-lb-ingress-vips in network-policy.yaml.
-            # This stack REJECTs rather than DROPs, so every BLOCKED (ok) verdict above is
-            # "connection refused", indistinguishable via nc -z from "nothing is listening
-            # there" -- these two checks are the other half of that: proof the allow rule
-            # actually opens something live, not just that it doesn't error. Both VIPs are
-            # Traefik's own Service IP on their cluster (see network-policy.yaml for why),
-            # so TCP:443 accepting is expected regardless of which hostname would have
-            # routed there -- this only proves L3 reachability, not that any particular
-            # hostname (Harbor, the API server) is behind it, which is the whole point of
-            # the CAVEAT in that policy file: this layer can't tell those apart.
-            probe_allow "homelab standard-pool ingress VIP (LoadBalancer allow)" "$LB_INGRESS_VIP_HOMELAB" 443
+            # LB_INGRESS_VIP_HOMELAB is a deny-assertion, not a positive control -- see its
+            # env var comment above and network-policy.yaml for the full DNAT-vs-NetworkPolicy
+            # mechanism (this is what caught the original version of this policy allowing a
+            # range that could never actually match). This stack REJECTs rather than DROPs,
+            # so BLOCKED alone can't distinguish a policy denial from a dead port -- proof
+            # something is actually listening here comes from outside this probe: every one
+            # of this cluster's ingress-fronted apps resolves to this exact VIP, so it is
+            # definitely live. What's asserted is that DNAT-then-netpol denies pod-originated
+            # traffic to it, not that nothing answers.
+            probe_deny "homelab standard-pool ingress VIP (DNAT to pod IP, expected denied)" "$LB_INGRESS_VIP_HOMELAB" 443
+
+            # Positive control for allow-egress-lb-ingress-vips in network-policy.yaml: nas's
+            # standard-pool VIP has no Service on this cluster, so no DNAT intercepts it and
+            # the ipBlock allow actually applies. TCP:443 accepting only proves L3
+            # reachability, not that any particular hostname (Harbor, nas's API server) is
+            # behind it -- this layer can't tell those apart, which is exactly the CAVEAT in
+            # that policy file.
             probe_allow "nas standard-pool ingress VIP (LoadBalancer allow, fronts Harbor)" "$LB_INGRESS_VIP_NAS" 443
 
             probe_allow "GitHub API (internet egress)" "api.github.com" 443
