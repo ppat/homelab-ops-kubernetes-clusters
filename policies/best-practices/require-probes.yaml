@@ -77,3 +77,35 @@ spec:
           - 'metallb-speaker*'
           namespaces:
           - metallb-system
+      # virt-launcher's `compute` container (the one this policy checks -- it only iterates
+      # spec.containers[], not initContainers) carries no liveness/readiness/startupProbe.
+      # Verified against both VMs' live pod specs: neither defines any of the three fields.
+      # KubeVirt doesn't track VM health through kubelet probes at all -- it tracks it through
+      # the VirtualMachineInstance's own status, surfaced onto the pod via the
+      # `kubevirt.io/virtual-machine-unpaused` readiness gate (visible in both pods'
+      # spec.readinessGates, with status.conditions showing "the virtual machine is not paused"
+      # driving the pod's Ready condition). A kubelet probe would be the wrong signal here even
+      # if one were added: the guest OS runs nested inside qemu, invisible to an exec/http/tcp
+      # check against the virt-launcher container, so the only thing a probe could observe is
+      # whether virt-launcher itself is alive, which the VMI status already captures more
+      # accurately.
+      #
+      # This isn't a case of the pod being unmonitored, just monitored through a different
+      # mechanism than this policy checks for -- the readiness gate is the same contract object
+      # consumers of pod readiness (Services, Deployments, kubectl wait) rely on. What bounds
+      # the risk is exactly that substitution: if it ever failed to hold -- KubeVirt stops
+      # populating the readiness gate, a version changes the contract, a bug leaves it stale --
+      # this pod would have zero health signal of any kind, kubelet or KubeVirt's, and this
+      # exclusion means the audit stream would not say so. That silent failure mode is the
+      # residual risk this exclusion accepts; it isn't mitigated by anything else here.
+      #
+      # Name-scoped, not namespace-scoped, and limited to the same two namespaces as the other
+      # virt-launcher exclusions in this repo (./add-emptydir-sizelimit.yaml, and
+      # ../pod-security-standard/restricted/{restrict-volume-types,restrict-seccomp-strict}.yaml)
+      # rather than left open to any future VM namespace.
+      - resources:
+          names:
+          - 'virt-launcher*'
+          namespaces:
+          - sandbox-docker
+          - sandbox-talos
