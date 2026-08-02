@@ -1,0 +1,225 @@
+---
+# A NetworkPolicy that has never been tested in the failing direction proves nothing --
+# it could select zero pods (label typo), or the CNI's policy controller could have
+# stopped enforcing (upgrade, restart, config drift) while the object itself still reads
+# as correct. This Deployment is that test: it runs from inside the namespace the policy
+# in network-policy.yaml protects, using the exact same pod network the protected workload
+# will use, and asserts every denial *and* the two paths that must stay open, on a
+# recurring loop. A probe that only checked denials would pass against a totally broken
+# network (e.g. no policy enforcement at all) just as easily as against a correctly
+# locked-down one.
+#
+# Why a Deployment and not a CronJob/Job (this used to be a CronJob -- see git history):
+# k3s's bundled kube-router-derived NetworkPolicy controller programs each pod's firewall
+# chain (KUBE-POD-FW-*) and its dispatch rule in KUBE-ROUTER-FORWARD *reactively*, after the
+# pod exists -- a pod with no dispatch rule yet falls straight through to `-P FORWARD
+# ACCEPT`, fully unpoliced. A short-lived Job pod can complete before that rule is ever
+# programmed, and this CronJob did exactly that on its first real run: every single denial
+# target reported reachable, because the *probe pod itself* was never policed, not because
+# the NetworkPolicy was broken. A long-lived pod sidesteps that race entirely instead of
+# re-running it every schedule tick: it's programmed once (verified by the warm-up gate
+# below, which still runs first and still fails loudly if it times out) and stays
+# programmed for the rest of its life, same as the sandbox's real VM workload -- so the
+# probe no longer needs to win the same race every 15 minutes just to be trustworthy.
+# The pod-creation race itself doesn't go away -- it's a real property of a *freshly
+# created* pod in this namespace, and it's still exercised here, just less often: every
+# container (re)start (a rollout, a node drain, an eviction, a crash) re-runs the warm-up
+# gate against a brand-new pod. See network-policy.yaml and OPERATIONS.md for why this
+# matters beyond this probe: an agent-created Job in this namespace faces the identical
+# window, and it's documented there as a standing caveat of the isolation model, not
+# something this probe alone can close.
+#
+# What this costs: no more discrete `kube_job_failed` per-run signal, since there's no Job
+# object. What it doesn't cost: the individual PASS/FAIL-style verdict lines were always
+# going to Loki via promtail regardless of the Job/Deployment split (confirmed against the
+# live `loki` datasource: `{namespace="sandbox-docker"}` already returned this probe's
+# lines with `pod`/`node_name`/`container` labels) -- that per-target detail is strictly
+# richer than a binary job-failed flag. The `SUMMARY` line each cycle emits below exists so
+# "the probe silently died" and "the probe is cleanly passing" stay distinguishable in
+# Loki (an absent recent SUMMARY line is itself the signal a dead probe would otherwise
+# fake by producing no FAIL lines at all) -- see OPERATIONS.md for the LogQL to query both.
+#
+# AlertManager is deliberately not wired up yet (no triage layer exists for a one-person
+# homelab), so this leans on being queryable in Loki/Grafana rather than paging -- see
+# OPERATIONS.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netpol-falsifiability-probe
+  namespace: sandbox-docker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: netpol-falsifiability-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: netpol-falsifiability-probe
+    spec:
+      # No selector needed to be caught by the sandbox's default-deny/allow policies: they
+      # use podSelector: {}, which matches every pod in the namespace, including this one --
+      # that's what makes this pod a faithful stand-in for the VM's own virt-launcher pod
+      # rather than a special-cased exception to it.
+      automountServiceAccountToken: false
+      containers:
+      - name: probe
+        # Digest-only pin, no floating tag -- matches the busybox reference already in use
+        # (and Renovate-tracked) elsewhere in this repo, e.g. traefik's log-rotate
+        # init-container.
+        image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+        env:
+        - name: NAMESPACE
+          value: "sandbox-docker"
+        - name: NODE_IPS
+          value: "192.168.8.65 192.168.8.67 192.168.8.68 192.168.8.69"
+        - name: IN_CLUSTER_KUBERNETES_SERVICE
+          # The well-known first usable address in the service CIDR (10.43.0.0/16,
+          # inferred from observed ClusterIPs -- there is no in-cluster way to read the
+          # CIDR itself at runtime).
+          value: "10.43.0.1"
+        - name: UNIFI_GATEWAY
+          value: "192.168.8.1"
+        - name: TIMEOUT_SECONDS
+          value: "3"
+        - name: WARMUP_TIMEOUT_SECONDS
+          # Bound on how long this pod waits for its own dispatch rule to be programmed
+          # before refusing to run the suite at all. Chosen generously relative to k3s's
+          # kube-router sync loop (observed on the order of single-digit seconds in this
+          # cluster, though the exact figure wasn't independently re-derived from source
+          # for this change -- treat 30s as "many sync cycles of headroom", not a measured
+          # constant) while still being short enough that a genuinely broken node (CNI
+          # crash-looping, the pod stuck Pending) fails this container out loud within
+          # half a minute instead of hanging silently.
+          value: "30"
+        - name: WARMUP_POLL_INTERVAL_SECONDS
+          value: "2"
+        - name: PROBE_INTERVAL_SECONDS
+          # How long to sleep between suite cycles once warmed up. Tighter than the old
+          # CronJob's 15-minute schedule -- a long-lived pod doesn't pay per-run pod
+          # creation/scheduling cost, so a shorter interval is nearly free -- while still
+          # polite to the prod targets being probed (kube-apiserver, etcd): one denied
+          # connection attempt per target per cycle, not a tight port-scan loop.
+          value: "300"
+        command:
+        - /bin/sh
+        - -c
+        # yamllint disable rule:line-length
+        # yamllint disable-line rule:indentation
+        - |
+          set -u
+
+          # --- Warm-up: establish enforcement before trusting anything below ---
+          # This is the fix for the exact failure mode that fooled the original version of
+          # this probe: it *assumed* the policy was already active for this pod instead of
+          # establishing that it was. Poll a known-deny target until the connection is
+          # actually refused -- that transition is proof this pod's KUBE-POD-FW-* chain and
+          # its KUBE-ROUTER-FORWARD dispatch rule now exist. UNIFI_GATEWAY is used here (not
+          # one of the node-IP targets) because it was hand-verified live during the
+          # original investigation: reachable before the pod is policed, refused
+          # (icmp-port-unreachable) after. If it's never denied within
+          # WARMUP_TIMEOUT_SECONDS, this container exits loudly instead of silently running
+          # the suite against an unpoliced pod -- Kubernetes will restart it and this
+          # warm-up runs again from scratch on the new pod.
+          echo "WARMUP: waiting for this pod's egress chain to be programmed (deny-probing ${UNIFI_GATEWAY}:443)..."
+          warmup_elapsed=0
+          warmup_ok=0
+          while [ "$warmup_elapsed" -lt "$WARMUP_TIMEOUT_SECONDS" ]; do
+            if ! nc -z -w 1 "$UNIFI_GATEWAY" 443 2>/dev/null; then
+              echo "WARMUP-OK: denial observed after ${warmup_elapsed}s -- this pod is now policed, starting probe loop"
+              warmup_ok=1
+              break
+            fi
+            sleep "$WARMUP_POLL_INTERVAL_SECONDS"
+            warmup_elapsed=$((warmup_elapsed + WARMUP_POLL_INTERVAL_SECONDS))
+          done
+
+          if [ "$warmup_ok" -ne 1 ]; then
+            echo "WARMUP-TIMEOUT: ${UNIFI_GATEWAY}:443 was still reachable after ${WARMUP_TIMEOUT_SECONDS}s -- this pod's egress was never policed within the warm-up window. This is NOT evidence the NetworkPolicy is broken: it means enforcement could not be established for THIS pod before the deadline, so nothing below can be trusted yet. See the kube-router per-pod dispatch-rule race documented in network-policy.yaml / OPERATIONS.md. Exiting non-zero so this is loud (pod restart, CrashLoopBackOff) rather than a silent false pass."
+            exit 1
+          fi
+
+          # --- Main probe suite: runs on a loop once warm-up has succeeded ---
+          # Observation-first wording (REACHABLE / BLOCKED) rather than PASS/FAIL: a line
+          # like "FAIL: ... -- connected, expected denial" reads, at a skim, like the
+          # opposite of what happened -- that ambiguity is exactly what slowed down
+          # diagnosing the original false negative. (ok)/(violation) still carries the
+          # verdict, just stated after the observation instead of blended into it.
+          probe_deny() {
+            desc="$1"; host="$2"; port="$3"
+            probes=$((probes + 1))
+            if nc -z -w "$TIMEOUT_SECONDS" "$host" "$port" 2>/dev/null; then
+              echo "REACHABLE (violation): $desc ($host:$port)"
+              violations=$((violations + 1))
+            else
+              echo "BLOCKED (ok): $desc ($host:$port)"
+            fi
+          }
+
+          # Expect the connection to succeed. Exists so this probe can't pass against a
+          # network that's simply broken end-to-end rather than correctly scoped.
+          probe_allow() {
+            desc="$1"; host="$2"; port="$3"
+            probes=$((probes + 1))
+            if nc -z -w "$TIMEOUT_SECONDS" "$host" "$port" 2>/dev/null; then
+              echo "REACHABLE (ok): $desc ($host:$port)"
+            else
+              echo "BLOCKED (violation): $desc ($host:$port)"
+              violations=$((violations + 1))
+            fi
+          }
+
+          cycle=0
+          while true; do
+            cycle=$((cycle + 1))
+            probes=0
+            violations=0
+
+            for node in $NODE_IPS; do
+              probe_deny "prod kube-apiserver" "$node" 6443
+              # Longhorn manager (:9500) used to be probed here too, and always reported
+              # "denied as expected" -- a false PASS. Longhorn's manager Service is
+              # ClusterIP-only (confirmed against the chart: no hostNetwork/hostPort on the
+              # longhorn-manager DaemonSet, no NodePort default), so node-IP:9500 is a dead
+              # port with or without any NetworkPolicy -- a deny-check against a target
+              # nothing is listening on passes forever and proves nothing. Dropped rather
+              # than retargeted: kubelet (:10250, hostNetwork on every node) below already
+              # exercises "does the deny mechanism work against every node IP", so no
+              # replacement target is needed for that coverage.
+              probe_deny "kubelet" "$node" 10250
+              probe_deny "etcd" "$node" 2379
+            done
+
+            probe_deny "UniFi gateway" "$UNIFI_GATEWAY" 443
+            probe_deny "in-cluster kubernetes Service" "$IN_CLUSTER_KUBERNETES_SERVICE" 443
+
+            probe_allow "GitHub API (internet egress)" "api.github.com" 443
+
+            probes=$((probes + 1))
+            if nslookup api.github.com >/dev/null 2>&1; then
+              echo "REACHABLE (ok): DNS resolution via CoreDNS"
+            else
+              echo "BLOCKED (violation): DNS resolution via CoreDNS"
+              violations=$((violations + 1))
+            fi
+
+            if [ "$violations" -eq 0 ]; then
+              echo "SUMMARY namespace=$NAMESPACE cycle=$cycle probes=$probes violations=$violations verdict=CLEAN"
+            else
+              echo "SUMMARY namespace=$NAMESPACE cycle=$cycle probes=$probes violations=$violations verdict=VIOLATIONS-DETECTED"
+            fi
+
+            sleep "$PROBE_INTERVAL_SECONDS"
+          done
+        # yamllint enable rule:line-length
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault

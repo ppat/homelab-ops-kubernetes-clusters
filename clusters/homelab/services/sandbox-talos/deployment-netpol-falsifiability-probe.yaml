@@ -1,0 +1,175 @@
+---
+# See sandbox-docker/deployment-netpol-falsifiability-probe.yaml for the full rationale --
+# same design, same reasoning about why a policy that's never been tested in the failing
+# direction proves nothing, why this runs as a long-lived Deployment rather than a
+# CronJob/Job (the pod-creation race that produced a false "everything reachable" result on
+# this probe's first real run), and why the warm-up gate below still has to establish
+# enforcement for THIS pod before trusting anything, every time this container (re)starts.
+# Queryable via Loki (`{namespace="sandbox-talos"}`); no AlertManager wiring by design (see
+# OPERATIONS.md).
+#
+# One probe here has no sandbox-docker equivalent: reachability of the Docker namespace's
+# SSH Service from this namespace, which is the one that must NEVER pass -- see
+# network-policy.yaml for why. That Service doesn't exist until Phase 4 creates the
+# dockerd VM, so the probe below treats "name doesn't resolve yet" as SKIP rather than
+# a violation: this Deployment has to make sense with no VM ever built (an unresolvable
+# name isn't evidence the policy works, it's evidence there's nothing there yet), and it
+# starts actually asserting the moment Phase 4 creates a Service at DOCKER_SSH_SERVICE
+# below with no change needed here. Update the env var if Phase 4 names it differently.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netpol-falsifiability-probe
+  namespace: sandbox-talos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: netpol-falsifiability-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: netpol-falsifiability-probe
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: probe
+        image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+        env:
+        - name: NAMESPACE
+          value: "sandbox-talos"
+        - name: NODE_IPS
+          value: "192.168.8.65 192.168.8.67 192.168.8.68 192.168.8.69"
+        - name: IN_CLUSTER_KUBERNETES_SERVICE
+          value: "10.43.0.1"
+        - name: UNIFI_GATEWAY
+          value: "192.168.8.1"
+        - name: DOCKER_SSH_SERVICE
+          # Anticipated name/port of the Service Phase 4 fronts dockerd's SSH with, in the
+          # sandbox-docker namespace. Doesn't exist yet -- see the file-level comment above.
+          value: "docker-vm.sandbox-docker.svc.cluster.local"
+        - name: DOCKER_SSH_PORT
+          value: "22"
+        - name: TIMEOUT_SECONDS
+          value: "3"
+        - name: WARMUP_TIMEOUT_SECONDS
+          value: "30"
+        - name: WARMUP_POLL_INTERVAL_SECONDS
+          value: "2"
+        - name: PROBE_INTERVAL_SECONDS
+          value: "300"
+        command:
+        - /bin/sh
+        - -c
+        # yamllint disable rule:line-length
+        # yamllint disable-line rule:indentation
+        - |
+          set -u
+
+          # --- Warm-up: establish enforcement before trusting anything below ---
+          # See sandbox-docker's copy of this Deployment for the full rationale.
+          echo "WARMUP: waiting for this pod's egress chain to be programmed (deny-probing ${UNIFI_GATEWAY}:443)..."
+          warmup_elapsed=0
+          warmup_ok=0
+          while [ "$warmup_elapsed" -lt "$WARMUP_TIMEOUT_SECONDS" ]; do
+            if ! nc -z -w 1 "$UNIFI_GATEWAY" 443 2>/dev/null; then
+              echo "WARMUP-OK: denial observed after ${warmup_elapsed}s -- this pod is now policed, starting probe loop"
+              warmup_ok=1
+              break
+            fi
+            sleep "$WARMUP_POLL_INTERVAL_SECONDS"
+            warmup_elapsed=$((warmup_elapsed + WARMUP_POLL_INTERVAL_SECONDS))
+          done
+
+          if [ "$warmup_ok" -ne 1 ]; then
+            echo "WARMUP-TIMEOUT: ${UNIFI_GATEWAY}:443 was still reachable after ${WARMUP_TIMEOUT_SECONDS}s -- this pod's egress was never policed within the warm-up window. This is NOT evidence the NetworkPolicy is broken: it means enforcement could not be established for THIS pod before the deadline, so nothing below can be trusted yet. See the kube-router per-pod dispatch-rule race documented in network-policy.yaml / OPERATIONS.md. Exiting non-zero so this is loud (pod restart, CrashLoopBackOff) rather than a silent false pass."
+            exit 1
+          fi
+
+          # --- Main probe suite: runs on a loop once warm-up has succeeded ---
+          probe_deny() {
+            desc="$1"; host="$2"; port="$3"
+            probes=$((probes + 1))
+            if nc -z -w "$TIMEOUT_SECONDS" "$host" "$port" 2>/dev/null; then
+              echo "REACHABLE (violation): $desc ($host:$port)"
+              violations=$((violations + 1))
+            else
+              echo "BLOCKED (ok): $desc ($host:$port)"
+            fi
+          }
+
+          probe_allow() {
+            desc="$1"; host="$2"; port="$3"
+            probes=$((probes + 1))
+            if nc -z -w "$TIMEOUT_SECONDS" "$host" "$port" 2>/dev/null; then
+              echo "REACHABLE (ok): $desc ($host:$port)"
+            else
+              echo "BLOCKED (violation): $desc ($host:$port)"
+              violations=$((violations + 1))
+            fi
+          }
+
+          cycle=0
+          while true; do
+            cycle=$((cycle + 1))
+            probes=0
+            violations=0
+
+            for node in $NODE_IPS; do
+              probe_deny "prod kube-apiserver" "$node" 6443
+              # Longhorn manager (:9500) dropped -- see sandbox-docker's copy of this
+              # Deployment for why: its Service is ClusterIP-only, so node-IP:9500 is a
+              # dead port regardless of policy and always reported a false "denied as
+              # expected". kubelet below already covers "does the deny mechanism work
+              # against every node IP".
+              probe_deny "kubelet" "$node" 10250
+              probe_deny "etcd" "$node" 2379
+            done
+
+            probe_deny "UniFi gateway" "$UNIFI_GATEWAY" 443
+            probe_deny "in-cluster kubernetes Service" "$IN_CLUSTER_KUBERNETES_SERVICE" 443
+
+            # Cross-sandbox denial: the load-bearing check for why these are two
+            # namespaces rather than one. See network-policy.yaml.
+            probes=$((probes + 1))
+            if nslookup "$DOCKER_SSH_SERVICE" >/dev/null 2>&1; then
+              if nc -z -w "$TIMEOUT_SECONDS" "$DOCKER_SSH_SERVICE" "$DOCKER_SSH_PORT" 2>/dev/null; then
+                echo "REACHABLE (violation): Docker namespace SSH Service ($DOCKER_SSH_SERVICE:$DOCKER_SSH_PORT)"
+                violations=$((violations + 1))
+              else
+                echo "BLOCKED (ok): Docker namespace SSH Service ($DOCKER_SSH_SERVICE:$DOCKER_SSH_PORT)"
+              fi
+            else
+              echo "SKIP: Docker namespace SSH Service ($DOCKER_SSH_SERVICE:$DOCKER_SSH_PORT) -- not deployed yet"
+            fi
+
+            probe_allow "GitHub API (internet egress)" "api.github.com" 443
+
+            probes=$((probes + 1))
+            if nslookup api.github.com >/dev/null 2>&1; then
+              echo "REACHABLE (ok): DNS resolution via CoreDNS"
+            else
+              echo "BLOCKED (violation): DNS resolution via CoreDNS"
+              violations=$((violations + 1))
+            fi
+
+            if [ "$violations" -eq 0 ]; then
+              echo "SUMMARY namespace=$NAMESPACE cycle=$cycle probes=$probes violations=$violations verdict=CLEAN"
+            else
+              echo "SUMMARY namespace=$NAMESPACE cycle=$cycle probes=$probes violations=$violations verdict=VIOLATIONS-DETECTED"
+            fi
+
+            sleep "$PROBE_INTERVAL_SECONDS"
+          done
+        # yamllint enable rule:line-length
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
