@@ -1,0 +1,145 @@
+---
+# This namespace is not a copy-paste of sandbox-talos/sandbox-docker's NetworkPolicy, even
+# though the shapes rhyme (default-deny both directions, DNS carve-out, Harbor-VIP
+# carve-out) -- see ppat/homelab-ops-kubernetes-experiments#218, which asked for exactly
+# that: "write policy that fits this workload," not inherit theirs. What's different, and
+# why:
+#
+# - No ingress-admitting rule exists here at all, for any source. The sandboxes admit
+#   `coder`/`ai` mcp-server pods because something needs to reach a long-lived VM's API
+#   (Kubernetes on :6443, Talos on :50000, SSH on :22). Nothing in this namespace ever
+#   listens on anything -- it runs suspended CronJobs, triggered with `kubectl create
+#   job --from=cronjob/...`, that build an OCI image and exit. A caller needs `create` on
+#   `Job`s (RBAC, not NetworkPolicy) to trigger a build and reads its result from `kubectl
+#   logs`/Harbor, never by connecting to the pod. default-deny's own `Ingress` policyType
+#   with zero admitting rules is therefore the complete, correct ingress posture -- not a
+#   placeholder waiting for a rule to be added later.
+# - No allow-same-namespace-egress rule either, for the same reason in reverse: the
+#   sandboxes need it so a VM's virt-launcher pod can reach a Service also living in that
+#   namespace. Every pod here is a short-lived, one-shot build -- there is currently only
+#   ever one build pod running at a time (concurrencyPolicy: Forbid on every CronJob in
+#   this namespace) and it has no peer in-namespace to talk to.
+# - Egress scope is narrower in *kind*, not just in what's carved out of the RFC1918
+#   `except`: this namespace's whole reason to exist (ppat/homelab-ops-kubernetes-
+#   experiments#218) is that a build pod needs zero KubeVirt/VM reachability, zero SSH
+#   key, zero host API access -- so unlike the sandboxes there is no "why not admit
+#   `kubevirt` here" discussion to have; nothing in this design ever considered it.
+#
+# CAVEAT, same mechanism as both sandbox copies of this note, repeated because it applies
+# here too and every NetworkPolicy in this repo restates it locally rather than assuming
+# a reader has the other copy open: k3s's bundled kube-router-derived NetworkPolicy
+# controller programs a pod's firewall chain and its KUBE-ROUTER-FORWARD dispatch rule
+# *reactively*, watching the API server for new pods. A pod with no dispatch rule yet
+# falls straight through to `-P FORWARD ACCEPT`, fully unpoliced -- for a short-lived pod
+# (which is the *only* kind of pod this namespace ever runs) that window can span the
+# pod's entire lifetime. This isn't a bug in the policy below; it's a property of how
+# quickly kube-router picks up a brand-new pod. See sandbox-docker/network-policy.yaml
+# (clusters repo) for how this was discovered and OPERATIONS.md for how to verify a given
+# pod is actually policed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: image-builder
+  annotations:
+    homelab-ops.internal/netpol-caveat: >-
+      CAVEAT: a freshly created pod is unpoliced for a short window (k3s's kube-router
+      netpol controller programs firewall rules reactively) -- every pod this namespace
+      ever runs is short-lived, so that window can span a build's entire lifetime. Full
+      explanation and how to verify a given pod is actually policed: sandbox-docker's
+      OPERATIONS.md (clusters repo), "Known limitation: the per-pod NetworkPolicy
+      enforcement window".
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# DNS is the only path out that isn't the allow-list below. CoreDNS lives in kube-system,
+# which carries no NetworkPolicies of its own -- this is the only place the boundary is
+# enforced. podSelector-scoped, not the kube-dns ClusterIP, so this rule doesn't land
+# inside the 10.0.0.0/8 `except` carved out below (same reasoning as both sandbox copies).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: image-builder
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Open internet egress, needed for: the Talos Image Factory (factory.talos.dev, resolving
+# a version and downloading the boot asset), and whatever hosts a build's tool-install step
+# pulls from (github.com releases, mise's own installer/registry). Same `except` list as
+# every other NetworkPolicy in this repo that opens internet egress: closes the prod
+# kube-apiserver, Longhorn's manager API, kubelet, etcd, the UniFi gateway, and the NAS in
+# one object -- RFC1918 plus link-local and loopback. Do not narrow this to a smaller CIDR
+# or drop a block to "simplify" it; see sandbox-docker/network-policy.yaml (clusters repo)
+# for the full reasoning, identical here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-internet
+  namespace: image-builder
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 169.254.0.0/16
+        - 127.0.0.0/8
+---
+# Punch-through for Harbor push, same VIP range and same DNAT-vs-NetworkPolicy mechanics
+# as both sandbox copies of this rule (see sandbox-docker/network-policy.yaml, clusters
+# repo, for the full "why only nas, not homelab" derivation -- not repeated here). Only
+# nas's MetalLB `standard-pool`, 192.168.8.192/28, is reachable -- homelab's own VIP range
+# is not, because a pod's packet to it gets DNAT'd to a Traefik pod IP (10.42.x.x) before
+# NetworkPolicy ever evaluates it, landing it inside allow-egress-internet's own
+# 10.0.0.0/8 `except` above.
+#
+# The one thing worth restating rather than just cross-referencing: for this namespace,
+# reaching nas's ingress VIP also L3-exposes nas's own prod Kubernetes API (routed off the
+# identical VIP, per #828) the same way it does for the sandboxes -- but unlike
+# sandbox-talos, nothing in this namespace ever holds a credential that ingress would
+# accept (no kubeconfig, no token, no ambient identity beyond the Harbor robot credential
+# scoped to push-only on one project). The reachability is the same; what it's worth to an
+# attacker who gets a pod running here is not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-lb-ingress-vips
+  namespace: image-builder
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 192.168.8.192/28
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
