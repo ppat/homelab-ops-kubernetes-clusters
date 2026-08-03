@@ -12,8 +12,11 @@
 # mcp-kubernetes-readonly.yaml on both clusters) before merge.
 #
 # Constrains what is INSIDE the mcp-kubernetes-readonly ClusterRole: no verb
-# outside get/list/watch, no nodes/proxy, no core Secrets, and an allow-list
-# on generators.external-secrets.io. The companion policy
+# outside get/list/watch, no nodes/proxy, no core Secrets, an allow-list on
+# generators.external-secrets.io, no "*" apiGroup, and — for KubeVirt — no
+# resource wildcard on any *.kubevirt.io group, no console/export subresource
+# groups, no kind that can embed a VM spec, and no apps/controllerrevisions
+# (which is one such kind in disguise). The companion policy
 # rbac-clusterrolebinding-roleref.yaml (test-rbac-clusterrolebinding-roleref)
 # constrains which role is actually BOUND to the mcp-kubernetes ServiceAccount
 # — this file says nothing about that. Both must pass for the read-only
@@ -147,3 +150,136 @@ spec:
             denying fakes/webhooks alone does not deny either wrapper. Use
             an explicit resource allow-list instead of "*", and keep
             fakes/webhooks/clustergenerators/generatorstates off it.
+  - name: no-apigroup-wildcard
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: "!object.rules.exists(r, '*' in r.apiGroups)"
+          message: >-
+            A rule uses "*" in apiGroups. Every other rule in this policy
+            excludes things by naming an apiGroup — core Secrets, the
+            generators.external-secrets.io allow-list, the KubeVirt rules
+            below — so a single apiGroups: ["*"] rule silently re-admits all
+            of them at once and makes the rest of this policy decorative. It
+            also re-admits every group nobody has reviewed yet, including
+            ones installed after this file was last read. The role's own
+            group-wide grant already demonstrates the correct shape: a
+            wildcard on RESOURCES within an explicitly enumerated list of
+            apiGroups. Enumerate the apiGroups.
+  - name: kubevirt-must-enumerate-kinds
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: >-
+            !object.rules.exists(r,
+            r.apiGroups.exists(g, g == 'kubevirt.io' || g.endsWith('.kubevirt.io')) &&
+            ('*' in r.resources))
+          message: >-
+            A rule wildcards resources on a KubeVirt apiGroup. KubeVirt
+            spreads across 11 groups that mix benign configuration
+            (KubeVirt CR, instancetypes, migrationpolicies) with kinds that
+            embed a full VM spec — and therefore any inline
+            cloudInitNoCloud.userData — plus, in subresources.kubevirt.io, a
+            guest console. Its API surface also grows across minors: v1.9.0
+            added backup.kubevirt.io, template.kubevirt.io,
+            plugin.kubevirt.io and a second aggregated subresource group, so
+            a "*" written today grants kinds nobody has read the schema of.
+            The endsWith() match is deliberate: it covers KubeVirt groups
+            that do not exist yet. Enumerate the resources by kind.
+  - name: kubevirt-excluded-groups
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: >-
+            !object.rules.exists(r,
+            r.apiGroups.exists(g, g in ['subresources.kubevirt.io',
+            'subresources.template.kubevirt.io', 'export.kubevirt.io',
+            'cdi.kubevirt.io']))
+          message: >-
+            A rule names a KubeVirt apiGroup that must never appear in a
+            read-only role. subresources.kubevirt.io serves
+            virtualmachineinstances/console, /vnc and /portforward, and
+            KubeVirt derives the RBAC verb from the HTTP method — those
+            routes are GET, so "get" there is an interactive session inside
+            the guest, exactly like the nodes/proxy case above. The same
+            group also serves virtualmachines/expand-spec at verb "get",
+            which returns the fully expanded VM object and would hand back
+            the inline cloud-init that excluding virtualmachines exists to
+            withhold. subresources.template.kubevirt.io is a second
+            aggregated subresource group (new in v1.9.0).
+            export.kubevirt.io is the VM disk-image export control plane.
+            cdi.kubevirt.io is not installed. Remove the group.
+  - name: kubevirt-excluded-kinds
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: >-
+            !object.rules.exists(r,
+            r.apiGroups.exists(g, g == 'kubevirt.io' || g.endsWith('.kubevirt.io')) &&
+            r.resources.exists(res, res in ['virtualmachines',
+            'virtualmachineinstances', 'virtualmachineinstancereplicasets',
+            'virtualmachinesnapshotcontents', 'virtualmachinetemplates',
+            'virtualmachinepools', 'virtualmachineclones',
+            'virtualmachinerestores', 'virtualmachineexports']))
+          message: >-
+            A rule grants a KubeVirt kind that can carry inline plaintext
+            cloud-init. VirtualMachine holds
+            spec.template.spec.volumes[].cloudInitNoCloud.userData directly;
+            the rest are wrappers for it, and RBAC allows and denies by
+            kind, never by content. VirtualMachineInstance is the rendered
+            copy of the VM template, userData included, so granting it
+            instead of VirtualMachine is not a mitigation.
+            VirtualMachineInstanceReplicaSet and VirtualMachinePool hold VM
+            templates; VirtualMachineSnapshotContent embeds a whole
+            VirtualMachine; VirtualMachineTemplate.spec.virtualMachine is
+            x-kubernetes-preserve-unknown-fields and stores one verbatim;
+            VirtualMachineClone and VirtualMachineRestore carry free-form
+            JSON patches that can set any field on the target.
+            VirtualMachineExport is the disk-export control plane. Grant the
+            KubeVirt CR, instancetypes/preferences, migrationpolicies,
+            virtualmachineinstancemigrations and
+            virtualmachineinstancepresets instead — none of those can
+            reference a volume at all.
+  - name: no-controllerrevisions
+    match:
+      any:
+      - resources:
+          kinds:
+          - ClusterRole
+    validate:
+      cel:
+        expressions:
+        - expression: "!object.rules.exists(r, ('apps' in r.apiGroups) && ('controllerrevisions' in r.resources))"
+          message: >-
+            A rule grants apps/controllerrevisions. That is a wrapper kind
+            for a workload spec, and on a cluster running KubeVirt it is a
+            complete bypass of the kubevirt-excluded-kinds rule above:
+            virt-controller writes a ControllerRevision whose .data is the
+            entire vm.spec every time a VirtualMachine starts, so a VM using
+            inline cloudInitNoCloud.userData puts that plaintext in apiGroup
+            "apps" with no kubevirt.io grant involved. Verified by reading
+            one on the homelab cluster through the mcp-kubernetes-readonly
+            identity itself. Excluding the KubeVirt kinds while granting
+            this achieves nothing. Remove controllerrevisions from
+            resources; nothing but StatefulSet/DaemonSet rollout history
+            reads them.

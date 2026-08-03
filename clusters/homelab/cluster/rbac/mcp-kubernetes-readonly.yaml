@@ -48,7 +48,20 @@ rules:
 - apiGroups:
   - apps
   resources:
-  - controllerrevisions
+  # controllerrevisions deliberately absent, and this is the least obvious
+  # exclusion in this file: it is a wrapper kind for a workload spec, and
+  # KubeVirt uses it as one. Every time a VirtualMachine starts, virt-controller
+  # writes a ControllerRevision in the VM's namespace whose .data holds the
+  # entire vm.spec — verified by reading one on this cluster through this very
+  # identity, which returned the full talos-vm spec: disks, container image,
+  # node affinity, and the cloud-init volume. Today that volume is a secretRef
+  # so nothing sensitive comes back, but a VM using the inline
+  # cloudInitNoCloud.userData form would have its plaintext land here verbatim,
+  # in apiGroup "apps", with no kubevirt.io grant involved at all. Excluding
+  # virtualmachines/virtualmachineinstances below while granting this would be
+  # a paper exclusion. Trade-off: no read on StatefulSet/DaemonSet rollout
+  # history (the `kubectl rollout history` backing objects); no MCP tool
+  # depends on it.
   - daemonsets
   - daemonsets/status
   - deployments
@@ -355,6 +368,162 @@ rules:
   - get
   - list
   - watch
+# KubeVirt (infra-virtualization-core). Enumerated kind by kind, and NOT added
+# to the group-wide "*" rule above, for two independent reasons: KubeVirt
+# spreads across 11 API groups that mix benign config with VM specs, guest
+# consoles and disk-export control planes; and its API surface demonstrably
+# grows across minors — v1.9.0 added backup.kubevirt.io, template.kubevirt.io
+# and plugin.kubevirt.io, plus a second aggregated subresource group,
+# subresources.template.kubevirt.io, none of which existed when this role was
+# first written. A group-level grant would silently absorb the next such
+# addition. Re-audit this block on every KubeVirt minor bump.
+#
+# The field that decides everything below is
+# VirtualMachine.spec.template.spec.volumes[].cloudInitNoCloud.userData (and
+# .userDataBase64, and the cloudInitConfigDrive equivalents of both): inline
+# plaintext cloud-init. This cluster's sandbox Talos VM would carry the
+# cluster's CA *private key* there, so both VM manifests deliberately use
+# `secretRef` instead and say so inline. That is a convention, enforced by
+# nobody — so no kind that can carry the inline form is granted here,
+# regardless of what today's VMs happen to do.
+- apiGroups:
+  - kubevirt.io
+  resources:
+  # The KubeVirt CR: operator configuration only (vmRolloutStrategy,
+  # evictionStrategy, useEmulation, nodePlacement, monitorNamespace) plus
+  # component version/health in status. No workload spec, no volumes, no
+  # secret references. This is the kind that answers the questions that
+  # motivated granting anything at all — "what is vmRolloutStrategy set to",
+  # "is virt-handler healthy", "which nodes may run VMs".
+  - kubevirts
+  # Names a VMI to migrate plus an optional node selector; carries no VMI
+  # spec of its own. Migration is disabled on this cluster
+  # (evictionStrategy: None), so this is granted for diagnosis, not use.
+  - virtualmachineinstancemigrations
+  # spec.domain is a DomainSpec, which has no volumes field at all — the API
+  # server rejects spec.domain.volumes as an unknown field, so a preset
+  # structurally cannot carry cloud-init. Deprecated upstream (removed in
+  # KubeVirt v2) and unused here; granted only so that the exclusions below
+  # are visibly about cloud-init rather than about KubeVirt in general.
+  - virtualmachineinstancepresets
+  #
+  # DELIBERATELY EXCLUDED from this rule:
+  # - virtualmachines: holds the inline cloudInitNoCloud.userData described
+  #   above. Cost of the exclusion: agents cannot read VM configuration
+  #   (disks, interfaces, instancetype, runStrategy) or VM status/conditions,
+  #   and must read the module source in git instead. What they retain: the
+  #   virt-launcher Pod per running VMI (pods, pods/status, pods/log are
+  #   granted above) shows whether a VM is running and on which node, and
+  #   Events on the VirtualMachine object are readable via the core events
+  #   grant.
+  # - virtualmachineinstances: RBAC allows and denies by kind, never by
+  #   content, and the VMI is the wrapper kind here. virt-controller renders
+  #   the VM's template into VirtualMachineInstance.spec.volumes verbatim,
+  #   inline userData included — verified by creating a VM with inline
+  #   userData and reading the resulting VMI. So "grant the controller-written
+  #   VMI but not the human-written VM" is not a mitigation; it is the same
+  #   plaintext in a different envelope, exactly like ClusterGenerator vs Fake
+  #   above. Note also that a */status subresource grant is no help either: a
+  #   GET on <kind>/status returns the whole object, spec included.
+  # - virtualmachineinstancereplicasets: spec.template is a VMI template, so
+  #   same inline field. Unused on this cluster.
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - instancetype.kubevirt.io
+  resources:
+  # CPU/memory/device/scheduling preferences only. Verified structurally
+  # incapable of carrying cloud-init: the API server rejects spec.volumes on
+  # an instancetype as an unknown field, and a preference's spec.volumes is a
+  # single string, preferredStorageClassName. The one field worth naming is
+  # spec.launchSecurity.sev.{dhCert,session} on an instancetype — AMD SEV
+  # guest-owner launch material. It is accepted as readable because it is
+  # designed to transit the untrusted host (the session blob's transport keys
+  # are encrypted to the platform's PDH, so reading it does not defeat SEV),
+  # and because no SEV-capable hardware exists on this cluster. If confidential
+  # computing is ever actually used here, revisit this line first.
+  - virtualmachineclusterinstancetypes
+  - virtualmachineclusterpreferences
+  - virtualmachineinstancetypes
+  - virtualmachinepreferences
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - migrations.kubevirt.io
+  resources:
+  # Migration tuning (bandwidth, timeouts, auto-converge) plus a label
+  # selector. No workload spec.
+  - migrationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+#
+# KubeVirt API groups deliberately granted NOTHING, each for its own reason.
+# ci/policy-tests/rbac-clusterrole-readonly.yaml fails the build if any of the
+# first three reappears, or if any *.kubevirt.io rule uses a "*" resource:
+#
+# - subresources.kubevirt.io: the one that does not advertise itself in its
+#   name. It serves virtualmachineinstances/console, /vnc, /vnc/screenshot,
+#   /portforward and /usbredir, and KubeVirt's own shipped kubevirt.io:admin
+#   ClusterRole grants every one of them with verb "get" — so "get" here is an
+#   interactive session inside the guest, the direct analogue of pods/exec and
+#   of the nodes/proxy exclusion at the top of this file. It also serves
+#   virtualmachines/expand-spec (verb "get"), which renders the full VM spec
+#   with instancetype applied and would hand back the inline cloud-init the
+#   virtualmachines exclusion above exists to withhold. The guest-agent
+#   introspection subresources in the same group (/guestosinfo, /userlist,
+#   /filesystemlist) are individually grantable and individually harmless-ish,
+#   but no guest agent runs on these VMs, so naming this group here at all
+#   would buy nothing and leave a line one careless edit away from "*".
+# - subresources.template.kubevirt.io: a second aggregated subresource group,
+#   new in v1.9.0 and served by virt-template-apiserver. Its two resources,
+#   virtualmachinetemplates/create and /process, are verb "create" only, so
+#   the read-only verb rule would already reject them — but the group is
+#   named here so a future reader does not have to rediscover that it exists.
+# - export.kubevirt.io: VirtualMachineExport is a disk-image exfiltration
+#   control plane. Measured, and contrary to the assumption this decision
+#   started from: spec.tokenSecretRef and status.tokenSecretRef are Secret
+#   *names*, not tokens, and status.links.*.volumes[].formats[].url is
+#   useless without the token, which lives in a Secret this role cannot read.
+#   So a read alone does not exfiltrate a disk. It is still excluded: it
+#   enumerates every export in flight and its download endpoints, nothing on
+#   this cluster creates exports, so the exclusion costs nothing, and "the
+#   token happens to be a reference in this version" is an upstream
+#   implementation detail, not a boundary.
+# - snapshot.kubevirt.io: VirtualMachineSnapshotContent.spec.source.virtualMachine
+#   embeds a whole VirtualMachine, cloudInitNoCloud.userData and
+#   cloudInitConfigDrive.userData included — the wrapper-kind problem again.
+#   VirtualMachineSnapshot and VirtualMachineRestore are references rather
+#   than embeddings, but VirtualMachineRestore.spec.patches is a free-form
+#   list of JSON patches that can set any field on the target, including
+#   userData. Nothing here takes snapshots (no CSI snapshot class), so the
+#   whole group goes.
+# - template.kubevirt.io: VirtualMachineTemplate.spec.virtualMachine is
+#   declared x-kubernetes-preserve-unknown-fields and stores an entire
+#   VirtualMachine object verbatim — confirmed by storing one with an inline
+#   userData marker and reading it straight back. New in v1.9.0 and unused.
+# - pool.kubevirt.io: VirtualMachinePool.spec.virtualMachineTemplate is a VM
+#   template, so the same inline field. Unused.
+# - clone.kubevirt.io: VirtualMachineClone.spec.patches is a free-form JSON
+#   patch list applied to the cloned VM, i.e. arbitrary inline spec content,
+#   the same argument that excludes generators.external-secrets.io/webhooks
+#   above. Unused.
+# - backup.kubevirt.io: VirtualMachineBackup/VirtualMachineBackupTracker are
+#   object references plus a tokenSecretRef by name, with no embedded VM spec
+#   — the least objectionable of the excluded groups. Excluded anyway because
+#   it is new in v1.9.0, unused here, and the status surface of a backup
+#   control plane has had no scrutiny; grant it when something starts using
+#   it, not before.
+# - plugin.kubevirt.io: new in v1.9.0, unused. Plugin.spec carries CEL
+#   conditions and libvirt domain-XML hooks; no credential-bearing field was
+#   found, but an unused kind is not worth a grant.
+# - cdi.kubevirt.io: CDI is not installed on this cluster — no DataVolume or
+#   CDI CRD exists — so this would be a grant for kinds that do not exist.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

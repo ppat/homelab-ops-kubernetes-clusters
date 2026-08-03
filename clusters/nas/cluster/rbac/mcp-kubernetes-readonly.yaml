@@ -1,12 +1,22 @@
 ---
 # This ClusterRole MUST remain a strict subset of
 # clusters/homelab/cluster/rbac/mcp-kubernetes-readonly.yaml: every rule here
-# is intended to be identical to homelab's, and the ONLY permitted divergence
-# is the declared exclusion set on the group-wide "*" rule below —
-# longhorn.io, tailscale.com, deviceplugin.intel.com, fpga.intel.com — dropped
-# because nas structurally does not run the operators that own them (see the
-# comment on that rule for why each one is excluded). Anything granted on
-# this file that is NOT granted on the homelab file is a bug. This property
+# is intended to be identical to homelab's, and the ONLY permitted divergences
+# are two, both of the same shape — nas structurally does not run the operator
+# that owns the API group, so the group is not granted here, to avoid this
+# identity silently gaining read the moment someone installs that operator:
+#   1. the declared exclusion set on the group-wide "*" rule below —
+#      longhorn.io, tailscale.com, deviceplugin.intel.com, fpga.intel.com (see
+#      the comment on that rule for why each one is excluded);
+#   2. the three KubeVirt rules homelab carries at the end of its file
+#      (kubevirt.io, instancetype.kubevirt.io, migrations.kubevirt.io) are
+#      absent here entirely. infra-virtualization-core is a homelab-only
+#      module and nas has no *.kubevirt.io CRD at all, so there is nothing to
+#      read. If KubeVirt is ever deployed to nas, copy homelab's three rules
+#      and its whole exclusion commentary across verbatim rather than
+#      re-deriving which kinds are safe.
+# Anything granted on this file that is NOT granted on the homelab file is a
+# bug — the subset direction is what matters, an absent rule never is. This property
 # isn't testable (Kyverno can't express a cross-file subset check), so diff
 # the two files directly when reviewing a change to either. Replaces a
 # binding to the stock "view" ClusterRole: "view" excludes all cluster-scoped
@@ -64,7 +74,14 @@ rules:
 - apiGroups:
   - apps
   resources:
-  - controllerrevisions
+  # controllerrevisions deliberately absent, mirroring homelab's copy. The
+  # reason there is KubeVirt-specific (virt-controller stores a whole vm.spec,
+  # cloud-init included, in a ControllerRevision on every VM start) and nas
+  # runs no KubeVirt — but this file's contract is to be rule-for-rule
+  # identical to homelab's apart from the two declared divergences in the
+  # header, and "nas happens to be safe today" is not one of them. See
+  # homelab's copy of this comment for the full reasoning. Trade-off: no read
+  # on StatefulSet/DaemonSet rollout history; no MCP tool depends on it.
   - daemonsets
   - daemonsets/status
   - deployments
