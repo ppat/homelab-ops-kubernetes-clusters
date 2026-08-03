@@ -31,6 +31,16 @@ configMapGenerator:
     labels:
       grafana_dashboard: "1"
     disableNameSuffixHash: true
+- name: dashboard-sandbox-vm-egress
+  namespace: monitoring
+  files:
+  - dashboards/sandbox-vm-egress.json
+  options:
+    annotations:
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    labels:
+      grafana_dashboard: "1"
+    disableNameSuffixHash: true
 - name: snmp-exporter-extra-config
   namespace: monitoring
   files:
