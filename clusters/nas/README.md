@@ -17,7 +17,7 @@ links below into the [apps repo](https://github.com/ppat/homelab-ops-kubernetes-
 | [storage-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/storage-core/README.md) | `infra-storage-csi-driver-nfs`, `infra-storage-minio` | NFS CSI driver, MinIO — deployed as two separate `Kustomization`s pointing at submodule paths (`storage-core/csi-driver-nfs`, `storage-core/minio`) instead of one, since this cluster has no Longhorn |
 | [networking-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/networking-core/README.md) | `infra-networking-core` | MetalLB, external-dns, Traefik (patched to run as a 2-replica `Deployment` instead of a `DaemonSet` for redundancy) |
 | [kubernetes-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/kubernetes-core/README.md) | `infra-kubernetes-core` | CoreDNS, Node Feature Discovery, Vertical Pod Autoscaler |
-| [database-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/database-core/README.md) | `infra-database-core` | CloudNativePG |
+| [database-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/database-core/README.md) | `infra-database-core` | CloudNativePG, Dragonfly operator (Redis-compatible cache instances) |
 | [clusterops-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/clusterops-core/README.md) | `infra-clusterops-core` | Flux CD, system-upgrade-controller, Reloader |
 
 This cluster runs no `*-extra` infrastructure modules and no `observability-core`.
@@ -31,10 +31,11 @@ This cluster runs no `*-extra` infrastructure modules and no `observability-core
 
 ## Cluster-specific resources
 
-Unlike `homelab`, this cluster has no `services/` directory. Instead it has a
-dedicated `outpost/` directory — content authored directly in this repo rather
-than pulled from the apps repo (its `Kustomization`, `infra-security-outpost`,
-sources from `root`, not a module `GitRepository`):
+Unlike `homelab`, this cluster has no `services/` directory — there's no
+`config-services` umbrella Kustomization here either. Instead, content
+authored directly in this repo (rather than pulled from the apps repo as a
+versioned module) lives as its own top-level directory, each with its own
+dedicated `Kustomization` sourced from `root`, not a module `GitRepository`:
 
 | Directory | Purpose |
 | --- | --- |
@@ -75,6 +76,7 @@ flowchart TB
     out[Authentik outpost]:::outpost
     dio[docker.io mirror ingress]:::mirror
 
+    k8s --> sec
     net --> sec & nfs
     minio --> nfs
     db --> net & nfs
@@ -85,4 +87,8 @@ flowchart TB
 ```
 
 `ops` (clusterops-core) has no module dependencies — it bootstraps Flux itself.
-Exact per-module `dependsOn` lists are in each `kustomizations/*.yaml`.
+`out` (Authentik outpost) and `dio` (docker.io mirror ingress) aren't apps-repo
+modules — they're the top-level, repo-authored Kustomizations described in
+[Cluster-specific resources](#cluster-specific-resources) above, included here
+because they carry real `dependsOn` edges of their own. Exact per-module
+`dependsOn` lists are in each `kustomizations/*.yaml`.

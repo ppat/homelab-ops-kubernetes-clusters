@@ -22,7 +22,7 @@ configures, modules that live in the sibling apps repo (see below).
 - `clusters/<name>/cluster/` — cluster-wide, not module-specific: k8s version upgrades, RBAC bindings, Bitwarden-backed cluster secrets
 - `clusters/<name>/storage/` — `PersistentVolume`/`PersistentVolumeClaim`/`StorageClass` split `infra/`/`apps/`, pre-provisioned ahead of the module that claims them
 - `clusters/<name>/services/` — cluster-specific extras that aren't modules: either config/secrets a module looks up by name, or standalone CRs with no module awareness. See [DESIGN.md#the-services-directory](./DESIGN.md#the-services-directory)
-- `clusters/nas/outpost/` — nas-specific: an Authentik remote outpost, authored directly in this repo (not sourced from the apps repo)
+- `clusters/nas/{outpost,harbor-dockerio-mirror}/` — nas-specific top-level directories authored directly in this repo (not sourced from the apps repo); nas has no `services/` directory of its own
 - `policies/` — shared, cluster-agnostic Kyverno `ClusterPolicy`/`ClusterCleanupPolicy` definitions, applied to both clusters
 - `ci/validation/` — base kustomization + `.env` of dummy post-build substitution variables used by kubeconform validation
 
@@ -56,8 +56,10 @@ Individual checks can be run standalone: `yamllint --strict <path>`,
 Kubernetes manifest validation (kubeconform via the `validate-kubernetes-manifests`
 pre-commit hook) uses `ci/validation/kustomization.yaml` as the base
 kustomization and `ci/validation/.env` for dummy post-build substitution
-values, restricted to `clusters/*` and `policies/*` (excludes `components/*`
-and `.archive/*`).
+values, restricted to `clusters/*` (excludes `components/*` and `.archive/*`).
+This is narrower than CI's `lint.yaml` `kubernetes-manifests` job, which also
+covers `policies/*` — a `policies/` edit only gets kubeconform coverage in CI,
+not locally.
 
 ### CI enforcement
 
