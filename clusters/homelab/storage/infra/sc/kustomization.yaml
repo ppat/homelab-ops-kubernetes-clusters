@@ -4,6 +4,7 @@ kind: Kustomization
 
 resources:
 - sc-longhorn-local-non-replicated.yaml
+- sc-longhorn-local-non-replicated-ephemeral.yaml
 - sc-longhorn-replicated.yaml
 - sc-longhorn-rwx.yaml
 - sc-nfs-share.yaml

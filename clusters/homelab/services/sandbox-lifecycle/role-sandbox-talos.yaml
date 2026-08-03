@@ -1,0 +1,112 @@
+---
+# Grants vm-rebuilder (sandbox-lifecycle namespace -- see serviceaccount.yaml and the
+# RoleBinding below) what its weekly destroy-and-rebuild cycle for talos-vm needs, in
+# sandbox-talos. The first four rules mirror role-sandbox-docker.yaml's reasoning exactly
+# (named VM/PVC delete via the VM's ownerRef cascade, pods:list for the generated
+# virt-launcher pod name, pods/log:get for the guest console) -- see that file's comments
+# for the full "why", not repeated here.
+#
+# The two rules below it are what talos-vm needs beyond docker-vm, and the second one is
+# the grant most worth scrutinizing in this whole module: talos-vm's rebuild is not
+# complete once qemu is running -- etcd has to be bootstrapped and the agent-admin
+# credential re-minted inside the sandbox cluster's own etcd, and neither can be done from
+# this namespace (sandbox-talos's own NetworkPolicy admits the Talos/sandbox-API ports
+# only from `coder` and `ai` mcp-server pods, never from sandbox-lifecycle -- and it must
+# not, for the same reason this SA doesn't hold a talosconfig or a sandbox kubeconfig
+# anywhere). So the rebuild delegates both steps by *triggering* the CronJobs that already
+# hold the right credentials (bootstrap-talos-vm, provision-agent-admin -- see
+# homelab-ops-kubernetes-experiments, experiments/apps/sandbox-talos/) and waiting on their
+# exit codes, never reading a Secret itself.
+#
+# `create` on `jobs` cannot be `resourceNames`-scoped -- a Job carries an arbitrary pod
+# template, so this grant is transitively equivalent to running any pod in sandbox-talos,
+# including one that mounts talos-vm-talosconfig (a year-long, effectively unrevocable
+# os:admin client cert). Three things bound accepting that rather than the zero-grant
+# observe-only alternative (poll `kube_job_complete` on a job that started after the
+# recorded destroy timestamp, letting bootstrap-talos-vm/provision-agent-admin run on a
+# much tighter schedule instead of being triggered):
+#   1. It grants nothing AI agents don't already hold in sandbox-talos -- that namespace is
+#      defined as the one agents get full write access to (see its own network-policy.yaml
+#      "CAVEAT" annotation), so this creates no new capability *class*, only one more
+#      principal equal to an existing one.
+#   2. vm-rebuilder lives in sandbox-lifecycle, which agents cannot write to -- a
+#      compromised agent does not acquire this SA or its token.
+#   3. Full compromise of vm-rebuilder yields: delete two named VMs/PVCs across two
+#      namespaces, read pod logs in those two namespaces, and run pods in sandbox-talos
+#      specifically. It cannot read a Secret, cannot reach any other namespace, and cannot
+#      touch this host cluster's control plane.
+# The zero-grant variant costs roughly hourly bootstrap/provision cadence instead of
+# triggered-on-demand (~2.4 GB/day of repeated talosctl/kubectl downloads, 24 token mints
+# a day, and a rebuild cycle taking ~65 minutes instead of ~25) to avoid a grant that is
+# already equal to what the namespace's normal occupants hold. If that trade is judged
+# wrong on review, the fix is deleting `create` below and switching
+# rebuild-talos-vm-cronjob.yaml's steps 4-5 to the poll-based variant -- both are correct,
+# only the standing cost differs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vm-rebuilder
+  namespace: sandbox-talos
+rules:
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - virtualmachines
+  resourceNames:
+  - talos-vm
+  verbs:
+  - get
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  resourceNames:
+  - talos-vm-storage
+  verbs:
+  - get
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  resourceNames:
+  - bootstrap-talos-vm
+  - provision-agent-admin
+  verbs:
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - get
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vm-rebuilder
+  namespace: sandbox-talos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vm-rebuilder
+subjects:
+- kind: ServiceAccount
+  name: vm-rebuilder
+  namespace: sandbox-lifecycle

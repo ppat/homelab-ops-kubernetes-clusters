@@ -1,0 +1,34 @@
+---
+# Identical to sc-longhorn-local-non-replicated except reclaimPolicy: Delete. That one field
+# is the whole reason this class exists: sc-longhorn-local-non-replicated is Retain, so
+# deleting a PVC on it leaves the PV Released and the underlying Longhorn volume intact --
+# the next PVC on the same name provisions a *brand new* volume, and the old one just sits
+# there. For a PVC that's supposed to be genuinely disposable (the sandbox VMs' weekly
+# destroy-and-rebuild -- see homelab-ops-kubernetes-experiments,
+# experiments/apps/sandbox-lifecycle/), that leaks storage forever, silently, in a fixed
+# amount per cycle. Retain was always the wrong policy for a PVC whose own manifest
+# documents itself as deliberately disposable; this class makes that policy match the
+# intent instead of relying on every consuming PVC to route around it.
+#
+# storageClassName is immutable on an existing PVC, so switching an already-bound PVC from
+# sc-longhorn-local-non-replicated to this class means: ship this StorageClass, change the
+# PVC's storageClassName in git, then let the PVC actually be deleted and recreated (a
+# real destroy, not a patch) before the new class takes effect -- editing the field alone
+# does not migrate live data. See that module's README for the exact sequencing this
+# requires before any automated destroy is allowed to run against a PVC still on the old
+# class.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-longhorn-local-non-replicated-ephemeral
+allowVolumeExpansion: true
+parameters:
+  fsType: ext4
+  staleReplicaTimeout: "2880"
+  # as per https://longhorn.io/docs/1.7.1/best-practices/#io-performance
+  dataLocality: "strict-local"
+  numberOfReplicas: "1"
+  recurringJobSelector: '[{"name":"default", "isGroup":true}]'
+provisioner: driver.longhorn.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer

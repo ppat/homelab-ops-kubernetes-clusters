@@ -1,0 +1,19 @@
+---
+# Holds the vm-rebuilder ServiceAccount that the weekly sandbox destroy-and-rebuild
+# CronJobs (homelab-ops-kubernetes-experiments, experiments/apps/sandbox-lifecycle/) run
+# as. Deliberately its own namespace, not sandbox-docker or sandbox-talos: those two run
+# default-deny egress with the host cluster's own API server inside the `except` list (see
+# their network-policy.yaml), so a pod there physically cannot delete anything on this
+# cluster -- and must not be able to, since both are namespaces AI agents can create pods
+# in. A host-API-capable ServiceAccount can only safely live somewhere agents cannot write
+# to. See network-policy.yaml in this directory for the egress this namespace is granted
+# instead.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox-lifecycle
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge
+  labels:
+    goldilocks.fairwinds.com/enabled: "true"

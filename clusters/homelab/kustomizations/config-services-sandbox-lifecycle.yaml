@@ -1,0 +1,33 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-sandbox-lifecycle
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  # The Roles this module ships live in sandbox-docker/sandbox-talos (see
+  # role-sandbox-docker.yaml, role-sandbox-talos.yaml -- a Role is only valid once its
+  # namespace exists), so those two namespaces' own Kustomizations are hard prerequisites,
+  # not just something that happens to converge first.
+  - name: config-services-sandbox-docker
+    namespace: flux-system
+  - name: config-services-sandbox-talos
+    namespace: flux-system
+  # Short interval, split out of config-services.yaml's 15m0s on purpose, same reasoning as
+  # sandbox-docker/sandbox-talos's own Kustomizations: this module IS an isolation/RBAC
+  # boundary (the ServiceAccount and Roles that let the weekly rebuild CronJobs reach this
+  # host cluster's API), so drift correction needs to converge fast.
+  interval: 1m0s
+  path: ./clusters/homelab/services/sandbox-lifecycle
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true

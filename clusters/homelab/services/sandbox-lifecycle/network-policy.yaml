@@ -1,0 +1,87 @@
+---
+# Default-deny both directions. Nothing needs to reach a pod in this namespace (no ingress
+# rule exists below at all), and everything a rebuild pod needs outbound is enumerated by
+# name below -- CoreDNS and this host cluster's own API server, nothing else. Unlike
+# sandbox-docker/sandbox-talos, this namespace does NOT get a broad internet-egress allow:
+# the CronJobs here run the official registry.k8s.io/kubectl image (see this module's own
+# README and homelab-ops-kubernetes-experiments' sandbox-lifecycle module), so they need no
+# internet access at all -- image *pulls* are performed by the kubelet and are unaffected
+# by NetworkPolicy, so this stays tight without breaking anything.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: sandbox-lifecycle
+  # Kubernetes strips YAML comments before persisting to etcd -- this annotation is the
+  # discoverable-on-the-live-object half of the CAVEAT below; see
+  # sandbox-talos/network-policy.yaml for the original wording and the full mechanism this
+  # is a shortened copy of. `homelab-ops.internal/*` is this platform's established
+  # self-defined-key prefix.
+  annotations:
+    homelab-ops.internal/netpol-caveat: >-
+      CAVEAT: k3s's kube-router netpol controller programs a pod's firewall rules
+      reactively, after the pod exists, so a very short-lived pod can complete before
+      enforcement is programmed. It matters less here than in sandbox-docker/sandbox-talos
+      -- this namespace's pods are *supposed* to reach the host API server, and hold no
+      credential an unenforced window would expose that RBAC doesn't already grant --
+      but the property is real and is recorded here for the same reason it is there. Full
+      explanation: sandbox-talos/network-policy.yaml and OPERATIONS.md, "Known limitation:
+      the per-pod NetworkPolicy enforcement window".
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Same shape and reasoning as sandbox-docker/sandbox-talos's own copy: CoreDNS has no
+# NetworkPolicies of its own, so this podSelector-based rule is the only place DNS egress
+# is enforced here, and it has to be podSelector-based (not the kube-dns ClusterIP) to
+# avoid landing inside the RFC1918 range that other sandbox namespaces except -- not
+# relevant to the rule below since this namespace's egress is enumerated by allow-list
+# rather than a broad allow-with-except, but kept identical in shape for consistency.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sandbox-lifecycle
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# The one thing this whole namespace exists to be able to reach: the host cluster's own
+# in-cluster API server ClusterIP, which sandbox-docker/sandbox-talos deliberately cannot
+# reach (it sits inside their egress `except` list -- see this repo's network-policy.yaml
+# files there, and the live falsifiability probe that asserts it stays BLOCKED on every
+# cycle). /32, not a broader range: 10.43.0.1 is this cluster's fixed kube-apiserver
+# ClusterIP (the default Service CIDR's first address), and nothing else in that range is
+# ever a legitimate destination for these CronJobs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kube-apiserver
+  namespace: sandbox-lifecycle
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.43.0.1/32
+    ports:
+    - protocol: TCP
+      port: 443
