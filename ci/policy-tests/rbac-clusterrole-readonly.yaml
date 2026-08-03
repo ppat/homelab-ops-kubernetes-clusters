@@ -209,7 +209,9 @@ spec:
             !object.rules.exists(r,
             r.apiGroups.exists(g, g in ['subresources.kubevirt.io',
             'subresources.template.kubevirt.io', 'export.kubevirt.io',
-            'cdi.kubevirt.io']))
+            'cdi.kubevirt.io', 'snapshot.kubevirt.io', 'template.kubevirt.io',
+            'pool.kubevirt.io', 'clone.kubevirt.io', 'backup.kubevirt.io',
+            'plugin.kubevirt.io']))
           message: >-
             A rule names a KubeVirt apiGroup that must never appear in a
             read-only role. subresources.kubevirt.io serves
@@ -223,7 +225,16 @@ spec:
             withhold. subresources.template.kubevirt.io is a second
             aggregated subresource group (new in v1.9.0).
             export.kubevirt.io is the VM disk-image export control plane.
-            cdi.kubevirt.io is not installed. Remove the group.
+            cdi.kubevirt.io is not installed. snapshot.kubevirt.io,
+            template.kubevirt.io, pool.kubevirt.io and clone.kubevirt.io each
+            embed a whole VirtualMachine or a free-form JSON patch that can
+            set any field on one, same as the kinds kubevirt-excluded-kinds
+            rejects above — see the role file's own "KubeVirt API groups
+            deliberately granted NOTHING" comment for the per-group
+            reasoning, including why virtualmachinetemplaterequests
+            (installed on homelab today) is excluded by group rather than by
+            kind. backup.kubevirt.io and plugin.kubevirt.io carry no VM spec
+            but are excluded as unused and unaudited. Remove the group.
   - name: kubevirt-excluded-kinds
     match:
       any:
@@ -236,14 +247,17 @@ spec:
         - expression: >-
             !object.rules.exists(r,
             r.apiGroups.exists(g, g == 'kubevirt.io' || g.endsWith('.kubevirt.io')) &&
-            r.resources.exists(res, res in ['virtualmachines',
+            r.resources.exists(res, ['virtualmachines',
             'virtualmachineinstances', 'virtualmachineinstancereplicasets',
             'virtualmachinesnapshotcontents', 'virtualmachinetemplates',
             'virtualmachinepools', 'virtualmachineclones',
-            'virtualmachinerestores', 'virtualmachineexports']))
+            'virtualmachinerestores', 'virtualmachineexports'].exists(k,
+            res == k || res.startsWith(k + '/'))))
           message: >-
             A rule grants a KubeVirt kind that can carry inline plaintext
-            cloud-init. VirtualMachine holds
+            cloud-init, either directly or via its */status subresource (a
+            GET on <kind>/status returns the whole object, spec included, so
+            it is not a narrower grant). VirtualMachine holds
             spec.template.spec.volumes[].cloudInitNoCloud.userData directly;
             the rest are wrappers for it, and RBAC allows and denies by
             kind, never by content. VirtualMachineInstance is the rendered
@@ -269,17 +283,23 @@ spec:
     validate:
       cel:
         expressions:
-        - expression: "!object.rules.exists(r, ('apps' in r.apiGroups) && ('controllerrevisions' in r.resources))"
+        - expression: >-
+            !object.rules.exists(r,
+            ('apps' in r.apiGroups) &&
+            r.resources.exists(res, res == 'controllerrevisions' || res.startsWith('controllerrevisions/')))
           message: >-
-            A rule grants apps/controllerrevisions. That is a wrapper kind
-            for a workload spec, and on a cluster running KubeVirt it is a
-            complete bypass of the kubevirt-excluded-kinds rule above:
-            virt-controller writes a ControllerRevision whose .data is the
-            entire vm.spec every time a VirtualMachine starts, so a VM using
-            inline cloudInitNoCloud.userData puts that plaintext in apiGroup
-            "apps" with no kubevirt.io grant involved. Verified by reading
-            one on the homelab cluster through the mcp-kubernetes-readonly
-            identity itself. Excluding the KubeVirt kinds while granting
-            this achieves nothing. Remove controllerrevisions from
-            resources; nothing but StatefulSet/DaemonSet rollout history
-            reads them.
+            A rule grants apps/controllerrevisions (or its /status
+            subresource — ControllerRevision has no status subresource today,
+            but the check is written the same way as kubevirt-excluded-kinds
+            above for consistency rather than because anything currently
+            turns on it). That is a wrapper kind for a workload spec, and on
+            a cluster running KubeVirt it is a complete bypass of the
+            kubevirt-excluded-kinds rule above: virt-controller writes a
+            ControllerRevision whose .data is the entire vm.spec every time a
+            VirtualMachine starts, so a VM using inline
+            cloudInitNoCloud.userData puts that plaintext in apiGroup "apps"
+            with no kubevirt.io grant involved. Verified by reading one on
+            the homelab cluster through the mcp-kubernetes-readonly identity
+            itself. Excluding the KubeVirt kinds while granting this achieves
+            nothing. Remove controllerrevisions from resources; nothing but
+            StatefulSet/DaemonSet rollout history reads them.

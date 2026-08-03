@@ -266,7 +266,18 @@ question: operators ship their own aggregating `ClusterRole`s (KubeVirt's
 `kubevirt.io:view` carries `rbac.authorization.k8s.io/aggregate-to-view`, and
 its `kubevirt.io:default` is bound to `system:authenticated`), so check what
 a subject already holds through `view` or through the operator's own bindings
-before concluding a kind is unreadable.
+before concluding a kind is unreadable. That also means an exclusion is a
+property of a *subject*, deliberately, not a cluster-wide guarantee: stock
+`system:aggregate-to-view` — which `view` consumes, and which `oidc-readers`
+binds `homelab-users` to — carries `apps/controllerrevisions` and `pods/log`
+alongside everything else it aggregates, so both channels a KubeVirt
+exclusion is built to withhold stay fully readable by any authenticated human
+through `view`. That's intentional: a dedicated read-only `ClusterRole` like
+this one gets scoped hardest around the identity reachable from an LLM — an
+agent that can be prompted, acts without a human reading every response, and
+can carry output past the cluster boundary — while an authenticated human
+holding `view` is a different threat model and is deliberately left
+unconstrained.
 
 Identities bound here must not live in `kube-system`: it's conventionally
 exempted from Pod Security Admission and from policy-engine namespace

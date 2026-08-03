@@ -396,8 +396,11 @@ rules:
   # motivated granting anything at all — "what is vmRolloutStrategy set to",
   # "is virt-handler healthy", "which nodes may run VMs".
   - kubevirts
-  # Names a VMI to migrate plus an optional node selector; carries no VMI
-  # spec of its own. Migration is disabled on this cluster
+  # Carries no VMI spec of its own — that's the durable claim, not a field
+  # inventory: as of v1.9.0 the spec also has sendTo.connectURL, receive
+  # .migrationID and priority (decentralized-migration fields), and status
+  # has synchronizationAddresses, none of which existed when this rule was
+  # first written. Migration is disabled on this cluster
   # (evictionStrategy: None), so this is granted for diagnosis, not use.
   - virtualmachineinstancemigrations
   # spec.domain is a DomainSpec, which has no volumes field at all — the API
@@ -438,12 +441,15 @@ rules:
   # incapable of carrying cloud-init: the API server rejects spec.volumes on
   # an instancetype as an unknown field, and a preference's spec.volumes is a
   # single string, preferredStorageClassName. The one field worth naming is
-  # spec.launchSecurity.sev.{dhCert,session} on an instancetype — AMD SEV
-  # guest-owner launch material. It is accepted as readable because it is
-  # designed to transit the untrusted host (the session blob's transport keys
-  # are encrypted to the platform's PDH, so reading it does not defeat SEV),
-  # and because no SEV-capable hardware exists on this cluster. If confidential
-  # computing is ever actually used here, revisit this line first.
+  # launch-security material: spec.launchSecurity.sev.{dhCert,session} on an
+  # instancetype, and the same *v1.LaunchSecurity type via
+  # spec.preferredLaunchSecurity on a preference — both preference kinds are
+  # granted here, so both carry it. AMD SEV guest-owner launch material is
+  # accepted as readable because it is designed to transit the untrusted host
+  # (the session blob's transport keys are encrypted to the platform's PDH,
+  # so reading it does not defeat SEV), and because no SEV-capable hardware
+  # exists on this cluster. If confidential computing is ever actually used
+  # here, revisit this line first.
   - virtualmachineclusterinstancetypes
   - virtualmachineclusterpreferences
   - virtualmachineinstancetypes
@@ -464,8 +470,12 @@ rules:
   - watch
 #
 # KubeVirt API groups deliberately granted NOTHING, each for its own reason.
-# ci/policy-tests/rbac-clusterrole-readonly.yaml fails the build if any of the
-# first three reappears, or if any *.kubevirt.io rule uses a "*" resource:
+# ci/policy-tests/rbac-clusterrole-readonly.yaml's kubevirt-excluded-groups
+# rule fails the build if any of these ten groups reappears in a rule's
+# apiGroups, kubevirt-must-enumerate-kinds fails it if any *.kubevirt.io rule
+# uses a "*" resource, and kubevirt-excluded-kinds fails it if a rule names
+# one of the plaintext-bearing kinds enumerated above by exact match or via
+# its /status subresource:
 #
 # - subresources.kubevirt.io: the one that does not advertise itself in its
 #   name. It serves virtualmachineinstances/console, /vnc, /vnc/screenshot,
@@ -480,6 +490,12 @@ rules:
 #   /filesystemlist) are individually grantable and individually harmless-ish,
 #   but no guest agent runs on these VMs, so naming this group here at all
 #   would buy nothing and leave a line one careless edit away from "*".
+#   What this exclusion does NOT buy: KubeVirt v1.9 streams the guest serial
+#   console to a container log by default (the guest-console-log sidecar in
+#   every virt-launcher pod), and pods/log is granted cluster-wide above — so
+#   console *output* (not an interactive session, not an arbitrary VM-spec
+#   read) reaches this identity through that grant regardless of this
+#   exclusion. Tracked in #843.
 # - subresources.template.kubevirt.io: a second aggregated subresource group,
 #   new in v1.9.0 and served by virt-template-apiserver. Its two resources,
 #   virtualmachinetemplates/create and /process, are verb "create" only, so
@@ -507,6 +523,12 @@ rules:
 #   declared x-kubernetes-preserve-unknown-fields and stores an entire
 #   VirtualMachine object verbatim — confirmed by storing one with an inline
 #   userData marker and reading it straight back. New in v1.9.0 and unused.
+#   The group also carries virtualmachinetemplaterequests, which IS installed
+#   on this cluster today; its Go types ship from a separate virt-template
+#   component rather than kubevirt/kubevirt, so its schema hasn't been read
+#   from source. That gap is exactly why this exclusion is written at the
+#   group level rather than as a kind-by-kind allow-list: a new kind in an
+#   already-excluded group needs no review to stay excluded.
 # - pool.kubevirt.io: VirtualMachinePool.spec.virtualMachineTemplate is a VM
 #   template, so the same inline field. Unused.
 # - clone.kubevirt.io: VirtualMachineClone.spec.patches is a free-form JSON
