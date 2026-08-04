@@ -15,11 +15,11 @@
 # not, for the same reason this SA doesn't hold a talosconfig or a sandbox kubeconfig
 # anywhere). So the rebuild delegates both steps by *triggering* the CronJobs that hold
 # the right credentials (bootstrap-talos-vm, provision-agent-admin -- see
-# homelab-ops-kubernetes-experiments, experiments/apps/sandbox-talos/) and waiting on their
-# exit codes, never reading a Secret itself. `provision-agent-admin` is that CronJob's name
-# today; `bootstrap-talos-vm` names the CronJob homelab-ops-kubernetes-experiments#227's
-# design calls for `sandbox-talos/bootstrap-job.yaml` (still a one-shot Job as of this
-# module) to become -- forward-declared here on the same PR as the rest of this RBAC, not
+# homelab-ops-kubernetes-experiments, experiments/apps/sandbox-talos/lifecycle/) and waiting on
+# their exit codes, never reading a Secret itself. `provision-agent-admin` is that CronJob's
+# name today; `bootstrap-talos-vm` names the CronJob homelab-ops-kubernetes-experiments#227's
+# design calls for `sandbox-talos/lifecycle/bootstrap-job.yaml` (still a one-shot Job as of
+# this module) to become -- forward-declared here on the same PR as the rest of this RBAC, not
 # yet backed by an object with that name. Nothing in this Role depends on it existing yet;
 # it simply grants nothing until it does.
 #
