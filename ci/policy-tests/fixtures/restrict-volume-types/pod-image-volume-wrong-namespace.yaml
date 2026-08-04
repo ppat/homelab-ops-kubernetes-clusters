@@ -1,0 +1,45 @@
+---
+# EXPECTED: FLAGGED (kyverno apply exits 1). Falsification control #2, on the NAMESPACE axis.
+#
+# Byte-for-byte pod-image-volume-in-scope.yaml with one field changed: metadata.namespace.
+# Same name, same `image` volumes. It must still fail, because the exclusion is scoped to
+# sandbox-lifecycle and does not follow the name anywhere else.
+#
+# This is the control that catches the other tempting broadening: dropping `namespaces:`, or
+# adding `image` to the policy's allow-list outright, would let any pod anywhere mount an
+# arbitrary OCI image's filesystem with nothing in the audit stream saying so. That would be
+# defensible upstream-alignment (Kubernetes' own PSS restricted profile does permit `image`
+# volumes) but it is not the judgement this cluster has made -- see the exclusion's own
+# comment. If that judgement is ever revisited, this fixture is the thing that has to be
+# deliberately deleted, rather than something that quietly stops meaning anything.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: provision-agent-admin-29764440-z2blj
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: provision
+    image: docker.io/curlimages/curl:8.21.0
+    volumeMounts:
+    - name: talosctl-bin
+      mountPath: /opt/talosctl
+      readOnly: true
+    - name: kubectl-bin
+      mountPath: /opt/kubectl
+      readOnly: true
+    - name: workspace
+      mountPath: /workspace
+  volumes:
+  - name: talosctl-bin
+    image:
+      reference: ghcr.io/siderolabs/talosctl:v1.13.7
+      pullPolicy: IfNotPresent
+  - name: kubectl-bin
+    image:
+      reference: registry.k8s.io/kubectl:v1.36.0
+      pullPolicy: IfNotPresent
+  - name: workspace
+    emptyDir:
+      sizeLimit: 512Mi

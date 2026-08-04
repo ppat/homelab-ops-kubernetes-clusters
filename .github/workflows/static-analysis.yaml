@@ -20,6 +20,9 @@ on:
     # run it on every clusters/ or ci/ edit for no signal.
     - 'clusters/*/cluster/rbac/**'
     - 'ci/policy-tests/**'
+    # The policy whose exemption granularity the volume-type-exclusions job below pins. Same
+    # reasoning as above: scoped to the one policy file under test, not policies/** at large.
+    - 'policies/pod-security-standard/restricted/restrict-volume-types.yaml'
   schedule:
   - cron: '0 5 * * 1'
   workflow_dispatch:
@@ -81,5 +84,72 @@ jobs:
             status=1
           fi
           echo "::endgroup::"
+        done
+        exit "${status}"
+
+  volume-type-exclusions:
+    # Pins the *granularity* of restrict-volume-types' `image`-volume exclusions, not merely
+    # that they work. A policy exemption is only as good as its scope, and a scope is only
+    # checked if something fails when it widens -- a fixture that passes tells you nothing on
+    # its own, because it would also pass under an exemption covering the entire cluster.
+    #
+    # So each fixture declares its own expected outcome in its filename and header, and both
+    # directions are asserted here: the in-scope pod must be excluded, and two otherwise
+    # identical pods -- one with a different name, one in a different namespace -- must still
+    # be flagged. The exclusion under test covers pods holding a freshly minted cluster-admin
+    # credential in memory (see clusters/homelab/services/sandbox-lifecycle/network-policy.yaml
+    # and the exclusion's own comment), which is why its blast radius is worth a test rather
+    # than a review comment.
+    #
+    # Runs the real policy file from policies/, not a copy under ci/ -- unlike the
+    # rbac-clusterroles job above, whose policies are test-only assertions about manifests.
+    # Here the policy *is* the thing under test, so a copy would be the bug.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      # Kept in lockstep with the rbac-clusterroles job above, for the same reason: the CLI's
+      # policy engine should match the kyverno actually deployed by infra-security-core.
+      # renovate: datasource=github-releases depName=kyverno/kyverno
+      KYVERNO_CLI_VERSION: "v1.18.2"
+    steps:
+    - name: Setup repository and tools
+      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@f1ae73db4ab080b7e8dc66d078e5905d5ca526cb # v2.1.0
+      with:
+        current_git_ref: ${{ github.head_ref || github.ref }}
+        current_repository: ${{ github.repository }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        mise_toml: |
+          [tools]
+          kyverno = "${{ env.KYVERNO_CLI_VERSION }}"
+
+    - name: Assert image-volume exclusions are scoped to both name and namespace
+      working-directory: ./current
+      shell: bash
+      # yamllint disable-line rule:indentation
+      run: |
+        set -uo pipefail
+        policy=policies/pod-security-standard/restricted/restrict-volume-types.yaml
+        fixtures=ci/policy-tests/fixtures/restrict-volume-types
+        # `kyverno apply` exits 0 when nothing failed and 1 when a rule failed, and it does so
+        # for validationFailureAction: Audit too -- verified, because "Audit means the CLI
+        # can't fail" would silently turn every row below green. The in-scope fixture is
+        # expected to exit 0 by being *excluded* (the rule never evaluates), which is a
+        # different thing from passing the rule, and either would read as 0 here; the two
+        # controls are what distinguish "excluded correctly" from "exempted far too widely".
+        status=0
+        for fixture in "${fixtures}"/*.yaml; do
+          case "$(basename "${fixture}")" in
+            *-in-scope.yaml) want=0 ;;
+            *-wrong-name.yaml|*-wrong-namespace.yaml) want=1 ;;
+            *) echo "::error::${fixture} declares no expected outcome in its filename"; status=1; continue ;;
+          esac
+          echo "::group::${fixture} (want exit ${want})"
+          mise exec -- kyverno apply "${policy}" --resource "${fixture}" --table --detailed-results --remove-color
+          got=$?
+          echo "::endgroup::"
+          if [ "${got}" -ne "${want}" ]; then
+            echo "::error file=${fixture}::expected kyverno apply to exit ${want}, got ${got} -- restrict-volume-types' image-volume exclusion has changed scope"
+            status=1
+          fi
         done
         exit "${status}"
