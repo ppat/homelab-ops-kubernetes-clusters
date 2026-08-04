@@ -221,6 +221,37 @@ spec:
       podSelector:
         matchLabels:
           app.kubernetes.io/component: mcp-server
+    # Third peer, and deliberately a bare namespaceSelector rather than another workload hung
+    # off the mcp-server label above -- see issue #841, which this closes: that label means
+    # "this pod is an MCP server" everywhere in apps/subsystems/ai, and it had started being
+    # used as a second, unrelated thing ("this pod may reach the sandbox"). Once those two
+    # populations diverge, `kubectl get pods -n ai -l app.kubernetes.io/component=mcp-server`
+    # answers both "which pods are MCP servers?" and "what can reach the sandbox?" -- wrongly.
+    # Keeping them as separate peers keeps each grant readable and revocable on its own.
+    #
+    # What this admits: sandbox-lifecycle, the namespace whose entire purpose is operating on
+    # the sandboxes from *outside* (see ../sandbox-lifecycle/, added in #842). Its
+    # provision-agent-admin CronJob mints the sandbox cluster's agent-admin credential and
+    # relays it to Bitwarden, which means reaching both this VM's Kubernetes API (6443) and
+    # its Talos API (50000) -- the same pair, for the same reason, as the two peers above.
+    #
+    # READ THIS BEFORE CONCLUDING THE ISOLATION MODEL WAS RELAXED -- it was not, and the
+    # direction is the whole distinction. This is INGRESS *to* the sandbox: it grants reaching
+    # the VM, which is what this entire rule exists to do. It does NOT give anything in
+    # `sandbox-talos` egress *to this host cluster's API server*. That denial
+    # (allow-egress-internet's 10.0.0.0/8 `except`, asserted every cycle by
+    # netpol-falsifiability-probe against 10.43.0.1) is untouched, and stays that way by
+    # explicit decision -- sandbox-talos has no host-API access, full stop.
+    #
+    # Which is exactly why the provisioner is not simply run inside `sandbox-talos` with an
+    # egress hole punched for it: writing its result to a Secret on this cluster needs the host
+    # API, and that namespace is deliberately and permanently denied it. A namespace whose
+    # purpose is operating on the sandboxes from outside already exists for workloads in this
+    # position, and holds the host-API RBAC to match. This is separation of concerns landing
+    # where it already was, not a new boundary invented for one CronJob.
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: sandbox-lifecycle
     ports:
     - protocol: TCP
       port: 6443
