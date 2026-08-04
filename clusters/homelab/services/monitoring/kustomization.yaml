@@ -41,6 +41,16 @@ configMapGenerator:
     labels:
       grafana_dashboard: "1"
     disableNameSuffixHash: true
+- name: dashboard-cluster-network-egress
+  namespace: monitoring
+  files:
+  - dashboards/cluster-network-egress.json
+  options:
+    annotations:
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    labels:
+      grafana_dashboard: "1"
+    disableNameSuffixHash: true
 - name: snmp-exporter-extra-config
   namespace: monitoring
   files:
