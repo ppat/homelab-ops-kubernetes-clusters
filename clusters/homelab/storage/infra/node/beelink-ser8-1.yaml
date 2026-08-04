@@ -42,15 +42,37 @@
 # whole, not per-element. Every tag this node should carry must be listed here; a tag added
 # out-of-band via the Longhorn UI or kubectl is reverted on the next reconcile.
 #
-# Two lifecycle gotchas:
+# Lifecycle gotchas. The first one can permanently break a node -- read it before adding a
+# manifest for a new one:
+#
+#  - NEVER add a node's manifest here before longhorn-manager has created that node's CR.
+#    longhorn-manager bootstraps a node with Get-then-Create (app/daemon.go,
+#    initDaemonNode): if a Node object is already present it skips CreateDefaultNode
+#    entirely. A CR that Flux created first therefore leaves the node with spec.name "",
+#    allowScheduling false, and NO default disk -- contributing zero storage, permanently,
+#    with no repair path (CreateDefaultNode is once-per-node by design). It then gets
+#    harder to fix, not easier: the validating webhook rejects Updates whose spec.name is
+#    empty, so the wedged object resists being patched back into shape. Nothing stops Flux
+#    creating it either -- the CRD marks no spec field required and the webhook's Create
+#    path does not check spec.name. Wait for the node to register, confirm its CR exists,
+#    then add the file.
 #  - prune is patched to false for every Kustomization in this cluster (see
 #    clusters/homelab/kustomization.yaml), so deleting this file does NOT untag the node --
 #    it just stops managing it, stranding the tag. To retire a node from the VM pool, set
-#    tags to [] here first, let Flux apply it, then delete the file.
-#  - On a brand-new node, wait for longhorn-manager to create the node's CR before adding
-#    its manifest here. The CRD marks no spec field required, so Flux would happily create
-#    a partial Node object that Longhorn never authored -- no spec.name, no spec.disks --
-#    rather than failing loudly. Add the node to the pool after it is registered.
+#    tags to [] here, let Flux apply that, then delete the file. Do not instead delete the
+#    spec.tags key while keeping the file: once Flux is sole owner of a field, dropping it
+#    from the manifest makes SSA *delete* it from the live object -- a different and much
+#    less obvious operation than setting it empty.
+#  - config-storage sets wait: true, so kstatus health-checks every object it applies,
+#    these included. The Longhorn Node CR carries a status condition of type Ready, which
+#    kstatus matches -- so a node going NotReady now fails the entire config-storage
+#    Kustomization (timeout 2m0s), not merely this object. That coupling did not exist
+#    before these manifests were added. Longhorn's validator also rejects updates with 403
+#    while a node's disk spec and status are mid-sync, so transient apply failures here are
+#    expected rather than alarming.
+#  - If a node ever needs more than one tag, write the list pre-sorted alphabetically:
+#    Longhorn's mutating webhook sorts spec.tags on every write, so an unsorted manifest
+#    reconciles into a permanent drift loop.
 apiVersion: longhorn.io/v1beta2
 kind: Node
 metadata:
