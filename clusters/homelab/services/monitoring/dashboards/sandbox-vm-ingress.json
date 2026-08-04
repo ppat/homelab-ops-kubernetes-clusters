@@ -21,7 +21,7 @@
       }
     ]
   },
-  "description": "Network egress for the sandbox KubeVirt VMs (docker-vm, talos-vm), which have wide-open internet access by design. Broken out by source VM and \u2014 as a caveated derived proxy \u2014 by destination namespace for in-cluster peers. The opposite direction lives on 'Sandbox VM Ingress'. Metrics-only visibility, no alert rules \u2014 alerting stays deferred until an AI triage layer exists.",
+  "description": "Network ingress for the sandbox KubeVirt VMs (docker-vm, talos-vm), which have wide-open internet access by design. Broken out by source VM and \u2014 as a caveated derived proxy \u2014 by source namespace for in-cluster peers. The opposite direction lives on 'Sandbox VM Egress'. Metrics-only visibility, no alert rules \u2014 alerting stays deferred until an AI triage layer exists.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -56,7 +56,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "Source: `kubevirt_vmi_network_transmit_bytes_total`, exported by `virt-handler` per VMI. The two VMs are split by the `name`/`namespace` labels \u2014 **not** `pod`, which is the per-node `virt-handler` DaemonSet pod and is shared across every VMI on that node. These VMs are destroyed and rebuilt weekly, which resets the underlying counters to zero; `rate()`/`increase()` compensate for a counter reset automatically, and the rolling-24h panels stay meaningful across a rebuild since each is a self-contained trailing window rather than an accumulation since dashboard-range start.\n\nThis dashboard covers **egress only**; the opposite direction lives on the **Sandbox VM Ingress** dashboard in this folder.",
+        "content": "Source: `kubevirt_vmi_network_receive_bytes_total`, exported by `virt-handler` per VMI. The two VMs are split by the `name`/`namespace` labels \u2014 **not** `pod`, which is the per-node `virt-handler` DaemonSet pod and is shared across every VMI on that node. These VMs are destroyed and rebuilt weekly, which resets the underlying counters to zero; `rate()`/`increase()` compensate for a counter reset automatically, and the rolling-24h panels stay meaningful across a rebuild since each is a self-contained trailing window rather than an accumulation since dashboard-range start.\n\nThis dashboard covers **ingress only**; the opposite direction lives on the **Sandbox VM Egress** dashboard in this folder.",
         "mode": "markdown"
       },
       "pluginVersion": "11.2.0",
@@ -68,7 +68,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Bytes/sec transmitted by each sandbox VM. Authoritative total \u2014 every destination, in-cluster and internet alike.",
+      "description": "Bytes/sec received by each sandbox VM. Authoritative total \u2014 every destination, in-cluster and internet alike.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -151,13 +151,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (name, namespace) (rate(kubevirt_vmi_network_transmit_bytes_total{namespace=~\"sandbox-.*\"}[$__rate_interval]))",
+          "expr": "sum by (name, namespace) (rate(kubevirt_vmi_network_receive_bytes_total{namespace=~\"sandbox-.*\"}[$__rate_interval]))",
           "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Egress rate by VM (transmit)",
+      "title": "Ingress rate by VM (receive)",
       "transparent": true,
       "type": "timeseries"
     },
@@ -166,7 +166,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Rolling trailing-24h total transmitted, evaluated continuously. A slow, low-rate drip that the rate graph above averages into invisibility still shows as a rising line here, and \u2014 unlike a total pinned to the dashboard's selected range \u2014 this stays a comparable day-over-day number even right after a weekly VM rebuild.",
+      "description": "Rolling trailing-24h total received, evaluated continuously. A slow, low-rate drip that the rate graph above averages into invisibility still shows as a rising line here, and \u2014 unlike a total pinned to the dashboard's selected range \u2014 this stays a comparable day-over-day number even right after a weekly VM rebuild.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -249,13 +249,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (name, namespace) (increase(kubevirt_vmi_network_transmit_bytes_total{namespace=~\"sandbox-.*\"}[1d]))",
+          "expr": "sum by (name, namespace) (increase(kubevirt_vmi_network_receive_bytes_total{namespace=~\"sandbox-.*\"}[1d]))",
           "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Rolling 24h total transmitted by VM",
+      "title": "Rolling 24h total received by VM",
       "transparent": true,
       "type": "timeseries"
     },
@@ -264,7 +264,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Total bytes transmitted by each VM over the selected dashboard time range. Note this resets to a small number right after the weekly VM rebuild (less elapsed VM lifetime, not less traffic) \u2014 use the rolling-24h panel above for a reading that stays comparable day-over-day.",
+      "description": "Total bytes received by each VM over the selected dashboard time range. Note this resets to a small number right after the weekly VM rebuild (less elapsed VM lifetime, not less traffic) \u2014 use the rolling-24h panel above for a reading that stays comparable day-over-day.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -316,14 +316,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (name, namespace) (increase(kubevirt_vmi_network_transmit_bytes_total{namespace=~\"sandbox-.*\"}[$__range]))",
+          "expr": "sum by (name, namespace) (increase(kubevirt_vmi_network_receive_bytes_total{namespace=~\"sandbox-.*\"}[$__range]))",
           "instant": true,
           "legendFormat": "{{name}}",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Total transmitted by VM (selected range)",
+      "title": "Total received by VM (selected range)",
       "transparent": true,
       "type": "stat"
     },
@@ -367,7 +367,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Not a destination breakdown of the VM totals above: this is the peer pods' own `container_network_receive_bytes_total`, summed by the namespace they run in, used as a stand-in because no peer-labelled metric exists. Direction is from the peer's perspective \u2014 a peer receiving is sandbox egress. Upper bound only, and in-cluster peers only; see the note above for the full peer set, what is excluded and why.",
+      "description": "Not a source breakdown of the VM totals above: this is the peer pods' own `container_network_transmit_bytes_total`, summed by the namespace they run in, used as a stand-in because no peer-labelled metric exists. Direction is from the peer's perspective \u2014 a peer transmitting is sandbox ingress. Upper bound only, and in-cluster peers only; see the note above for the full peer set, what is excluded and why.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -450,13 +450,13 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (namespace) (rate(container_network_receive_bytes_total{namespace=~\"ai|sandbox-lifecycle\", pod=~\"mcp-kubernetes-sandbox-.*|provision-agent-admin-.*\", interface=\"eth0\"}[$__rate_interval]))",
+          "expr": "sum by (namespace) (rate(container_network_transmit_bytes_total{namespace=~\"ai|sandbox-lifecycle\", pod=~\"mcp-kubernetes-sandbox-.*|provision-agent-admin-.*\", interface=\"eth0\"}[$__rate_interval]))",
           "legendFormat": "{{namespace}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Derived proxy \u2014 bytes received by in-cluster peer pods, by peer namespace",
+      "title": "Derived proxy \u2014 bytes sent by in-cluster peer pods, by peer namespace",
       "transparent": true,
       "type": "timeseries"
     },
@@ -465,7 +465,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Selected-range total of the panel above. Same caveats: derived from peer pod counters, in-cluster peers only, an upper bound rather than an exact destination attribution, and `sandbox-lifecycle` under-counts because its pods are too short-lived for cAdvisor to reliably catch.",
+      "description": "Selected-range total of the panel above. Same caveats: derived from peer pod counters, in-cluster peers only, an upper bound rather than an exact source attribution, and `sandbox-lifecycle` under-counts because its pods are too short-lived for cAdvisor to reliably catch.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -517,14 +517,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (namespace) (increase(container_network_receive_bytes_total{namespace=~\"ai|sandbox-lifecycle\", pod=~\"mcp-kubernetes-sandbox-.*|provision-agent-admin-.*\", interface=\"eth0\"}[$__range]))",
+          "expr": "sum by (namespace) (increase(container_network_transmit_bytes_total{namespace=~\"ai|sandbox-lifecycle\", pod=~\"mcp-kubernetes-sandbox-.*|provision-agent-admin-.*\", interface=\"eth0\"}[$__range]))",
           "instant": true,
           "legendFormat": "{{namespace}}",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Derived proxy \u2014 total bytes received by in-cluster peer pods over selected range, by peer namespace",
+      "title": "Derived proxy \u2014 total bytes sent by in-cluster peer pods over selected range, by peer namespace",
       "transparent": true,
       "type": "stat"
     }
@@ -560,6 +560,6 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Sandbox VM Egress",
+  "title": "Sandbox VM Ingress",
   "weekStart": ""
 }
