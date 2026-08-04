@@ -29,6 +29,56 @@ parameters:
   dataLocality: "strict-local"
   numberOfReplicas: "1"
   recurringJobSelector: '[{"name":"default", "isGroup":true}]'
+  # Restricts Longhorn replica placement to nodes that can actually run the VM that will
+  # consume the volume. The value is a comma-separated list of Longhorn *node tags*
+  # (nodes.longhorn.io spec.tags) -- NOT Kubernetes node labels; the two namespaces are
+  # unrelated despite the parameter's name. Longhorn treats it as a hard filter: a node
+  # without every listed tag is dropped from replica candidacy outright, with no fallback.
+  #
+  # Without it, a numberOfReplicas: 1 volume on this class deadlocks the scheduler, and it
+  # deadlocks by luck rather than reliably -- which is what makes it a weekly-recurring
+  # defect for the sandbox VMs' destroy-and-rebuild rather than a one-off. The sandbox VM
+  # pods carry a hard nodeSelector on homelab-ops.internal/virtualization: "enabled",
+  # satisfied by 2 of this cluster's 4 nodes. Longhorn's replica scheduler knew nothing
+  # about that, so it placed the single replica wherever it had free space; the resulting
+  # PV gets spec.nodeAffinity pinned to that node, and if it isn't a virtualization node
+  # the VM pod can never be scheduled -- the PV demands one node, the pod's nodeSelector
+  # forbids it, and no retry fixes it because deleting and recreating the PVC just re-rolls
+  # the same dice.
+  #
+  # Two things that look like they should already prevent this, and do not:
+  #  - volumeBindingMode: WaitForFirstConsumer makes kube-scheduler pick a node first and
+  #    record it as the PVC's volume.kubernetes.io/selected-node, but Longhorn does not
+  #    honour that hint when choosing where to put the replica.
+  #  - dataLocality: strict-local governs replica-vs-attachment locality (it keeps the one
+  #    replica on whichever node the volume is attached to) -- it does not constrain the
+  #    provisioning-time node choice, which is what goes wrong here.
+  #
+  # Drift risk, and it is asymmetric -- this is the thing to get right when adding a node.
+  # The node tag and the homelab-ops.internal/virtualization label are two separate pieces
+  # of out-of-band state: neither nodes.longhorn.io CRs nor node labels are managed in git,
+  # so both are applied by hand. The node-prep runbook in this repo's OPERATIONS.md applies
+  # them together for exactly that reason; keep them together.
+  #  - Labelled but untagged: the VM may run there, Longhorn will never put a disk there.
+  #    Harmless -- it only narrows placement.
+  #  - Tagged but unlabelled: Longhorn may place a disk on a node the VM cannot run on.
+  #    That is precisely the deadlock above, reintroduced. So the tagged set must always be
+  #    a SUBSET of the labelled set; never tag a node that isn't label-eligible.
+  #  - Tagged nowhere at all: Longhorn rejects volume creation outright ("specified node
+  #    tag ... does not exist") and the PVC stays Pending. Loud and obvious, which is the
+  #    good failure mode -- but it does mean the tag must exist before the first PVC on
+  #    this class is created, not after.
+  #
+  # Not applied to the sc-longhorn-local-non-replicated (Retain) twin on purpose: its
+  # consumers (coder/authentik/litellm/home-automation databases) have no virtualization
+  # constraint, and pinning them to 2 of 4 nodes would shrink their placement pool to solve
+  # a problem they do not have. A node tag encodes where the *workload* may run, so it only
+  # belongs on a class whose consumers all share one placement constraint. That is true of
+  # this class (sandbox VMs only) and false of the Retain twin -- which also means this
+  # class is now VM-scoped despite its generic name: a future non-VM consumer would silently
+  # inherit the 2-node restriction. Give that consumer its own class rather than removing
+  # this parameter.
+  nodeSelector: "virtualization"
 provisioner: driver.longhorn.io
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer

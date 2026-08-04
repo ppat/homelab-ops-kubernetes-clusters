@@ -202,12 +202,31 @@ ssh beelink-ser8-1 'sudo install -o root -g root -m 0644 -D /tmp/90-kubevirt.yam
 #    time and both nodes are already registered.
 kubectl label node beelink-ser8-1 homelab-ops.internal/virtualization=enabled
 
-# Repeat both steps for minisforum-nab9-1.
+# 3. Tag the node in Longhorn. Longhorn node tags live on the nodes.longhorn.io
+#    CR and are NOT managed in git -- this is a second piece of out-of-band
+#    node state that must stay in step with the label above.
+#    sc-longhorn-local-non-replicated-ephemeral carries nodeSelector:
+#    "virtualization", so Longhorn will only place a sandbox VM's disk replica
+#    on a node carrying this tag. Note --type=merge REPLACES the whole tag
+#    list; read spec.tags first if the node already has others.
+kubectl -n longhorn-system patch nodes.longhorn.io beelink-ser8-1 \
+  --type=merge -p '{"spec":{"tags":["virtualization"]}}'
+
+# Repeat all three steps for minisforum-nab9-1.
 ```
 
 No `kubectl cordon`, no `systemctl stop/start k3s` — this path makes no
 change that a running k3s process, or anything scheduled on the node, would
 ever observe.
+
+**The label and the Longhorn tag are a pair, and the pairing is asymmetric.**
+Tag only nodes that also carry the label — never the reverse. A node that is
+labelled but untagged is harmless (the VM may run there; Longhorn just won't
+put a disk there). A node that is tagged but *not* labelled lets Longhorn
+place a VM's disk on a node the VM's own `nodeSelector` forbids it to run on,
+which pins the resulting PV's `nodeAffinity` to an unusable node and leaves
+the VM permanently unschedulable. See the reasoning block in
+`clusters/homelab/storage/infra/sc/sc-longhorn-local-non-replicated-ephemeral.yaml`.
 
 #### Path B — a fresh or rebuilt node
 
@@ -254,7 +273,21 @@ third node added to the KubeVirt pool later.
    below was verified against stock Ubuntu kernel packaging on these two
    specific nodes — confirm it still holds on whatever base image actually
    provisioned this one before assuming it for granted.
-5. `kubectl uncordon <node>` if step 1 applied.
+5. Tag the node in Longhorn. Unlike the k3s node label, this has no
+   registration-time equivalent — Longhorn creates the `nodes.longhorn.io`
+   CR itself with an empty `spec.tags`, so this step is manual on *both*
+   paths, and it must happen before any sandbox VM PVC is created against
+   `sc-longhorn-local-non-replicated-ephemeral`:
+
+   ```bash
+   kubectl -n longhorn-system patch nodes.longhorn.io <node> \
+     --type=merge -p '{"spec":{"tags":["virtualization"]}}'
+   ```
+
+   Only do this on a node that also carries the
+   `homelab-ops.internal/virtualization` label — see the asymmetry note at
+   the end of Path A for what breaks otherwise.
+6. `kubectl uncordon <node>` if step 1 applied.
 
 **Caveat verified against current k3s docs, and it's why Path A and Path B
 differ:** k3s's `--node-label` (and therefore the `config.yaml.d`
@@ -266,7 +299,9 @@ Both target nodes are already registered, so the drop-in alone will
 `kubectl label` step); a genuinely fresh or rejoining node picks it up
 automatically at registration (Path B's reason it doesn't need that step).
 Keep the drop-in and the `kubectl label` in sync on already-registered nodes
-— if one is ever removed, remove the other too.
+— if one is ever removed, remove the other too, and remove the Longhorn node
+tag first. Dropping the label while the tag remains is the one ordering that
+recreates the unschedulable-VM deadlock described in Path A.
 
 #### Why no kernel-module persistence step
 
