@@ -1,0 +1,15 @@
+---
+# Gives this node the "virtualization" Longhorn node tag. See beelink-ser8-1.yaml in this
+# directory for the full reasoning -- why this manifest declares spec.tags and nothing
+# else, why the ssa: merge annotation is required, and the prune/new-node lifecycle
+# gotchas. All of it applies here identically.
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: minisforum-nab9-1
+  namespace: longhorn-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Merge
+spec:
+  tags:
+  - virtualization

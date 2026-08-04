@@ -1,0 +1,63 @@
+---
+# Gives this node the "virtualization" Longhorn node tag, which is what
+# sc-longhorn-local-non-replicated-ephemeral's nodeSelector parameter matches on. Longhorn
+# will only place a sandbox VM's disk replica on a node carrying it; see that StorageClass
+# for the full reasoning and for what breaks if this tag and the node's
+# homelab-ops.internal/virtualization label ever disagree.
+#
+# THIS OBJECT IS NOT OURS, AND THERE IS NO SAFETY NET. Unlike every other manifest under
+# storage/infra/, Longhorn creates one nodes.longhorn.io CR per Kubernetes node itself and
+# owns it -- Flux is patching a pre-existing, foreign-owned object, not creating one. And
+# kustomize-controller applies with client.ForceOwnership set unconditionally
+# (fluxcd/pkg ssa/manager_apply.go), so it does not merely request the fields it declares:
+# it *seizes* them from whichever manager held them, with no conflict error to warn you.
+# That is what makes this manifest work at all -- longhorn-manager already owned spec.tags
+# (as an empty list), so without force the apply would fail -- and it is exactly why the
+# next rule is absolute:
+#
+#   DECLARE spec.tags AND NOTHING ELSE.
+#
+# Server-side apply gives an applier ownership of only the fields it specifies; fields it
+# omits stay owned by whoever set them. That -- not any annotation -- is what leaves
+# Longhorn's spec.disks (disk paths, storageReserved, per-disk tags), spec.allowScheduling,
+# spec.evictionRequested, spec.instanceManagerCPURequest and spec.name untouched and still
+# owned by longhorn-manager. Add any one of them here and Flux silently takes it over and
+# pins live storage state to whatever got hardcoded. To change a disk, change it in
+# Longhorn, not here.
+#
+# What kustomize.toolkit.fluxcd.io/ssa: Merge actually does -- read this before assuming.
+# It does NOT mean "merge my fields into the live object and leave the rest alone"; the
+# fields this manifest declares are still applied wholesale (Flux docs: "The fields defined
+# in the manifests applied by the controller will always be overridden"). It means this
+# object is excluded from kustomize-controller's metadata *cleanup* step, which otherwise
+# strips kubectl.kubernetes.io/last-applied-configuration and rewrites managedFields
+# entries for disallowed field managers. These CRs carry no last-applied-configuration
+# today, so it is a no-op right now; it is here as a guard for the day someone runs a
+# client-side `kubectl apply` against one, because that cleanup path is the known mechanism
+# by which Flux prunes fields it never declared. Keep it, but do not mistake it for the
+# thing protecting spec.disks -- that is the "declare nothing else" rule above. The value
+# is matched case-insensitively (strings.EqualFold), so "merge" also works; don't "fix" it.
+#
+# spec.tags is an atomic list (the CRD sets no x-kubernetes-list-type), so it is owned
+# whole, not per-element. Every tag this node should carry must be listed here; a tag added
+# out-of-band via the Longhorn UI or kubectl is reverted on the next reconcile.
+#
+# Two lifecycle gotchas:
+#  - prune is patched to false for every Kustomization in this cluster (see
+#    clusters/homelab/kustomization.yaml), so deleting this file does NOT untag the node --
+#    it just stops managing it, stranding the tag. To retire a node from the VM pool, set
+#    tags to [] here first, let Flux apply it, then delete the file.
+#  - On a brand-new node, wait for longhorn-manager to create the node's CR before adding
+#    its manifest here. The CRD marks no spec field required, so Flux would happily create
+#    a partial Node object that Longhorn never authored -- no spec.name, no spec.disks --
+#    rather than failing loudly. Add the node to the pool after it is registered.
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: beelink-ser8-1
+  namespace: longhorn-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Merge
+spec:
+  tags:
+  - virtualization

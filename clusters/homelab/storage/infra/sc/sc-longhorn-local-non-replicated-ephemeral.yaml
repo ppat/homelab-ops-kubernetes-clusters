@@ -55,10 +55,12 @@ parameters:
   #    provisioning-time node choice, which is what goes wrong here.
   #
   # Drift risk, and it is asymmetric -- this is the thing to get right when adding a node.
-  # The node tag and the homelab-ops.internal/virtualization label are two separate pieces
-  # of out-of-band state: neither nodes.longhorn.io CRs nor node labels are managed in git,
-  # so both are applied by hand. The node-prep runbook in this repo's OPERATIONS.md applies
-  # them together for exactly that reason; keep them together.
+  # The tag itself is declared per node in ../node/*.yaml and applied by the same
+  # config-storage Kustomization as this file. Its counterpart, the
+  # homelab-ops.internal/virtualization node label, is NOT: k3s only reads node-label+ at
+  # registration time, so on an already-registered node it is a hand-applied node-prep
+  # step. Two halves, two mechanisms, and nothing enforces agreement between them -- which
+  # is why the node-prep runbook in this repo's OPERATIONS.md walks both together.
   #  - Labelled but untagged: the VM may run there, Longhorn will never put a disk there.
   #    Harmless -- it only narrows placement.
   #  - Tagged but unlabelled: Longhorn may place a disk on a node the VM cannot run on.
