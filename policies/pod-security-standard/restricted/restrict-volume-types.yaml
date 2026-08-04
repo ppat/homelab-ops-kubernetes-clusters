@@ -33,7 +33,7 @@ spec:
     validate:
       message: >-
         Only the following types of volumes may be used: configMap, csi, downwardAPI,
-        emptyDir, ephemeral, persistentVolumeClaim, projected, and secret.
+        emptyDir, ephemeral, image, persistentVolumeClaim, projected, and secret.
       deny:
         conditions:
           all:
@@ -46,6 +46,67 @@ spec:
             - downwardAPI
             - emptyDir
             - ephemeral
+            # ALIGNMENT WITH UPSTREAM, NOT A LOCAL RELAXATION -- that is the whole justification
+            # for this entry, so check it before treating it as a judgement call made here.
+            # Kubernetes' own Pod Security Standards `restricted` profile permits `image` volumes
+            # from 1.33 onward: `volume.Image != nil` sits in the allow-`continue` switch in
+            # staging/src/k8s.io/pod-security-admission/policy/check_restrictedVolumes.go, added
+            # by kubernetes/kubernetes#130394 ("Allow ImageVolume for Restricted PSA profiles",
+            # SIG Auth, milestone v1.33, merged 2025-02-24, not backported -- absent on
+            # release-1.31 and release-1.32, present on release-1.33 and later). This policy is a
+            # Kyverno transcription of that profile as it stood at 1.22-1.23 (see the
+            # kyverno.io/kubernetes-version annotation above), which simply predates the `image`
+            # volume type (KEP-4639, alpha in 1.31): omitting it was drift from upstream rather
+            # than a decision this cluster ever made. Because that makes this file no longer a
+            # verbatim copy of the upstream Kyverno policy-library rule, do not resynchronise it
+            # wholesale from that library -- that would silently revert this.
+            #
+            # DO NOT "CORRECT" THIS AGAINST THE PUBLISHED DOCS. kubernetes.io's
+            # pod-security-standards page still lists only the original eight volume types -- it
+            # is stale, and the admission code is what runs. Upstream agrees it is stale:
+            # kubernetes/website#55370 is open and triage/accepted as a docs bug, citing #130394.
+            # So expect that page to gain `image` eventually; that would confirm this entry
+            # rather than challenge it.
+            #
+            # WHAT THIS PERMITS, PRECISELY -- the properties, not an assertion of safety. A mount
+            # of an OCI image's (or OCI artifact's) filesystem, which the kubelet pulls and whose
+            # manifest layers it merges the same way it does for a container image. So: (1) it is
+            # read-only -- the godoc on core/v1 VolumeSource.Image (the field, not the
+            # ImageVolumeSource type) reads "The volume will be mounted read-only (ro) and
+            # non-executable files (noexec)." on release-1.33 through release-1.35, and drops the
+            # noexec half on 1.36/master. Quote it from the branch you are actually running; the
+            # read-only half is on every branch, and it is a kubelet/runtime guarantee about how
+            # the mount is made, not something admission validates on the volumeMount; (2) it conveys
+            # no host path, no host namespace and no device access, which is exactly what
+            # separates it from hostPath and is why upstream was willing to allow it under
+            # `restricted`; (3) it grants no reach a pod does not already have, because anything
+            # that can name an image in spec.containers[].image can already run that same
+            # filesystem -- that third point is upstream's own rationale on #130394. hostPath,
+            # the source this policy exists to stop and the only one the PSS *baseline* profile
+            # bothers to forbid, stays denied, as does everything else off this list.
+            #
+            # Its practical value, and why it is worth having cluster-wide rather than by
+            # exception: it ships a binary into a pod that is denied internet egress, which no
+            # other allowed volume type can do -- a ConfigMap cannot carry a ~100MB binary, an
+            # emptyDir has to be filled by something, and an initContainer fetching it is subject
+            # to the same NetworkPolicy as the pod it runs in.
+            #
+            # WHAT THIS ENTRY DOES NOT CONSTRAIN, and so stays a review discipline: WHICH image a
+            # pod mounts. Nothing here requires the reference to be digest-pinned, so a mutable
+            # tag can change under a pod between restarts. That is equally true of
+            # spec.containers[].image and is not a property of this volume type, so it is no
+            # argument for denying `image` here -- but if it ever matters it wants an admission
+            # rule of its own rather than the removal of this entry.
+            #
+            # WHAT WOULD MAKE THIS WRONG LATER. The case above rests entirely on "it is a
+            # container image pull, mounted read-only, with no host reachability", and it
+            # survives none of the following. (1) A future Kubernetes release giving image
+            # volumes write semantics or any form of host reachability -- that would require
+            # revisiting this entry, not merely the workloads using it. (2) A reference syntax
+            # that resolves to something the kubelet would not pull as a container image.
+            # (3) Upstream reversing #130394 and dropping `image` back out of `restricted`: the
+            # argument here is alignment, so this should follow upstream back out again.
+            - image
             - persistentVolumeClaim
             - projected
             - secret
@@ -55,91 +116,46 @@ spec:
       # virt-handler mounts hostPath volumes for libvirt/qemu runtime state, kubelet's
       # pod/device dirs, and node-labeller data (see ../baseline/disallow-host-path.yaml) --
       # hostPath isn't in this policy's allow-list at all, so anything using it needs this
-      # exclusion. virt-launcher gets its device access (kvm/tun/vhost-net) through Kubernetes
-      # device-plugin resource requests instead, not a volume -- it needs its own exclusion
-      # below, but for an unrelated reason (the `Image` volume type, not hostPath).
+      # exclusion. Measured on the live DaemonSet pod: six of them
+      # (/var/run/kubevirt-libvirt-runtimes, /var/run/kubevirt, /var/run/kubevirt-private,
+      # /var/lib/kubelet/pods, /var/lib/kubelet, /var/lib/kubevirt-node-labeller) and zero
+      # `image` volumes, so allow-listing `image` above changes nothing here: this exclusion is
+      # about hostPath and only hostPath. virt-launcher gets its device access
+      # (kvm/tun/vhost-net) through Kubernetes device-plugin resource requests instead, not a
+      # volume; its own exclusion below is now a different matter again -- read it.
       - resources:
           names:
           - 'virt-handler*'
           namespaces:
           - kubevirt
-      # virt-launcher mounts two volumes of Kubernetes' `Image` volume type -- `bootdisk` (the
-      # VM's containerDisk) and `launcher-volume` (virt-launcher's own binary, self-mounted) --
-      # neither of which is in this policy's allow-list; the type simply postdates it. Verified
-      # against both VMs' live pod specs (virt-launcher-docker-vm-*, virt-launcher-talos-vm-*):
-      # both carry exactly these two `image:` volumes, mounted read-only at
-      # /var/run/kubevirt-image-volume/disk_0 and /container-disk-binary. The pod spec is
-      # generated by virt-controller, not authored here, so it can't be brought into compliance
-      # by editing a manifest.
+      # virt-launcher's exclusion NO LONGER DOES WHAT ITS ORIGINAL RATIONALE SAID, and is kept
+      # anyway. It was added because virt-launcher mounts two volumes of Kubernetes' `image`
+      # type -- `bootdisk` (the VM's containerDisk) and `launcher-volume` (virt-launcher's own
+      # binary, self-mounted) -- back when `image` was not in the allow-list above. It now is,
+      # so that reason has evaporated. Measured against both live pod specs
+      # (virt-launcher-docker-vm-*, virt-launcher-talos-vm-*): every other volume they carry is
+      # already allow-listed (emptyDir, persistentVolumeClaim, secret), which means as these two
+      # VMs are defined today this exclusion decides nothing at all.
       #
-      # What bounds the risk: both VMs' volumeMounts declare readOnly: true for these mounts --
-      # consistent with the Image volume type's design, which doesn't support write access --
-      # and every image reference is pinned by digest, either to our own Harbor (talos-vm's
-      # containerDisk) or to an upstream source we chose (docker-vm's containerDisk from
-      # quay.io/containerdisks, virt-launcher's own image from quay.io/kubevirt). Nothing here
-      # resolves a floating tag or an externally-supplied reference.
+      # WHY IT STAYS RATHER THAN BEING DELETED AS DEAD CONFIG. virt-launcher's volume set is
+      # generated per-VMI by virt-controller, not authored here, so "what volumes it has" is a
+      # property of whatever VMI someone writes next, not of these two. A VMI using KubeVirt's
+      # `hostDisk` disk type, or a hostPath-backed virtiofs filesystem, reintroduces hostPath
+      # into that generated pod immediately -- and it cannot be brought into compliance by
+      # editing a manifest here. Deleting the exclusion is therefore a real tightening of the
+      # cluster's posture, not a cleanup, and belongs in its own change with its own argument.
       #
-      # What would make this wrong later: the exclusion covers any pod named virt-launcher* in
-      # these two namespaces, not just the two images verified above -- a future VM definition
-      # in sandbox-docker or sandbox-talos that points its containerDisk at an unvetted image
-      # would mount it here without the audit stream flagging it. Reviewing containerDisk image
-      # references at the point a VM is defined stays a manual discipline; this policy no
-      # longer backstops it for these two namespaces. Name-scoped, not namespace-scoped, and
-      # limited to the same two namespaces as the virt-launcher exclusions in
-      # ../../best-practices/add-emptydir-sizelimit.yaml and restrict-seccomp-strict.yaml,
-      # rather than `kubevirt` (virt-launcher doesn't run there) or left open to any future VM
-      # namespace.
+      # WHAT IT COSTS TO KEEP: exactly that tightening, foregone. A future VM in sandbox-docker
+      # or sandbox-talos that mounts a host path lands unflagged in the audit stream. That was
+      # equally true before `image` was allow-listed; it is retained here, not introduced.
+      # Reviewing what a new VMI mounts at the point it is defined stays a manual discipline.
+      # Name-scoped, not namespace-scoped, and limited to the same two namespaces as the
+      # virt-launcher exclusions in ../../best-practices/add-emptydir-sizelimit.yaml and
+      # restrict-seccomp-strict.yaml, rather than `kubevirt` (virt-launcher doesn't run there)
+      # or left open to any future VM namespace.
       - resources:
           names:
           - 'virt-launcher*'
           namespaces:
           - sandbox-docker
           - sandbox-talos
-      # provision-agent-admin (homelab-ops-kubernetes-experiments, sandbox-talos/lifecycle/)
-      # mounts two volumes of the same `Image` type, for the same reason it postdates this
-      # policy's allow-list -- but unlike virt-launcher's, this pod spec IS authored by hand,
-      # so the choice needs justifying rather than merely tolerating.
-      #
-      # WHY IT CANNOT BE ANY OF THE ALLOWED TYPES. This CronJob needs `kubectl` and `talosctl`
-      # on disk. It runs in sandbox-lifecycle, the one namespace permitted to write Secrets to
-      # this cluster's API, holding a freshly minted cluster-admin credential in memory -- so
-      # it deliberately has no internet egress and cannot download them (see that namespace's
-      # network-policy.yaml; shipping it with runtime curls is what caused the outage fixed in
-      # that repo's #240). An `image` volume is pulled by the kubelet, exactly like a container
-      # image, so it needs no egress rule at all. A ConfigMap cannot carry a ~100MB binary, and
-      # an emptyDir has to be filled by *something* -- an initContainer fetching them is
-      # subject to the identical pod NetworkPolicy, so it does not help.
-      #
-      # NOT widened into the allow-list above, deliberately. An `image` volume mounts an
-      # arbitrary OCI image's filesystem into a pod; that is worth flagging by default, which
-      # is the judgement the virt-launcher exclusion above already made when it chose an
-      # exclusion over an allow-list entry. Kubernetes' own PSS `restricted` profile does
-      # permit `image` volumes (measured: a probe pod using two of them drew a
-      # `restricted:latest` warning naming only its missing seccompProfile), so widening would
-      # be defensible upstream-alignment -- but it would silently retire a constraint this
-      # cluster has chosen to keep, for every workload, to fix one.
-      #
-      # WHAT BOUNDS THE RISK, and it is weaker here than for virt-launcher above, so read this
-      # rather than assuming parity: both references are first-party upstream images for the
-      # tools they carry (ghcr.io/siderolabs/talosctl, registry.k8s.io/kubectl), both are
-      # mounted `readOnly: true`, and the container consumes them as binaries only. But they
-      # are pinned by TAG, NOT DIGEST -- not by preference: pinning an image volume by digest
-      # needs the `ImageVolumeWithDigest` feature gate, which is ALPHA and measured disabled
-      # (`kubernetes_feature_enabled` = 0) on all four nodes of this cluster. So unlike every
-      # reference in the virt-launcher exclusion above, these two are mutable at the source:
-      # an upstream republish of the same tag would be mounted here without anything noticing.
-      #
-      # WHAT WOULD MAKE THIS WRONG LATER: (1) this exclusion covers any pod named
-      # provision-agent-admin* in this namespace, so a future rewrite of that CronJob mounting
-      # a *different*, unvetted image would pass unflagged -- reviewing the `reference:` values
-      # at the point they change stays a manual discipline; (2) if `ImageVolumeWithDigest`
-      # graduates and is enabled here, these two should be repinned to digests and this
-      # paragraph revisited, because the tag-mutability caveat is the only real gap;
-      # (3) if a second workload in this namespace needs the same treatment, prefer a second
-      # name-scoped entry over broadening this one to the namespace -- a namespace-wide
-      # exclusion here would cover exactly the pods that hold the cluster-admin credential.
-      - resources:
-          names:
-          - 'provision-agent-admin*'
-          namespaces:
-          - sandbox-lifecycle

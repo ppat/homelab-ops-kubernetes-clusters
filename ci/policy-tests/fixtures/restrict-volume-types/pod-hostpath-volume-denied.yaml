@@ -1,0 +1,32 @@
+---
+# EXPECTED: FLAGGED (kyverno apply exits 1).
+#
+# THE LOAD-BEARING CONTROL OF THIS WHOLE DIRECTORY. Every other fixture here is about `image`
+# being permitted; without this one the suite cannot distinguish "we allowed `image`" from "we
+# broke restrict-volume-types". A hostPath volume in an ordinary namespace must still be
+# flagged, because blocking hostPath is the entire reason this policy exists -- it is the one
+# volume source that reaches the node's filesystem, and the only one the Pod Security Standards
+# *baseline* profile bothers to forbid.
+#
+# Deliberately an ordinary name in an ordinary namespace: this asserts the policy's default
+# behaviour, not the behaviour of any exclusion. The kubevirt/sandbox-* fixtures alongside it
+# cover the exclusions.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ordinary-workload-5f7d9b46c-tn4wq
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: tools
+    image: docker.io/curlimages/curl:8.21.0
+    volumeMounts:
+    - name: host-root
+      mountPath: /host
+      readOnly: true
+  volumes:
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory

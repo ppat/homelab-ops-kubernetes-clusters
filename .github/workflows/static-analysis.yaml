@@ -20,7 +20,7 @@ on:
     # run it on every clusters/ or ci/ edit for no signal.
     - 'clusters/*/cluster/rbac/**'
     - 'ci/policy-tests/**'
-    # The policy whose exemption granularity the volume-type-exclusions job below pins. Same
+    # The policy whose allow-list and exclusion scoping the volume-types job below pins. Same
     # reasoning as above: scoped to the one policy file under test, not policies/** at large.
     - 'policies/pod-security-standard/restricted/restrict-volume-types.yaml'
   schedule:
@@ -87,19 +87,27 @@ jobs:
         done
         exit "${status}"
 
-  volume-type-exclusions:
-    # Pins the *granularity* of restrict-volume-types' `image`-volume exclusions, not merely
-    # that they work. A policy exemption is only as good as its scope, and a scope is only
-    # checked if something fails when it widens -- a fixture that passes tells you nothing on
-    # its own, because it would also pass under an exemption covering the entire cluster.
+  volume-types:
+    # Pins what restrict-volume-types actually decides, in both directions. An allow-list is
+    # only as good as what it still refuses, and what it refuses is only checked if something
+    # goes red when it widens -- a fixture that passes tells you nothing on its own, because it
+    # would also pass against a policy that had been deleted outright.
     #
-    # So each fixture declares its own expected outcome in its filename and header, and both
-    # directions are asserted here: the in-scope pod must be excluded, and two otherwise
-    # identical pods -- one with a different name, one in a different namespace -- must still
-    # be flagged. The exclusion under test covers pods holding a freshly minted cluster-admin
-    # credential in memory (see clusters/homelab/services/sandbox-lifecycle/network-policy.yaml
-    # and the exclusion's own comment), which is why its blast radius is worth a test rather
-    # than a review comment.
+    # So every fixture declares its expected outcome in its filename (-allowed / -denied) and
+    # its header, and the suite is deliberately built so no fixture is vacuous:
+    #
+    #   * `image` is permitted for ordinary pods, asserted in two unrelated namespaces under two
+    #     unrelated names, because the claim is that it is allowed GLOBALLY. One fixture cannot
+    #     tell that apart from the name-and-namespace-scoped exclusion this policy used to carry.
+    #   * hostPath is STILL denied for ordinary pods -- without this the suite cannot distinguish
+    #     "we allowed `image`" from "we broke the policy", which is the whole reason the policy
+    #     exists.
+    #   * hostPath alongside a permitted `image` volume is still denied, catching an allow-list
+    #     mis-edit that would read "if any key is allowed, pass".
+    #   * the pre-existing virt-handler / virt-launcher exclusions still hold, and are still
+    #     scoped by name AND namespace, asserted on hostPath rather than on `image` -- now that
+    #     `image` is globally allowed, an `image`-based fixture for those pods would pass whether
+    #     the exclusions existed or not. See pod-virt-launcher-hostpath-allowed.yaml.
     #
     # Runs the real policy file from policies/, not a copy under ci/ -- unlike the
     # rbac-clusterroles job above, whose policies are test-only assertions about manifests.
@@ -122,7 +130,7 @@ jobs:
           [tools]
           kyverno = "${{ env.KYVERNO_CLI_VERSION }}"
 
-    - name: Assert image-volume exclusions are scoped to both name and namespace
+    - name: Assert restrict-volume-types allows image volumes and still denies hostPath
       working-directory: ./current
       shell: bash
       # yamllint disable-line rule:indentation
@@ -132,15 +140,15 @@ jobs:
         fixtures=ci/policy-tests/fixtures/restrict-volume-types
         # `kyverno apply` exits 0 when nothing failed and 1 when a rule failed, and it does so
         # for validationFailureAction: Audit too -- verified, because "Audit means the CLI
-        # can't fail" would silently turn every row below green. The in-scope fixture is
-        # expected to exit 0 by being *excluded* (the rule never evaluates), which is a
-        # different thing from passing the rule, and either would read as 0 here; the two
-        # controls are what distinguish "excluded correctly" from "exempted far too widely".
+        # can't fail" would silently turn every row below green. Note that exit 0 conflates two
+        # different things: a pod that PASSES the rule (its volume types are all allow-listed)
+        # and a pod that is EXCLUDED so the rule never evaluates. The -denied fixtures are what
+        # distinguish those from "the policy no longer objects to anything".
         status=0
         for fixture in "${fixtures}"/*.yaml; do
           case "$(basename "${fixture}")" in
-            *-in-scope.yaml) want=0 ;;
-            *-wrong-name.yaml|*-wrong-namespace.yaml) want=1 ;;
+            *-allowed.yaml) want=0 ;;
+            *-denied.yaml) want=1 ;;
             *) echo "::error::${fixture} declares no expected outcome in its filename"; status=1; continue ;;
           esac
           echo "::group::${fixture} (want exit ${want})"
@@ -148,9 +156,9 @@ jobs:
           # followed by `got=$?`. Actions invokes this step as `bash --noprofile --norc -e -o
           # pipefail`, and the `set -uo pipefail` above does not cancel that inherited `-e`.
           # A bare invocation therefore aborts the whole script on the first fixture that
-          # exits non-zero -- which is precisely the two fixtures whose *job* is to exit
-          # non-zero. Measured: it killed the run mid-loop, so the last fixture never ran and
-          # no `::error file=` was ever printed, and the job failed while the exclusion under
+          # exits non-zero -- which is precisely the -denied fixtures, whose *job* is to exit
+          # non-zero. Measured: it killed the run mid-loop, so later fixtures never ran and
+          # no `::error file=` was ever printed, and the job failed while the policy under
           # test was behaving perfectly. A guard rail that cannot run to completion, failing in
           # a way that looks exactly like the thing it guards being broken.
           # `|| got=$?` keeps `-e` on for every other command here while making this one
@@ -162,7 +170,7 @@ jobs:
           mise exec -- kyverno apply "${policy}" --resource "${fixture}" --table --detailed-results --remove-color || got=$?
           echo "::endgroup::"
           if [ "${got}" -ne "${want}" ]; then
-            echo "::error file=${fixture}::expected kyverno apply to exit ${want}, got ${got} -- restrict-volume-types' image-volume exclusion has changed scope"
+            echo "::error file=${fixture}::expected kyverno apply to exit ${want}, got ${got} -- restrict-volume-types no longer decides this pod the way its allow-list and exclusions say it should"
             status=1
           fi
         done

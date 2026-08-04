@@ -1,0 +1,31 @@
+---
+# EXPECTED: ALLOWED (kyverno apply exits 0).
+#
+# Same claim as pod-image-volume-allowed.yaml, asserted a second time in a second unrelated
+# namespace with a second unrelated name, because the specific thing being pinned is that
+# `image` is allowed *globally* -- not in one namespace, not for one workload. An earlier
+# revision of this policy carried a name-and-namespace-scoped exclusion instead; a single
+# fixture cannot tell the two shapes apart, and two fixtures that share no name and no
+# namespace can.
+#
+# `monitoring` is an existing, entirely ordinary namespace that appears nowhere in the
+# policy's exclude list. Nothing here is specific to it beyond that.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unrelated-workload-844d7c96b-fq8vn
+  namespace: monitoring
+spec:
+  restartPolicy: Never
+  containers:
+  - name: tools
+    image: docker.io/curlimages/curl:8.21.0
+    volumeMounts:
+    - name: talosctl-bin
+      mountPath: /opt/talosctl
+      readOnly: true
+  volumes:
+  - name: talosctl-bin
+    image:
+      reference: ghcr.io/siderolabs/talosctl:v1.13.7
+      pullPolicy: IfNotPresent
