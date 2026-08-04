@@ -4,10 +4,18 @@
 # as. Deliberately its own namespace, not sandbox-docker or sandbox-talos: those two run
 # default-deny egress with the host cluster's own API server inside the `except` list (see
 # their network-policy.yaml), so a pod there physically cannot delete anything on this
-# cluster -- and must not be able to, since both are namespaces AI agents can create pods
-# in. A host-API-capable ServiceAccount can only safely live somewhere agents cannot write
-# to. See network-policy.yaml in this directory for the egress this namespace is granted
-# instead.
+# cluster. That alone is sufficient reason not to put vm-rebuilder there.
+#
+# It would also be poor hygiene even if that network block were ever loosened -- not
+# because AI agents could reach it (they cannot: agents hold no write access to any
+# namespace on this HOST cluster, sandbox-docker/sandbox-talos included, full stop -- the
+# access they do hold is cluster-admin *inside the guest* Talos cluster/dockerd running in
+# each VM, a different API surface with no bearing on this namespace's placement), but
+# because sandbox-talos already holds talos-vm-talosconfig, a year-long, effectively
+# unrevocable os:admin client cert reachable by anything with pod-create rights there.
+# Colocating a host-API-capable ServiceAccount with that credential would mean a single
+# compromise of either yields both. See network-policy.yaml in this directory for the
+# egress this namespace is granted instead.
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -8,6 +8,7 @@ resources:
 - serviceaccount.yaml
 - role-sandbox-docker.yaml
 - role-sandbox-talos.yaml
+- role-sandbox-lifecycle.yaml
 
 commonAnnotations:
   # This namespace's isolation (default-deny, one enumerated egress target) and the RBAC
