@@ -278,11 +278,11 @@ spec:
 # is not exempt from an ingress policy once default-deny plus any ingress-admitting rule
 # selects a pod -- every client has to be listed explicitly, including ones that live right
 # next to the target. Concretely, that gap denied
-# homelab-ops-kubernetes-experiments/experiments/apps/sandbox-talos/bootstrap-job.yaml's
+# homelab-ops-kubernetes-experiments/experiments/apps/sandbox-talos/lifecycle/bootstrap-job.yaml's
 # `talosctl bootstrap` call (port 50000, surfaced as `connection refused` -- this stack's
 # kube-router REJECTs a denied packet rather than dropping it, indistinguishable at the
 # TCP level from a closed port) and would equally have denied
-# provision-agent-admin-cronjob.yaml's kubectl calls against the sandbox cluster's own API
+# lifecycle/provision-agent-admin-cronjob.yaml's kubectl calls against the sandbox cluster's own API
 # server (port 6443) the first time it ran after a bootstrap. Both Jobs/CronJobs run as
 # pods in this same namespace and have no other path to the VM.
 #
