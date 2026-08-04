@@ -637,11 +637,11 @@ directly, every time its container (re)starts, rather than assuming.
   pod is policed within seconds of creation and stays policed for the VM's
   entire lifetime. This window is irrelevant to them.
 - Any short-lived pod created in `sandbox-docker` or `sandbox-talos` — most
-  importantly, anything an agent with pod-create rights in `sandbox-talos`
-  runs — can complete its entire lifecycle inside this window. A Job that
-  opens an egress connection and exits within the first few seconds may
-  never be policed at all. **This is a real gap in the isolation model, not
-  a testing artifact:** the NetworkPolicies, though correct, are not a
+  importantly, the bootstrap Job or either CronJob that runs in
+  `sandbox-talos` — can complete its entire lifecycle inside this window. A
+  Job that opens an egress connection and exits within the first few seconds
+  may never be policed at all. **This is a real gap in the isolation model,
+  not a testing artifact:** the NetworkPolicies, though correct, are not a
   complete mediation guarantee against a short-lived process — only against
   anything that outlives the window.
 - The mechanism (`KUBE-ROUTER-FORWARD` dispatch) is symmetric for ingress
@@ -676,11 +676,12 @@ probe's own self-reported result.
 
 **Standing mitigation:** the falsifiability probe's warm-up gate (above) is
 the automated version of this same check, run against its own pod every
-time it (re)starts. There is no equivalent gate today for pods an agent
-creates directly in `sandbox-talos` — that would require something like a
-validating admission policy or a delay before granting network access to
-new pods, neither of which exists. Treat this window as a standing,
-accepted property of the current isolation model, not a closed issue.
+time it (re)starts. There is no equivalent gate today for the other
+short-lived pods created directly in `sandbox-talos` (the bootstrap Job, the
+CronJobs) — that would require something like a validating admission policy
+or a delay before granting network access to new pods, neither of which
+exists. Treat this window as a standing, accepted property of the current
+isolation model, not a closed issue.
 
 ## Runbook: reach the sandbox VMs
 

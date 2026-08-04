@@ -25,7 +25,7 @@
 # created* pod in this namespace, and it's still exercised here, just less often: every
 # container (re)start (a rollout, a node drain, an eviction, a crash) re-runs the warm-up
 # gate against a brand-new pod. See network-policy.yaml and OPERATIONS.md for why this
-# matters beyond this probe: an agent-created Job in this namespace faces the identical
+# matters beyond this probe: any short-lived pod in this namespace faces the identical
 # window, and it's documented there as a standing caveat of the isolation model, not
 # something this probe alone can close.
 #

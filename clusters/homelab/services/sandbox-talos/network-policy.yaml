@@ -2,19 +2,24 @@
 # Default-deny both directions -- see sandbox-docker/network-policy.yaml for why this
 # namespace also locks down egress, not just ingress like every other NetworkPolicy in the
 # apps repo. Here the reasoning is symmetric rather than about the workload itself: this
-# namespace is the one AI agents get full write access to (today they only have read-only
-# cluster access, via mcp-kubernetes-readonly), so egress from it has to be closed by
-# default on the same footing as ingress into it.
+# namespace hosts the Talos VM that AI agents get full write access to -- inside the guest
+# cluster it runs, not to this host-cluster namespace itself, which stays read-only to
+# agents (via mcp-kubernetes-readonly) as a matter of policy, not a placeholder for future
+# write access -- so egress from it has to be closed by default on the same footing as
+# ingress into it, since whatever the guest can be made to do must be contained here at
+# the host-cluster boundary.
 #
-# CAVEAT -- and it matters more here than anywhere else in this repo, because this is the
-# namespace agents can write to: a pod is unpoliced for a window after it's created, not
-# from the instant it exists. k3s's bundled kube-router-derived NetworkPolicy controller
-# programs each pod's firewall chain and its KUBE-ROUTER-FORWARD dispatch rule
-# *reactively*, watching the API server for new pods -- a pod with no dispatch rule yet
-# falls straight through to `-P FORWARD ACCEPT`, fully unpoliced. An agent with pod-create
-# rights here could run a Job that exfiltrates toward the prod cluster or the LAN in its
-# first seconds and exits before enforcement ever arrives -- for a short-lived pod, this
-# window can span the pod's entire lifetime. It does not affect the sandbox VM itself
+# CAVEAT -- and it matters more here than anywhere else in this repo, because this
+# namespace runs several short-lived pods (the bootstrap Job, two CronJobs, the
+# falsifiability probe) alongside the long-lived VM workload: a pod is unpoliced for a
+# window after it's created, not from the instant it exists. k3s's bundled
+# kube-router-derived NetworkPolicy controller programs each pod's firewall chain and its
+# KUBE-ROUTER-FORWARD dispatch rule *reactively*, watching the API server for new pods --
+# a pod with no dispatch rule yet falls straight through to `-P FORWARD ACCEPT`, fully
+# unpoliced. A short-lived pod here -- the bootstrap Job or either CronJob -- could
+# exfiltrate toward the prod cluster or the LAN in its first seconds and exit before
+# enforcement ever arrives -- for a short-lived pod, this window can span the pod's entire
+# lifetime. It does not affect the sandbox VM itself
 # (long-lived, policed within seconds of creation), but it is a genuine, standing property
 # of this isolation model, not a bug to be fixed here. See
 # sandbox-docker/network-policy.yaml for how this was discovered (it produced a false
@@ -31,20 +36,23 @@ metadata:
   # someone reading git or OPERATIONS.md ever sees it. This annotation survives onto the
   # live object as the discoverable half of that same warning; the comment stays too, for
   # the git/PR reader who wants the full mechanism. Wording deliberately differs from
-  # sandbox-docker's copy of this annotation: this is the namespace AI agents get full
-  # write access to, so the hazard is framed around what an agent can do inside the
+  # sandbox-docker's copy of this annotation: this namespace runs several short-lived
+  # pods (the bootstrap Job, two CronJobs) that can complete within the enforcement
+  # window, so the hazard is framed around what a short-lived pod can do inside the
   # window, not just that the window exists. `homelab-ops.internal/*` is this platform's
   # established self-defined-key prefix (see the `homelab-ops.internal/virtualization`
   # node label in OPERATIONS.md) -- `.internal` is the RFC 9476 reserved, non-delegatable
   # TLD, so it can never collide with or be mistaken for a domain anyone actually owns.
   annotations:
     homelab-ops.internal/netpol-caveat: >-
-      CAVEAT: AI agents have full pod-create rights in this namespace, and a freshly
-      created pod is unpoliced for a short window (k3s's kube-router netpol controller
-      programs firewall rules reactively) -- an agent-run Job could exfiltrate toward
-      prod or the LAN in that window before enforcement ever begins. Full explanation and
-      how to verify a given pod is actually policed: OPERATIONS.md, "Known limitation:
-      the per-pod NetworkPolicy enforcement window".
+      CAVEAT: a freshly created pod in this namespace is unpoliced for a short window
+      (k3s's kube-router netpol controller programs firewall rules reactively) -- a
+      short-lived Job (e.g. the bootstrap Job or either CronJob that runs here) could
+      exfiltrate toward prod or the LAN in that window before enforcement ever begins. AI
+      agents get full write access only inside the Talos VM this namespace runs (its
+      guest cluster), never to this namespace on the host cluster, which stays read-only.
+      Full explanation and how to verify a given pod is actually policed: OPERATIONS.md,
+      "Known limitation: the per-pod NetworkPolicy enforcement window".
 spec:
   podSelector: {}
   policyTypes:
@@ -97,8 +105,10 @@ spec:
 # See sandbox-docker/network-policy.yaml for why this exact `except` list is most of this
 # namespace's security value: it closes the prod kube-apiserver, Longhorn's manager API,
 # kubelet, etcd, the UniFi gateway, and the NAS in one object, and it is the control this
-# whole design leans on hardest, because this namespace is the one agents can write to.
-# Internet egress stays open on purpose (package/image pulls for the sandbox cluster
+# whole design leans on hardest, because this namespace hosts the Talos VM agents get
+# full write access to (inside its guest cluster) and runs the automation (bootstrap Job,
+# CronJobs) that provisions and manages it. Internet egress stays open on purpose
+# (package/image pulls for the sandbox cluster
 # itself); nothing about that weakens the boundary against the LAN and prod cluster, which
 # is the boundary that actually matters here.
 apiVersion: networking.k8s.io/v1
@@ -141,14 +151,15 @@ spec:
 # needed -- is a podSelector on Traefik's pods, not a bigger ipBlock, and why that would
 # unavoidably expose homelab's own API server too.
 #
-# The one thing that IS more acute here than in sandbox-docker: this is the namespace AI
-# agents get full write access to (see default-deny above), so nas's API server ingress
-# being L3-reachable from this namespace lands on the namespace with pod-create rights and
-# cluster-admin inside its own sandbox cluster, not just a single long-lived VM workload.
-# The "what bounds the risk" argument still holds -- no ambient credential exists here to
-# use against that ingress -- but it holds with less margin than in sandbox-docker,
-# precisely because this is the namespace built to run arbitrary agent-authored pods. #828
-# names this explicitly as one of the conditions worth re-checking.
+# The one thing that IS more acute here than in sandbox-docker: this namespace hosts the
+# Talos VM whose guest cluster AI agents get cluster-admin on (see default-deny above),
+# plus the automation (the bootstrap Job, two CronJobs) that provisions and manages that
+# access -- so nas's API server ingress being L3-reachable from this namespace lands on
+# more than a single long-lived VM workload, unlike sandbox-docker. The "what bounds the
+# risk" argument still holds -- no ambient credential exists here to use against that
+# ingress -- but it holds with less margin than in sandbox-docker, precisely because of
+# what this namespace's own automation provisions access to. #828 names this explicitly as
+# one of the conditions worth re-checking.
 #
 # Range (repeated here so this file doesn't require reading the other one to know what it
 # allows): nas `standard-pool`, 192.168.8.192/28 (192.168.8.192-192.168.8.207) -- Harbor's
