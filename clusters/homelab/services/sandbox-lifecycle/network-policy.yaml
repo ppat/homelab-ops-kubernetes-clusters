@@ -2,12 +2,45 @@
 # Default-deny both directions. Nothing needs to reach a pod in this namespace (no ingress
 # rule exists below at all), and everything a rebuild/relay pod needs outbound is
 # enumerated by name below -- CoreDNS, this host cluster's own API server, and the
-# sandbox-talos VM (Kubernetes + Talos APIs), nothing else. Unlike sandbox-docker/
-# sandbox-talos, this namespace does NOT get a broad internet-egress allow:
-# the CronJobs here run the official registry.k8s.io/kubectl image (see this module's own
-# README and homelab-ops-kubernetes-experiments' sandbox-lifecycle module), so they need no
-# internet access at all -- image *pulls* are performed by the kubelet and are unaffected
-# by NetworkPolicy, so this stays tight without breaking anything.
+# sandbox-talos VM (Kubernetes + Talos APIs), nothing else.
+#
+# THERE IS NO INTERNET-EGRESS ALLOW HERE, AND THERE MUST NOT BE ONE. Unlike sandbox-docker/
+# sandbox-talos, which both have a broad one, this namespace is the *only* namespace on this
+# cluster permitted to write Secrets to the host API server, and the workloads here handle a
+# freshly minted cluster-admin credential for the sandbox in memory while they run (plus a
+# mounted talosconfig -- a year-long, effectively unrevocable os:admin client cert). General
+# egress from here is a clean exfiltration path for the highest-value secret in this system.
+# This is the last namespace in the cluster where broad egress belongs, which is the same
+# argument namespace.yaml already makes for why the host-API-capable identity lives here
+# rather than beside the VMs.
+#
+# WHAT THAT COSTS THE WORKLOADS, stated because getting it wrong has already cost an outage:
+# a pod here cannot download anything at runtime. Binaries must arrive *in an image* -- image
+# pulls are performed by the kubelet and are not subject to NetworkPolicy at all, so an image
+# (or a Kubernetes `image` volume, which is pulled the same way) costs no rule, while a curl
+# at runtime costs a rule that must not exist. An initContainer does not help: initContainers
+# are subject to the identical pod policy.
+#
+# THIS COMMENT USED TO SAY SOMETHING ELSE, AND THAT IS THE INCIDENT. It asserted these
+# CronJobs "need no internet access at all" because they run the official
+# registry.k8s.io/kubectl image. That premise came from #227's weekly-rebuild CronJobs, which
+# were *specified* that way and never shipped that way (registry.k8s.io/kubectl turns out to
+# have no shell at all). Meanwhile the workload that actually landed here first --
+# homelab-ops-kubernetes-experiments' provision-agent-admin, moved into this namespace by
+# that repo's #230 -- had been written for sandbox-talos, where broad egress exists, and it
+# downloaded kubectl and talosctl at runtime. Nothing revisited this comment or these rules
+# when it moved. Result: the CronJob never had a single successful run, its PushSecret sat
+# Errored, and the Flux Kustomization governing that entire repo was held Ready=False for
+# hours. Fixed in that repo's #240 by moving both binaries into `image` volumes -- no rule
+# here changed, which is the point. A comment describing a design that no longer ships is how
+# that survived review; this paragraph is here so the next reader checks rather than assumes.
+#
+# BEWARE THE ENFORCEMENT-WINDOW RACE WHEN READING FAILURE LOGS FROM THIS NAMESPACE. See the
+# CAVEAT annotation below. In that incident's logs the *first* runtime fetch succeeded and the
+# second was refused ~1ms later, which reads exactly like "dl.k8s.io is permitted, github.com
+# is not". No such rule exists, in either direction. The first fetch simply landed inside the
+# ~2s window before kube-router had programmed the pod's rules. Do not derive a policy fact
+# from that asymmetry.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

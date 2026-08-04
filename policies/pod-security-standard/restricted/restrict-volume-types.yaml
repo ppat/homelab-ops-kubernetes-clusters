@@ -95,3 +95,51 @@ spec:
           namespaces:
           - sandbox-docker
           - sandbox-talos
+      # provision-agent-admin (homelab-ops-kubernetes-experiments, sandbox-talos/lifecycle/)
+      # mounts two volumes of the same `Image` type, for the same reason it postdates this
+      # policy's allow-list -- but unlike virt-launcher's, this pod spec IS authored by hand,
+      # so the choice needs justifying rather than merely tolerating.
+      #
+      # WHY IT CANNOT BE ANY OF THE ALLOWED TYPES. This CronJob needs `kubectl` and `talosctl`
+      # on disk. It runs in sandbox-lifecycle, the one namespace permitted to write Secrets to
+      # this cluster's API, holding a freshly minted cluster-admin credential in memory -- so
+      # it deliberately has no internet egress and cannot download them (see that namespace's
+      # network-policy.yaml; shipping it with runtime curls is what caused the outage fixed in
+      # that repo's #240). An `image` volume is pulled by the kubelet, exactly like a container
+      # image, so it needs no egress rule at all. A ConfigMap cannot carry a ~100MB binary, and
+      # an emptyDir has to be filled by *something* -- an initContainer fetching them is
+      # subject to the identical pod NetworkPolicy, so it does not help.
+      #
+      # NOT widened into the allow-list above, deliberately. An `image` volume mounts an
+      # arbitrary OCI image's filesystem into a pod; that is worth flagging by default, which
+      # is the judgement the virt-launcher exclusion above already made when it chose an
+      # exclusion over an allow-list entry. Kubernetes' own PSS `restricted` profile does
+      # permit `image` volumes (measured: a probe pod using two of them drew a
+      # `restricted:latest` warning naming only its missing seccompProfile), so widening would
+      # be defensible upstream-alignment -- but it would silently retire a constraint this
+      # cluster has chosen to keep, for every workload, to fix one.
+      #
+      # WHAT BOUNDS THE RISK, and it is weaker here than for virt-launcher above, so read this
+      # rather than assuming parity: both references are first-party upstream images for the
+      # tools they carry (ghcr.io/siderolabs/talosctl, registry.k8s.io/kubectl), both are
+      # mounted `readOnly: true`, and the container consumes them as binaries only. But they
+      # are pinned by TAG, NOT DIGEST -- not by preference: pinning an image volume by digest
+      # needs the `ImageVolumeWithDigest` feature gate, which is ALPHA and measured disabled
+      # (`kubernetes_feature_enabled` = 0) on all four nodes of this cluster. So unlike every
+      # reference in the virt-launcher exclusion above, these two are mutable at the source:
+      # an upstream republish of the same tag would be mounted here without anything noticing.
+      #
+      # WHAT WOULD MAKE THIS WRONG LATER: (1) this exclusion covers any pod named
+      # provision-agent-admin* in this namespace, so a future rewrite of that CronJob mounting
+      # a *different*, unvetted image would pass unflagged -- reviewing the `reference:` values
+      # at the point they change stays a manual discipline; (2) if `ImageVolumeWithDigest`
+      # graduates and is enabled here, these two should be repinned to digests and this
+      # paragraph revisited, because the tag-mutability caveat is the only real gap;
+      # (3) if a second workload in this namespace needs the same treatment, prefer a second
+      # name-scoped entry over broadening this one to the namespace -- a namespace-wide
+      # exclusion here would cover exactly the pods that hold the cluster-admin credential.
+      - resources:
+          names:
+          - 'provision-agent-admin*'
+          namespaces:
+          - sandbox-lifecycle
