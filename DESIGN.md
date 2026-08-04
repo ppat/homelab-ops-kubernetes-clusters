@@ -250,11 +250,34 @@ another kind's content defeats a kind-level exclusion — wrapper kinds, or
 controller-written state/snapshot kinds that carry another kind's payload.
 When a group mixes credential-bearing and benign kinds, enumerate kinds
 rather than wildcarding the group, and re-check the enumeration whenever the
-operator adds a kind. `get`/`list`/`watch` is also not uniformly a read-only
-boundary: the API server maps HTTP method to RBAC verb for `*/proxy`
+operator adds a kind. Wrapper kinds do not respect API-group boundaries, so
+enumerate the wrappers before trusting an exclusion: KubeVirt records each
+`VirtualMachine`'s full spec in an `apps/controllerrevisions` object on every
+start, which puts the payload of an excluded kind in a group that looks
+entirely unrelated to it. `get`/`list`/`watch` is also not uniformly a
+read-only boundary: the API server maps HTTP method to RBAC verb for `*/proxy`
 subresources, and kubelet exposes GET routes for exec/attach/portForward, so
 `get` on `nodes/proxy` is code-execution-equivalent — treat proxy
-subresources as write access.
+subresources as write access. Aggregated APIs decide the verb the same way,
+which is why `subresources.kubevirt.io` serves a guest console at `get`.
+
+Finally, an exclusion is only meaningful for identities bound to the role in
+question: operators ship their own aggregating `ClusterRole`s (KubeVirt's
+`kubevirt.io:view` carries `rbac.authorization.k8s.io/aggregate-to-view`, and
+its `kubevirt.io:default` is bound to `system:authenticated`), so check what
+a subject already holds through `view` or through the operator's own bindings
+before concluding a kind is unreadable. That also means an exclusion is a
+property of a *subject*, deliberately, not a cluster-wide guarantee: stock
+`system:aggregate-to-view` — which `view` consumes, and which `oidc-readers`
+binds `homelab-users` to — carries `apps/controllerrevisions` and `pods/log`
+alongside everything else it aggregates, so both channels a KubeVirt
+exclusion is built to withhold stay fully readable by any authenticated human
+through `view`. That's intentional: a dedicated read-only `ClusterRole` like
+this one gets scoped hardest around the identity reachable from an LLM — an
+agent that can be prompted, acts without a human reading every response, and
+can carry output past the cluster boundary — while an authenticated human
+holding `view` is a different threat model and is deliberately left
+unconstrained.
 
 Identities bound here must not live in `kube-system`: it's conventionally
 exempted from Pod Security Admission and from policy-engine namespace
