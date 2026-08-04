@@ -1,0 +1,40 @@
+---
+# A plain networking.k8s.io Ingress, not a Traefik IngressRoute: this cluster's
+# external-dns only watches `sources: [ingress, service]` (apps repo,
+# infrastructure/subsystems/networking-core/external-dns/helm-release-external-dns.yaml)
+# -- an IngressRoute would get no DNS record at all. Every other hostname on
+# this cluster (harbor.${domain_name}, whoami.${domain_name}, the Authentik
+# outpost) already follows this same plain-Ingress-plus-Traefik-annotations
+# shape for the same reason; this stays consistent with it rather than
+# introducing IngressRoute as a one-off.
+#
+# Routes directly to harbor-core (the same internal Service Harbor's own
+# Ingress targets), not back out through Harbor's own external hostname --
+# there is no need to leave the cluster to reach it, and doing so would need a
+# second round of TLS plus a real risk of routing back through this same
+# Ingress if the hostnames were ever confused.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dockerio-harbor
+  namespace: harbor
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: dockerio-harbor.${domain_name}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: harbor-dockerio-rewrite@kubernetescrd,harbor-dockerio-host@kubernetescrd
+spec:
+  # empty tls, so that the default (wildcard *.${domain_name}) certificate is
+  # assigned -- same convention as whoami-ingress.yaml/harbor's own ingress.
+  tls: []
+  rules:
+  - host: dockerio-harbor.${domain_name}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-core
+            port:
+              number: 80

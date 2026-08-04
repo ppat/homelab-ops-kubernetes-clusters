@@ -39,10 +39,14 @@ sources from `root`, not a module `GitRepository`):
 | Directory | Purpose |
 | --- | --- |
 | `outpost/` | Deploys a remote Authentik outpost, with the routing/ingress to reach it, so this cluster's Ingress can authenticate against the Authentik instance running on `homelab` without running Authentik itself here |
+| `harbor-dockerio-mirror/` | An `Ingress` + rewrite `Middleware` pair fronting `harbor-core` on its own hostname (`dockerio-harbor.${domain_name}`), rewriting `/v2/<repo>/...` to `/v2/docker.io/<repo>/...` so Docker Hub pulls from any Docker client on the network land in Harbor's `docker.io` proxy-cache project. Exists because Docker's `registry-mirrors` has no equivalent of containerd's `overridePath`, so it can only work against a registry that accepts unprefixed `/v2/...` paths — see `apps-harbor-dockerio-mirror`'s `Kustomization` and ppat/homelab-ops-kubernetes-experiments#226 |
 
 This exists because SSO (`components/sso`) is used across both clusters, but
 Authentik itself (`security-extra`) only runs on `homelab` — the outpost lets
-`nas`'s apps (Harbor, Bitwarden) participate in the same SSO domain.
+`nas`'s apps (Harbor, Bitwarden) participate in the same SSO domain. The
+`docker.io` mirror ingress exists for the unrelated reason above, and is
+listed here purely because it shares the same "content authored directly in
+this repo, sourced from `root`" shape as `outpost/`.
 
 ## Module dependency graph
 
@@ -51,6 +55,7 @@ flowchart TB
     classDef core fill:#dcfce7,stroke:#059669,color:#064e3b
     classDef apps fill:#93c5fd,stroke:#2563eb,color:#1e3a8a
     classDef outpost fill:#fde68a,stroke:#d97706,color:#92400e
+    classDef mirror fill:#fecaca,stroke:#dc2626,color:#7f1d1d
 
     subgraph Core["Infrastructure (Core)"]
         sec[security-core]:::core
@@ -68,11 +73,13 @@ flowchart TB
     end
 
     out[Authentik outpost]:::outpost
+    dio[docker.io mirror ingress]:::mirror
 
     net --> sec & nfs
     minio --> nfs
     db --> net & nfs
     out --> sec & net
+    dio --> net & harbor
 
     Core --> Apps
 ```
