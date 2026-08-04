@@ -1,0 +1,72 @@
+---
+# Grants vm-rebuilder what its weekly rebuild cycle for talos-vm needs to trigger
+# `provision-agent-admin` -- a SAME-namespace grant, unlike role-sandbox-docker.yaml/
+# role-sandbox-talos.yaml, because that CronJob now lives in `sandbox-lifecycle` itself
+# (homelab-ops-kubernetes-experiments#230: it needs this host cluster's API to relay the
+# agent-admin credential to Bitwarden, which `sandbox-talos` is permanently denied -- the
+# same reason vm-rebuilder itself lives here and not in `sandbox-talos`/`sandbox-docker`).
+# Before #230, this was one more `cronjobs`/`jobs` rule inside role-sandbox-talos.yaml,
+# reaching cross-namespace; that file no longer grants anything toward
+# `provision-agent-admin` at all -- this Role is the whole of what replaced it, not an
+# addition alongside it.
+#
+# `create` on `jobs` cannot be `resourceNames`-scoped, same limitation as
+# role-sandbox-talos.yaml's copy of this grant -- so this is transitively "run any pod in
+# sandbox-lifecycle", not just "trigger provision-agent-admin". State plainly what that
+# adds that role-sandbox-talos.yaml's grant didn't: provision-agent-admin's own
+# ServiceAccount (homelab-ops-kubernetes-experiments, sandbox-talos/lifecycle/agent-admin-
+# credentials.yaml) holds `get`/`patch` on exactly one Secret
+# (`sandbox-lifecycle/sandbox-talos-agent-admin`) -- nothing stops a Job created under this
+# grant from setting `serviceAccountName: provision-agent-admin` on its own pod spec (pod
+# creation does not gate which ServiceAccount a namespace's own pods may request), so full
+# compromise of vm-rebuilder now additionally yields read/patch of that one relay Secret.
+# Accepted rather than closed, for the same shape of reasoning role-sandbox-talos.yaml
+# already applies to its own `jobs:create`: the alternative (a poll-based trigger with no
+# `create` verb at all, see that file's own closing paragraph) has a real standing cost, and
+# what this grant reaches is one narrowly-scoped Secret behind a Role that itself grants
+# nothing else in the cluster -- not a talosconfig, not cluster-admin, not this host
+# cluster's control plane.
+#
+# This namespace holds only two ServiceAccounts total (vm-rebuilder, provision-agent-admin)
+# and, as of this Role, no Secret vm-rebuilder itself can read directly -- smaller blast
+# radius than the equivalent grant would have been reaching into sandbox-talos, which is why
+# this split (narrower cross-namespace reach into sandbox-talos, a same-namespace grant here
+# instead) is a net tightening of the boundary that matters most (sandbox-talos, where AI
+# agents hold full write), even though it is not a reduction in the raw number of
+# `jobs:create` grants this SA holds.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vm-rebuilder
+  namespace: sandbox-lifecycle
+rules:
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  resourceNames:
+  - provision-agent-admin
+  verbs:
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - get
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vm-rebuilder
+  namespace: sandbox-lifecycle
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vm-rebuilder
+subjects:
+- kind: ServiceAccount
+  name: vm-rebuilder
+  namespace: sandbox-lifecycle
