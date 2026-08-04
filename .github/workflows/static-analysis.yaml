@@ -144,8 +144,22 @@ jobs:
             *) echo "::error::${fixture} declares no expected outcome in its filename"; status=1; continue ;;
           esac
           echo "::group::${fixture} (want exit ${want})"
-          mise exec -- kyverno apply "${policy}" --resource "${fixture}" --table --detailed-results --remove-color
-          got=$?
+          # `|| got=$?` is load-bearing, not a style tic -- do NOT "clean up" into a bare call
+          # followed by `got=$?`. Actions invokes this step as `bash --noprofile --norc -e -o
+          # pipefail`, and the `set -uo pipefail` above does not cancel that inherited `-e`.
+          # A bare invocation therefore aborts the whole script on the first fixture that
+          # exits non-zero -- which is precisely the two fixtures whose *job* is to exit
+          # non-zero. Measured: it killed the run mid-loop, so the last fixture never ran and
+          # no `::error file=` was ever printed, and the job failed while the exclusion under
+          # test was behaving perfectly. A guard rail that cannot run to completion, failing in
+          # a way that looks exactly like the thing it guards being broken.
+          # `|| got=$?` keeps `-e` on for every other command here while making this one
+          # command's non-zero exit the data it is supposed to be. (The sibling
+          # rbac-clusterroles job above dodges this by wrapping its call in `if ! ...; then`,
+          # which is `-e`-exempt for the same reason; this job needs the numeric code, not
+          # just pass/fail.)
+          got=0
+          mise exec -- kyverno apply "${policy}" --resource "${fixture}" --table --detailed-results --remove-color || got=$?
           echo "::endgroup::"
           if [ "${got}" -ne "${want}" ]; then
             echo "::error file=${fixture}::expected kyverno apply to exit ${want}, got ${got} -- restrict-volume-types' image-volume exclusion has changed scope"
