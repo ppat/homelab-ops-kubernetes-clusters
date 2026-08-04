@@ -31,9 +31,16 @@
 # and, as of this Role, no Secret vm-rebuilder itself can read directly -- smaller blast
 # radius than the equivalent grant would have been reaching into sandbox-talos, which is why
 # this split (narrower cross-namespace reach into sandbox-talos, a same-namespace grant here
-# instead) is a net tightening of the boundary that matters most (sandbox-talos, where AI
-# agents hold full write), even though it is not a reduction in the raw number of
-# `jobs:create` grants this SA holds.
+# instead) is a net tightening of the boundary that matters most. That boundary is
+# sandbox-talos not because of any agent access to it -- AI agents hold no write access to
+# any namespace on this HOST cluster, sandbox-talos included, full stop (see
+# role-sandbox-talos.yaml's own correction of an earlier draft's false claim to the
+# contrary) -- but because it holds talos-vm-talosconfig, a year-long, effectively
+# unrevocable os:admin client cert reachable by anything with pod-create rights there.
+# Keeping the cross-namespace reach into *that* namespace as narrow as possible (one target,
+# not two) matters regardless of who or what could ever compromise the principal reaching
+# into it. This is not a reduction in the raw number of `jobs:create` grants vm-rebuilder
+# holds overall -- see role-sandbox-talos.yaml's own comment for that count.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

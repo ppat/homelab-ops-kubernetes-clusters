@@ -34,25 +34,38 @@
 # os:admin client cert). That raw exposure does NOT shrink just because one fewer workload
 # is triggered through it -- `jobs:create` is still unscoped, same as before. What narrows is
 # the *justification* (one legitimate target, not two) and the RoleBinding's declared intent
-# (this Role, in this namespace, exists solely to reach `bootstrap-talos-vm` now). Three
-# things bound accepting the grant at all, unchanged from before:
-#   1. It grants nothing AI agents don't already hold in sandbox-talos -- that namespace is
-#      defined as the one agents get full write access to (see its own network-policy.yaml
-#      "CAVEAT" annotation), so this creates no new capability *class*, only one more
-#      principal equal to an existing one.
-#   2. vm-rebuilder lives in sandbox-lifecycle, which agents cannot write to -- a
-#      compromised agent does not acquire this SA or its token.
-#   3. Full compromise of vm-rebuilder's access to *this* Role yields: delete talos-vm and
+# (this Role, in this namespace, exists solely to reach `bootstrap-talos-vm` now).
+#
+# THIS IS A NEW CAPABILITY ON THE HOST CLUSTER, NOT A RESTATEMENT OF EXISTING ACCESS -- an
+# earlier draft of this comment justified the grant partly by claiming it "grants nothing AI
+# agents don't already hold in sandbox-talos." That claim is false and has been removed: AI
+# agents hold no write access to *any* namespace on this HOST cluster, sandbox-talos
+# included -- the host cluster is read-only to agents, full stop. (What agents *do* hold is
+# cluster-admin *inside the guest Talos cluster* running in talos-vm -- a different API
+# server entirely, reachable only from inside that VM, with no bearing on this Role or any
+# other host-cluster RBAC.) So this grant is not "one more principal equal to existing
+# occupants" -- sandbox-talos has no agent-controlled occupant on the host side for it to be
+# equal to. It is a genuinely new write-capable credential on this host cluster.
+#
+# What actually justifies accepting it, on the correct grounds:
+#   1. Reachability, not equivalence. This capability exists only in a namespace no agent
+#      can reach (`sandbox-lifecycle` -- see namespace.yaml: no ingress rule at all, no
+#      principal, agent or otherwise, that can create a pod there or read its
+#      ServiceAccount's token), held by a ServiceAccount no agent can mount, on a cluster
+#      agents cannot write to at all. The only ways to invoke it are Flux's own scheduled
+#      reconcile of this CronJob and an operator running `kubectl` by hand.
+#   2. Full compromise of vm-rebuilder's access to *this* Role yields: delete talos-vm and
 #      its PVC, read pod logs in this namespace, and run pods in sandbox-talos specifically
-#      (to reach bootstrap-talos-vm). It cannot read a Secret here, and cannot touch this
-#      host cluster's control plane from this namespace. See role-sandbox-lifecycle.yaml for
-#      what compromise of *that* Role additionally yields -- it is not zero, now that a
-#      second grant exists.
+#      (to reach bootstrap-talos-vm) -- reachable only through compromise of vm-rebuilder
+#      itself (its image, its own script), never through anything an agent controls. It
+#      cannot read a Secret here, and cannot touch this host cluster's control plane from
+#      this namespace. See role-sandbox-lifecycle.yaml for what compromise of *that* Role
+#      additionally yields -- it is not zero, now that a second grant exists.
 # The zero-grant variant costs roughly hourly bootstrap cadence instead of triggered-on-
-# demand (~1.2 GB/day of repeated talosctl downloads) to avoid a grant that is already equal
-# to what the namespace's normal occupants hold. If that trade is judged wrong on review, the
-# fix is deleting `create` below and switching rebuild-talos-vm-cronjob.yaml's Step 4 to the
-# poll-based variant -- both are correct, only the standing cost differs.
+# demand (~1.2 GB/day of repeated talosctl downloads) as the standing price of not holding
+# this capability at all. If that trade is judged wrong on review, the fix is deleting
+# `create` below and switching rebuild-talos-vm-cronjob.yaml's Step 4 to the poll-based
+# variant -- both are correct, only the standing cost differs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
