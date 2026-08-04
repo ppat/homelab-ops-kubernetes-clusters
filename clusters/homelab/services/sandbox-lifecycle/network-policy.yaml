@@ -1,8 +1,9 @@
 ---
 # Default-deny both directions. Nothing needs to reach a pod in this namespace (no ingress
-# rule exists below at all), and everything a rebuild pod needs outbound is enumerated by
-# name below -- CoreDNS and this host cluster's own API server, nothing else. Unlike
-# sandbox-docker/sandbox-talos, this namespace does NOT get a broad internet-egress allow:
+# rule exists below at all), and everything a rebuild/relay pod needs outbound is
+# enumerated by name below -- CoreDNS, this host cluster's own API server, and the
+# sandbox-talos VM (Kubernetes + Talos APIs), nothing else. Unlike sandbox-docker/
+# sandbox-talos, this namespace does NOT get a broad internet-egress allow:
 # the CronJobs here run the official registry.k8s.io/kubectl image (see this module's own
 # README and homelab-ops-kubernetes-experiments' sandbox-lifecycle module), so they need no
 # internet access at all -- image *pulls* are performed by the kubelet and are unaffected
@@ -63,12 +64,33 @@ spec:
       port: 53
 ---
 # The one thing this whole namespace exists to be able to reach: the host cluster's own
-# in-cluster API server ClusterIP, which sandbox-docker/sandbox-talos deliberately cannot
-# reach (it sits inside their egress `except` list -- see this repo's network-policy.yaml
-# files there, and the live falsifiability probe that asserts it stays BLOCKED on every
-# cycle). /32, not a broader range: 10.43.0.1 is this cluster's fixed kube-apiserver
-# ClusterIP (the default Service CIDR's first address), and nothing else in that range is
-# ever a legitimate destination for these CronJobs.
+# in-cluster API server, which sandbox-docker/sandbox-talos deliberately cannot reach (it
+# sits inside their egress `except` list -- see this repo's network-policy.yaml files
+# there, and the live falsifiability probe that asserts it stays BLOCKED on every cycle).
+#
+# NOT an ipBlock on the 10.43.0.1 ClusterIP -- that was tried first and does not work, for
+# the same DNAT-vs-NetworkPolicy reason documented in allow-dns-egress above and at length
+# in sandbox-talos/network-policy.yaml's allow-egress-lb-ingress-vips comment: k3s's
+# embedded kube-proxy DNATs a ClusterIP to a real backend in the `nat` table's
+# PREROUTING/OUTPUT chains, which runs before kube-router's FORWARD-chain NetworkPolicy
+# enforcement ever sees the packet -- so the destination NetworkPolicy evaluates is the
+# post-DNAT backend, never the ClusterIP a pod dials. k3s runs the API server as a host
+# process, not a pod, so the fix here can't be a podSelector either (unlike
+# allow-egress-lb-ingress-vips' Traefik fix) -- it has to name the backends directly.
+# Confirmed for this Service specifically, not just inferred from the other two writeups:
+# `Endpoints/kubernetes` in `default` resolves to the four node IPs below on port 6443,
+# not 10.43.0.1:443. /32 per node, not a range: these are this cluster's fixed control
+# -plane node IPs (already hardcoded as DENY targets in
+# sandbox-docker/sandbox-talos's own netpol-falsifiability-probe Deployments, NODE_IPS env
+# var), and nothing else in 192.168.8.0/24 is ever a legitimate destination for these
+# CronJobs.
+#
+# DEBUGGING HINT: this cluster's kube-router controller REJECTs a denied packet instead of
+# DROPping it, so if this rule is ever wrong again (wrong IP, wrong port, selector typo),
+# the CronJob's symptom is `connection refused` against a perfectly healthy API server --
+# indistinguishable at the TCP level from a closed port, and nothing about that symptom
+# points at a NetworkPolicy. If vm-rebuilder ever gets connection-refused against the host
+# API, check this rule before assuming the API server itself is down.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -81,7 +103,60 @@ spec:
   egress:
   - to:
     - ipBlock:
-        cidr: 10.43.0.1/32
+        cidr: 192.168.8.65/32
+    - ipBlock:
+        cidr: 192.168.8.67/32
+    - ipBlock:
+        cidr: 192.168.8.68/32
+    - ipBlock:
+        cidr: 192.168.8.69/32
     ports:
     - protocol: TCP
-      port: 443
+      port: 6443
+---
+# Lets the provision-agent-admin credential-relay CronJob
+# (homelab-ops-kubernetes-experiments#230, this repo's companion PR #845) reach the Talos
+# sandbox VM directly: talos-vm's own Kubernetes API (6443, to authenticate the freshly
+# minted agent-admin kubeconfig before pushing it to Bitwarden) and its Talos API (50000,
+# to pull sandbox_talos_vm_talosconfig and drive the bootstrap). #845 adds the matching
+# ingress peer in sandbox-talos/network-policy.yaml's allow-coder-and-mcp-ingress -- read
+# that PR before changing either side, so labels and ports stay in agreement.
+#
+# namespaceSelector + podSelector on the VM's own pod label
+# (app.kubernetes.io/name: talos-vm), deliberately NOT an ipBlock on talos-vm's Service
+# ClusterIP -- same post-DNAT reason as allow-egress-kube-apiserver above: kube-proxy DNATs
+# the ClusterIP to the virt-launcher pod's IP before kube-router's NetworkPolicy
+# enforcement ever evaluates the packet, so an ipBlock naming the ClusterIP would silently
+# never match, exactly like allow-egress-lb-ingress-vips' original homelab-VIP mistake in
+# sandbox-talos/network-policy.yaml. A pod IP is not a Service backed by a host process
+# here (unlike the kube-apiserver case above), so podSelector is available and is the
+# correct fix, not a node-IP ipBlock.
+#
+# DEBUGGING HINT: this cluster's kube-router controller REJECTs a denied packet instead of
+# DROPping it, so a labeling/namespace mismatch here (or on #845's ingress half) surfaces
+# as `connection refused` against a healthy, reachable VM -- not as anything that points at
+# a NetworkPolicy. If the relay CronJob fails with connection-refused against talos-vm,
+# check that this rule's selectors still match #845's ingress peer before assuming the VM
+# itself is unreachable or down.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-sandbox-talos-vm
+  namespace: sandbox-lifecycle
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: sandbox-talos
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: talos-vm
+    ports:
+    - protocol: TCP
+      port: 6443
+    - protocol: TCP
+      port: 50000
