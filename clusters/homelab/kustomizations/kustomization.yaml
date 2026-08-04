@@ -27,5 +27,6 @@ resources:
 - config-services-image-builder.yaml
 - config-services-sandbox-docker.yaml
 - config-services-sandbox-talos.yaml
+- config-services-sandbox-lifecycle.yaml
 - policy-pod-security-standards.yaml
 - policy-best-practices.yaml

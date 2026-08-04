@@ -1,0 +1,78 @@
+---
+# Grants vm-rebuilder (sandbox-lifecycle namespace -- see serviceaccount.yaml and the
+# RoleBinding below) exactly what its weekly destroy-and-rebuild cycle for docker-vm needs
+# to do, in sandbox-docker, and nothing else. Written from the threat model, not copied:
+# this is the first RBAC of any kind for this namespace, and it is deliberately narrower
+# than "the obvious KubeVirt admin role" in three ways worth stating up front.
+#
+# - `delete` targets the VirtualMachine, never the VirtualMachineInstance: deleting the VM
+#   is what cascades to the VMI and its virt-launcher pod via ownerReferences, so no
+#   `virtualmachineinstances` verb and no `pods: delete` verb need to exist here at all.
+#   Deleting only the VMI would be actively wrong -- docker-vm's runStrategy is Always, so
+#   KubeVirt would just recreate the VMI within seconds against the same PVC.
+# - Every delete/get is `resourceNames`-scoped to the one named VM and the one named PVC.
+#   This SA can never touch pyload-data, radarr-x-data, or any other object in this
+#   namespace or cluster -- compromise of this SA yields exactly "delete docker-vm and its
+#   storage," nothing broader.
+# - No `secrets`, `pods/exec`, `pods/ephemeralcontainers`, `subresources.kubevirt.io/*`
+#   (no start/stop/restart/console needed), or anything cluster-scoped (including
+#   `persistentvolumes` -- the Delete-reclaim StorageClass, not a PV patch, is what closes
+#   the reclaim-policy leak; see sc-longhorn-local-non-replicated-ephemeral.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vm-rebuilder
+  namespace: sandbox-docker
+rules:
+- apiGroups:
+  - kubevirt.io
+  resources:
+  - virtualmachines
+  resourceNames:
+  - docker-vm
+  verbs:
+  - get
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  resourceNames:
+  - docker-vm-storage
+  verbs:
+  - get
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  # Cannot be resourceNames-scoped: the virt-launcher pod's name is generated
+  # (virt-launcher-docker-vm-<suffix>) and has to be discovered by label to read its
+  # console log below. The one unavoidably broad verb this Role grants, and it is
+  # read-only, in one namespace, against pods this SA cannot delete or exec into.
+  - list
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  # Reads the guest-console-log sidecar (virt-tail) -- the provisioning-verdict sentinels
+  # cloud-init-secret.yaml writes to /dev/console. That console output carries the SSH
+  # host key's *public* fingerprint and authorized_keys entries, never private material.
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vm-rebuilder
+  namespace: sandbox-docker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vm-rebuilder
+subjects:
+- kind: ServiceAccount
+  name: vm-rebuilder
+  namespace: sandbox-lifecycle
