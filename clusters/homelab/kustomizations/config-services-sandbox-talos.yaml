@@ -11,8 +11,9 @@ spec:
   - name: infra-networking-core
     namespace: flux-system
   # Short interval, split out of config-services.yaml's 15m0s on purpose: this namespace
-  # is the one AI agents get full write access to, so drift correction on its isolation
-  # boundary needs to converge fast.
+  # hosts the Talos VM that AI agents get full write access to (inside its guest cluster,
+  # not this host-cluster namespace itself, which stays read-only to agents), so drift
+  # correction on its isolation boundary needs to converge fast.
   interval: 1m0s
   path: ./clusters/homelab/services/sandbox-talos
   prune: true
