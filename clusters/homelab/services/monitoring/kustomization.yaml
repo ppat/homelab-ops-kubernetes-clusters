@@ -37,6 +37,7 @@ configMapGenerator:
   - dashboards/sandbox-vm-egress.json
   options:
     annotations:
+      grafana_folder: Sandbox VMs
       kustomize.toolkit.fluxcd.io/substitute: disabled
     labels:
       grafana_dashboard: "1"
@@ -47,6 +48,7 @@ configMapGenerator:
   - dashboards/cluster-network-egress.json
   options:
     annotations:
+      grafana_folder: Sandbox VMs
       kustomize.toolkit.fluxcd.io/substitute: disabled
     labels:
       grafana_dashboard: "1"
