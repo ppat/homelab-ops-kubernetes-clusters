@@ -209,6 +209,35 @@ No `kubectl cordon`, no `systemctl stop/start k3s` — this path makes no
 change that a running k3s process, or anything scheduled on the node, would
 ever observe.
 
+Then give the node its Longhorn tag — **in git, not by hand**:
+
+```yaml
+# clusters/homelab/storage/infra/node/<node-name>.yaml
+# (add the filename to that directory's kustomization.yaml too)
+```
+
+`sc-longhorn-local-non-replicated-ephemeral` carries
+`nodeSelector: "virtualization"`, so Longhorn will only place a sandbox VM's
+disk replica on a node carrying that tag. The tag is declared declaratively
+per node in `clusters/homelab/storage/infra/node/` and applied by the
+`config-storage` Flux `Kustomization` — see the reasoning block in any of
+those manifests for why they declare `spec.tags` and nothing else.
+
+**The label and the Longhorn tag are a pair, and the pairing is asymmetric.**
+Tag only nodes that also carry the label — never the reverse. A node that is
+labelled but untagged is harmless (the VM may run there; Longhorn just won't
+put a disk there). A node that is tagged but *not* labelled lets Longhorn
+place a VM's disk on a node the VM's own `nodeSelector` forbids it to run on,
+which pins the resulting PV's `nodeAffinity` to an unusable node and leaves
+the VM permanently unschedulable. See the reasoning block in
+`clusters/homelab/storage/infra/sc/sc-longhorn-local-non-replicated-ephemeral.yaml`.
+
+The two halves live in different places on purpose and that is the drift
+risk: the label is hand-applied node prep (k3s only reads `node-label+` at
+registration), while the tag is GitOps. Adding a node to the KubeVirt pool
+means doing **both** — the `kubectl label` above *and* a PR adding the node's
+tag manifest. Neither one alone is a working node.
+
 #### Path B — a fresh or rebuilt node
 
 Applies to a node reinstalled from scratch, a disaster-recovery rejoin, or a
@@ -254,7 +283,58 @@ third node added to the KubeVirt pool later.
    below was verified against stock Ubuntu kernel packaging on these two
    specific nodes — confirm it still holds on whatever base image actually
    provisioned this one before assuming it for granted.
-5. `kubectl uncordon <node>` if step 1 applied.
+5. Tag the node in Longhorn, via git — but **not yet**. Read the ordering
+   warning below first; getting this step early is the one mistake in this
+   runbook that permanently breaks a node.
+
+   Add `clusters/homelab/storage/infra/node/<node-name>.yaml` (copy an
+   existing one — three lines of `spec` plus the reasoning header) and list
+   it in that directory's `kustomization.yaml`. The `config-storage`
+   `Kustomization` applies it.
+
+   The tag must be present before any sandbox VM PVC is created against
+   `sc-longhorn-local-non-replicated-ephemeral` — Longhorn rejects volume
+   creation outright if a referenced tag exists on no node.
+
+   Only tag a node that also carries the
+   `homelab-ops.internal/virtualization` label — see the asymmetry note at
+   the end of Path A for what breaks otherwise.
+6. `kubectl uncordon <node>` if step 1 applied.
+
+#### Never add a node's tag manifest before Longhorn has created its CR
+
+This is the ordering hazard in step 5, and it is worth stating on its own
+because the damage is silent and permanent.
+
+**Correct order:** bring the node up and let it register → wait for
+`longhorn-manager` to create its `nodes.longhorn.io` CR → verify the CR
+exists → *then* add the tag manifest and merge.
+
+```bash
+# The gate. Do not add the manifest until this returns the node.
+kubectl -n longhorn-system get nodes.longhorn.io <node>
+```
+
+**Why the order matters.** `longhorn-manager` bootstraps a node with
+Get-then-Create (`app/daemon.go`, `initDaemonNode`): it looks for an existing
+`Node` object and only calls `CreateDefaultNode` if there isn't one. If Flux
+has already applied a tag manifest, that Get *succeeds* against a CR Longhorn
+never authored, so `CreateDefaultNode` never runs. The node is then left with
+`spec.name: ""`, `allowScheduling: false`, and **no default disk** — it
+contributes zero storage, permanently. There is no repair path:
+`CreateDefaultNode` is once-per-node by design, and it does not retry.
+
+It also resists being fixed by hand. The validating webhook rejects `Update`
+requests whose `spec.name` is empty, so the wedged object refuses the very
+patch that would repair it. Nothing prevents Flux creating it in the first
+place either — the CRD marks no `spec` field as required, and the webhook's
+`Create` path does not check `spec.name`.
+
+Recovery, if it happens: delete the partial CR
+(`kubectl -n longhorn-system delete nodes.longhorn.io <node>`) and restart
+that node's `longhorn-manager` pod so `initDaemonNode` runs again and finds
+nothing — but remove the manifest from git first, or Flux will simply
+recreate the partial object and you will be back where you started.
 
 **Caveat verified against current k3s docs, and it's why Path A and Path B
 differ:** k3s's `--node-label` (and therefore the `config.yaml.d`
@@ -266,7 +346,15 @@ Both target nodes are already registered, so the drop-in alone will
 `kubectl label` step); a genuinely fresh or rejoining node picks it up
 automatically at registration (Path B's reason it doesn't need that step).
 Keep the drop-in and the `kubectl label` in sync on already-registered nodes
-— if one is ever removed, remove the other too.
+— if one is ever removed, remove the other too, and retire the Longhorn node
+tag first. Dropping the label while the tag remains is the one ordering that
+recreates the unschedulable-VM deadlock described in Path A.
+
+Retiring the tag is **not** just deleting the manifest: `prune` is patched to
+`false` for every `Kustomization` in this cluster (see
+`clusters/homelab/kustomization.yaml`), so removing the file leaves the tag
+in place on the live object. Clear `spec.tags` to `[]` in the manifest, let
+Flux apply it, and only then delete the file.
 
 #### Why no kernel-module persistence step
 

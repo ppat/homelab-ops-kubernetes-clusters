@@ -1,0 +1,20 @@
+---
+# Gives this node the "virtualization" Longhorn node tag. See beelink-ser8-1.yaml in this
+# directory for the full reasoning -- why this manifest declares spec.tags and nothing else
+# (that rule, not the ssa annotation, is what protects Longhorn's own fields), what the
+# ssa: Merge annotation actually does and does not do, and the prune/new-node lifecycle
+# gotchas. All of it applies here identically.
+#
+# Adding a second tag: write the list pre-sorted alphabetically. Longhorn's mutating
+# webhook sorts spec.tags on every write, so an unsorted manifest puts Flux and the webhook
+# in a permanent drift loop. Latent today with one tag; it bites the moment there are two.
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: minisforum-nab9-1
+  namespace: longhorn-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Merge
+spec:
+  tags:
+  - virtualization
