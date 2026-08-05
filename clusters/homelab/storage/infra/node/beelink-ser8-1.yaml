@@ -63,13 +63,14 @@
 #    spec.tags key while keeping the file: once Flux is sole owner of a field, dropping it
 #    from the manifest makes SSA *delete* it from the live object -- a different and much
 #    less obvious operation than setting it empty.
-#  - config-storage sets wait: true, so kstatus health-checks every object it applies,
-#    these included. The Longhorn Node CR carries a status condition of type Ready, which
-#    kstatus matches -- so a node going NotReady now fails the entire config-storage
-#    Kustomization (timeout 2m0s), not merely this object. That coupling did not exist
-#    before these manifests were added. Longhorn's validator also rejects updates with 403
-#    while a node's disk spec and status are mid-sync, so transient apply failures here are
-#    expected rather than alarming.
+#  - config-storage sets wait: true, so kstatus would normally assess every object it
+#    applies -- and this CR carries a status condition of type Ready that kstatus matches,
+#    which would have made one node going NotReady fail the entire config-storage
+#    Kustomization rather than just this object. That is why config-storage now carries a
+#    healthCheckExprs entry for longhorn.io Node pinning current to "true"; see the comment
+#    there. If that entry is ever removed, this coupling comes straight back. Separately,
+#    Longhorn's validator rejects updates with 403 while a node's disk spec and status are
+#    mid-sync, so transient apply failures here are expected rather than alarming.
 #  - If a node ever needs more than one tag, write the list pre-sorted alphabetically:
 #    Longhorn's mutating webhook sorts spec.tags on every write, so an unsorted manifest
 #    reconciles into a permanent drift loop.

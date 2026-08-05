@@ -283,17 +283,14 @@ third node added to the KubeVirt pool later.
    below was verified against stock Ubuntu kernel packaging on these two
    specific nodes — confirm it still holds on whatever base image actually
    provisioned this one before assuming it for granted.
-5. Tag the node in Longhorn, via git. Add
-   `clusters/homelab/storage/infra/node/<node-name>.yaml` (copy an existing
-   one — they are three lines of `spec` plus the reasoning header) and list
+5. Tag the node in Longhorn, via git — but **not yet**. Read the ordering
+   warning below first; getting this step early is the one mistake in this
+   runbook that permanently breaks a node.
+
+   Add `clusters/homelab/storage/infra/node/<node-name>.yaml` (copy an
+   existing one — three lines of `spec` plus the reasoning header) and list
    it in that directory's `kustomization.yaml`. The `config-storage`
    `Kustomization` applies it.
-
-   Wait for Longhorn to have created the node's own `nodes.longhorn.io` CR
-   first — it does that automatically once `longhorn-manager` runs on the
-   new node. Applying the tag manifest before that point creates a partial
-   `Node` object that Longhorn did not author; see the manifests' own
-   comments for why that is worth avoiding.
 
    The tag must be present before any sandbox VM PVC is created against
    `sc-longhorn-local-non-replicated-ephemeral` — Longhorn rejects volume
@@ -303,6 +300,41 @@ third node added to the KubeVirt pool later.
    `homelab-ops.internal/virtualization` label — see the asymmetry note at
    the end of Path A for what breaks otherwise.
 6. `kubectl uncordon <node>` if step 1 applied.
+
+#### Never add a node's tag manifest before Longhorn has created its CR
+
+This is the ordering hazard in step 5, and it is worth stating on its own
+because the damage is silent and permanent.
+
+**Correct order:** bring the node up and let it register → wait for
+`longhorn-manager` to create its `nodes.longhorn.io` CR → verify the CR
+exists → *then* add the tag manifest and merge.
+
+```bash
+# The gate. Do not add the manifest until this returns the node.
+kubectl -n longhorn-system get nodes.longhorn.io <node>
+```
+
+**Why the order matters.** `longhorn-manager` bootstraps a node with
+Get-then-Create (`app/daemon.go`, `initDaemonNode`): it looks for an existing
+`Node` object and only calls `CreateDefaultNode` if there isn't one. If Flux
+has already applied a tag manifest, that Get *succeeds* against a CR Longhorn
+never authored, so `CreateDefaultNode` never runs. The node is then left with
+`spec.name: ""`, `allowScheduling: false`, and **no default disk** — it
+contributes zero storage, permanently. There is no repair path:
+`CreateDefaultNode` is once-per-node by design, and it does not retry.
+
+It also resists being fixed by hand. The validating webhook rejects `Update`
+requests whose `spec.name` is empty, so the wedged object refuses the very
+patch that would repair it. Nothing prevents Flux creating it in the first
+place either — the CRD marks no `spec` field as required, and the webhook's
+`Create` path does not check `spec.name`.
+
+Recovery, if it happens: delete the partial CR
+(`kubectl -n longhorn-system delete nodes.longhorn.io <node>`) and restart
+that node's `longhorn-manager` pod so `initDaemonNode` runs again and finds
+nothing — but remove the manifest from git first, or Flux will simply
+recreate the partial object and you will be back where you started.
 
 **Caveat verified against current k3s docs, and it's why Path A and Path B
 differ:** k3s's `--node-label` (and therefore the `config.yaml.d`

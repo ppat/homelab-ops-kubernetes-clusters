@@ -17,6 +17,22 @@ spec:
     namespace: flux-system
   timeout: 2m0s
   wait: true
+  # Decouples this Kustomization's health gate from Longhorn node health. wait: true makes
+  # kstatus assess every applied object, and the nodes.longhorn.io CRs under
+  # storage/infra/node/ carry a status condition of type Ready that kstatus matches -- so
+  # without this, one node going NotReady would fail all of config-storage (StorageClasses,
+  # PVs, PVCs, RecurringJobs), not just that object. That coupling is not something this
+  # Kustomization ever asked for; it only appeared because those manifests introduced a
+  # Ready-bearing kind into it. A literal "true" says plainly that Flux does not gate on
+  # these objects' health, rather than string-matching a condition we do not own -- node
+  # health is Longhorn's to report and ours to alert on, not Flux's to block reconciliation
+  # over. Defining current for a kind REPLACES kstatus's built-in readiness check for it;
+  # matching is by API group + kind, so this affects only longhorn.io Node objects and not
+  # the RecurringJob CRs applied alongside them (nor core v1 Node, a different group).
+  healthCheckExprs:
+  - apiVersion: longhorn.io/v1beta2
+    kind: Node
+    current: "true"
   postBuild:
     substituteFrom:
     - kind: Secret
