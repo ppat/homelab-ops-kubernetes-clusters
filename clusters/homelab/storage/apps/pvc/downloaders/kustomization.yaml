@@ -7,7 +7,6 @@ resources:
 - bazarr-data.yaml
 - lidarr-data.yaml
 - media.yaml
-- overseerr-data.yaml
 - prowlarr-data.yaml
 - qbittorrent-data.yaml
 - qui-data.yaml
