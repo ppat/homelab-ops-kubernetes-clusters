@@ -25,8 +25,30 @@ allowVolumeExpansion: true
 parameters:
   fsType: ext4
   staleReplicaTimeout: "2880"
-  # as per https://longhorn.io/docs/1.7.1/best-practices/#io-performance
-  dataLocality: "strict-local"
+  # best-effort, NOT strict-local -- and the difference is load-bearing, not cosmetic. It is
+  # half of the pair that makes the nodeSelector below actually work; read the two together.
+  #
+  # The best practice this class has always cited
+  # (https://longhorn.io/docs/1.7.1/best-practices/#io-performance) says two things, and the
+  # twin this class was cloned from only ever satisfied the second:
+  #   "Use best-effort as the default data locality of Longhorn StorageClasses."
+  #   ...and use strict-local "for applications supporting replication", so that a workload
+  #   replicating at its own layer keeps exactly one Longhorn replica underneath rather than
+  #   paying for replication twice.
+  # That condition holds for sc-longhorn-local-non-replicated, whose consumers are CNPG
+  # Postgres clusters running 2-3 instances that replicate themselves. It does not hold
+  # here: a sandbox VM's disk is a single copy of unreplicated state, with no application
+  # layer above it doing anything. This class was created as "identical to the twin except
+  # reclaimPolicy", so strict-local came across with everything else -- the parameter was
+  # inherited, its justification was not. best-effort also matches sc-longhorn-replicated
+  # and this cluster's default-data-locality setting, so this is the odd one out being
+  # brought back in line, not a new exception.
+  #
+  # strict-local was not merely unjustified here, it was actively incompatible with the
+  # nodeSelector below, and the pair of them left talos-vm unschedulable for 24h. Do not
+  # restore it without reading the nodeSelector block -- putting it back reintroduces that
+  # outage, and reintroduces it intermittently, which is worse than reintroducing it always.
+  dataLocality: "best-effort"
   numberOfReplicas: "1"
   recurringJobSelector: '[{"name":"default", "isGroup":true}]'
   # Restricts Longhorn replica placement to nodes that can actually run the VM that will
@@ -35,24 +57,126 @@ parameters:
   # unrelated despite the parameter's name. Longhorn treats it as a hard filter: a node
   # without every listed tag is dropped from replica candidacy outright, with no fallback.
   #
-  # Without it, a numberOfReplicas: 1 volume on this class deadlocks the scheduler, and it
-  # deadlocks by luck rather than reliably -- which is what makes it a weekly-recurring
-  # defect for the sandbox VMs' destroy-and-rebuild rather than a one-off. The sandbox VM
-  # pods carry a hard nodeSelector on homelab-ops.internal/virtualization: "enabled",
-  # satisfied by 2 of this cluster's 4 nodes. Longhorn's replica scheduler knew nothing
-  # about that, so it placed the single replica wherever it had free space; the resulting
-  # PV gets spec.nodeAffinity pinned to that node, and if it isn't a virtualization node
-  # the VM pod can never be scheduled -- the PV demands one node, the pod's nodeSelector
-  # forbids it, and no retry fixes it because deleting and recreating the PVC just re-rolls
-  # the same dice.
+  # What this parameter is and is NOT for, stated precisely because the previous version of
+  # this comment overstated it and that overstatement is what made the outage below possible.
+  # It is NOT what keeps the VM schedulable -- dataLocality: best-effort above is. It is a
+  # placement-quality control: the sandbox VM pods carry a hard nodeSelector on
+  # homelab-ops.internal/virtualization: "enabled", satisfied by 2 of this cluster's 4 nodes,
+  # and this tag keeps Longhorn from putting the single replica on the other two, where it
+  # would serve no attach and have to be rebuilt away the first time the VM started. Without
+  # it the volume still works; it just wastes a full rebuild more often and parks replicas on
+  # nodes that can never host their consumer.
   #
-  # Two things that look like they should already prevent this, and do not:
-  #  - volumeBindingMode: WaitForFirstConsumer makes kube-scheduler pick a node first and
-  #    record it as the PVC's volume.kubernetes.io/selected-node, but Longhorn does not
-  #    honour that hint when choosing where to put the replica.
-  #  - dataLocality: strict-local governs replica-vs-attachment locality (it keeps the one
-  #    replica on whichever node the volume is attached to) -- it does not constrain the
-  #    provisioning-time node choice, which is what goes wrong here.
+  # A node tag is a veto, not a chooser: Longhorn drops untagged nodes from replica
+  # candidacy, but nothing about it steers a placement toward a tagged one. That distinction
+  # is harmless while the scheduler has a candidate SET to filter -- and became an outage
+  # once dataLocality: strict-local narrowed that set to a single node before the filter ran,
+  # because then the tag could only turn a bad choice into a hard failure, never into a good
+  # one.
+  #
+  # Which is exactly what dataLocality: strict-local did, and why this class carried both
+  # settings for a day with talos-vm unschedulable throughout. strict-local copies
+  # Volume.spec.nodeID into the replica's HardNodeAffinity (volume_controller.go
+  # reconcileVolumeCondition), and the scheduler applies that pin BEFORE the tag filter --
+  # getNodeCandidates reduces the candidate map to that one node, then getDiskCandidates
+  # drops it again for failing IsSelectorsInTags, leaving nothing and no fallback.
+  #
+  # And spec.nodeID has nothing to do with where the workload may run. Traced end to end on
+  # this cluster (Longhorn v1.11.2), against both the live objects and longhorn-manager
+  # source at that tag:
+  #  1. On a brand-new Volume both spec.nodeID and status.ownerID are empty, so every
+  #     longhorn-manager considers itself eligible to take ownership -- ownership is settled
+  #     by an unordered first-writer race, not by hashing or by any workload input.
+  #  2. Internal controllers then open an attachment ticket using status.ownerID as its
+  #     nodeID, and the VolumeAttachment controller writes spec.nodeID from the winning
+  #     ticket. talos-vm's VolumeAttachment held exactly one ticket:
+  #       type: volume-rebuilding-controller   nodeID: gmktec-g3plus-1
+  #     opened in the same second the Volume was created. Not the CSI attacher -- the VM pod
+  #     never scheduled, so it never produced a ticket. (This ticket exists at all because
+  #     the offline-replica-rebuilding setting is true cluster-wide.)
+  #  3. So spec.nodeID landed on the untagged node that won a race, while the PVC's
+  #     volume.kubernetes.io/selected-node recorded beelink-ser8-1 -- a tagged node
+  #     kube-scheduler had already chosen. Longhorn's CSI layer receives that hint and
+  #     explicitly discards it for strict-local volumes (controller_server.go CreateVolume
+  #     logs that it "ignores AccessibilityRequirements because dataLocality is
+  #     strict-local"), so nothing ever reconciles the two.
+  # Both sandbox VM volumes provisioned while both settings were in effect show it:
+  #    talos-vm    nodeID = ownerID = gmktec-g3plus-1    (untagged) -> Scheduled=False,
+  #                                                       LocalReplicaSchedulingFailure
+  #    docker-vm   nodeID = ownerID = minisforum-nab9-1  (tagged)   -> healthy
+  # With 2 of 4 managers tagged that is a coin flip per volume; docker-vm won it, talos-vm
+  # lost it. Deleting and recreating the PVC only re-rolls the same coin, which is why no
+  # retry ever fixed it. There is no setting in v1.11.2 that steers this -- checked and
+  # ruled out from source: csi-allowed-topology-keys and the StorageClass strictTopology
+  # parameter (both live on the CreateVolume topology path that strict-local skips
+  # outright), the replica soft-anti-affinity family (they only choose between candidate
+  # buckets, and every bucket is empty once the pinned node fails the tag filter), and
+  # allow-empty-node-selector-volume (relaxes only the empty-selector case).
+  #
+  # Two counterintuitive consequences, stated because they are the first two levers anyone
+  # will reach for, and both make things worse:
+  #  - Tagging FEWER nodes. Under strict-local that narrows the winning side of the flip,
+  #    not the losing side -- one tagged node would have failed 3 times in 4, not 1 in 2.
+  #  - Tagging ALL nodes so "the race cannot land wrong". It makes the tag filter vacuous:
+  #    the pin then always survives, the replica schedules on whichever node won the race,
+  #    and the PV is pinned there -- including the two nodes that cannot run a VM at all.
+  #    That is the original pre-nodeSelector failure restored in full, and silently, because
+  #    Longhorn now reports the volume as healthy.
+  #
+  # Under best-effort the replica scheduler picks from every tag-matching node instead of
+  # from one pre-chosen node, so the tag filter finally has a set to filter and the candidate
+  # set becomes exactly {nodes the VM is permitted to run on}. Every placement Longhorn can
+  # reach is then a working one -- set inclusion rather than a lucky draw.
+  #
+  # That is the second of two independent reasons the deadlock is gone, and deliberately the
+  # weaker one. The first is sufficient on its own: the PV's
+  # spec.nodeAffinity is emitted only for strict-local volumes. Measured first --
+  #    sc-longhorn-replicated           (best-effort)  -> PV has NO nodeAffinity at all
+  #    sc-longhorn-local-non-replicated (strict-local) -> PV pinned to one hostname
+  # on the same cluster, version and CSI provisioner instance -- then confirmed in source:
+  # volume_controller.go ReconcilePersistentVolume writes that field inside an
+  # `if dataLocality == strict-local && spec.NodeID != ""` guard. It is gated on data
+  # locality alone, so the differing replica counts in those two samples are not a confound.
+  # On best-effort the PV therefore stops constraining pod scheduling at all, and the
+  # "2 node(s) didn't match PersistentVolume's node affinity" half of the failure cannot
+  # recur.
+  #
+  # WHAT WOULD MAKE THAT WRONG LATER, and it is a cluster-global switch nowhere near this
+  # file: PVs have a second, independent source of nodeAffinity -- the topology that CSI
+  # CreateVolume returns, which external-provisioner stamps onto the PV. That path is inert
+  # today only because the Longhorn setting csi-allowed-topology-keys is empty
+  # (filterTopologyByAllowedKeys returns nil for an empty allow-list). Setting it -- it
+  # lives in the infra-storage-core module's Longhorn HelmRelease, not here -- would start
+  # pinning every NON-strict-local PV in the cluster, and if a StorageClass also sets
+  # strictTopology: "true" the pin is to a single hostname. It would not resurrect the
+  # strict-local path (CreateVolume skips topology entirely for those), but it would give
+  # this class's volumes a hostname pin again by a different route. If that setting is ever
+  # turned on, re-verify that a freshly provisioned volume on this class still comes up with
+  # an unpinned PV. Note also that Longhorn requires a CSI plugin restart for that setting
+  # to take effect (longhorn/longhorn#12753), so a half-applied change looks like no change.
+  #
+  # What best-effort costs here, so the trade is on the record rather than assumed:
+  #  - The engine-to-replica local data path is lost. `--data-server-protocol unix` is gated
+  #    on strict-local only, so a co-located replica is now reached over TCP rather than a
+  #    unix socket. That is the real IO cost, and it is the reason to prefer strict-local
+  #    wherever it is actually usable.
+  #  - Every attach onto a node that does not already hold the replica triggers one full
+  #    rebuild of the volume (Longhorn creates an extra local replica, then reaps the remote
+  #    one) -- 40Gi for talos-vm, 200Gi for docker-vm. Bounded here: there are only two
+  #    candidate nodes, the VMs carry a preferred nodeAffinity toward one of them, and these
+  #    volumes are destroyed and rebuilt weekly by design anyway.
+  #  - Nothing else. The revisionCounterDisabled: true that Longhorn's mutating webhook
+  #    applies automatically to strict-local volumes is already set cluster-wide here by the
+  #    disable-revision-counter setting, so dropping strict-local does not change it.
+  # `disabled` was considered and rejected: it avoids the rebuild churn entirely, but then a
+  # mismatched replica stays remote for the VM's whole life instead of for one rebuild --
+  # permanently networked IO under an etcd workload is worse than a bounded one-off copy.
+  #
+  # volumeBindingMode: WaitForFirstConsumer looks like it should have prevented all of this
+  # and does not: it makes kube-scheduler choose a node first and record it as the PVC's
+  # volume.kubernetes.io/selected-node, but Longhorn does not honour that hint when placing
+  # replicas. Verified above rather than assumed -- talos-vm's selected-node and its actual
+  # placement were different nodes.
   #
   # Drift risk, and it is asymmetric -- this is the thing to get right when adding a node.
   # The tag itself is declared per node in ../node/*.yaml and applied by the same
@@ -61,15 +185,22 @@ parameters:
   # registration time, so on an already-registered node it is a hand-applied node-prep
   # step. Two halves, two mechanisms, and nothing enforces agreement between them -- which
   # is why the node-prep runbook in this repo's OPERATIONS.md walks both together.
-  #  - Labelled but untagged: the VM may run there, Longhorn will never put a disk there.
-  #    Harmless -- it only narrows placement.
-  #  - Tagged but unlabelled: Longhorn may place a disk on a node the VM cannot run on.
-  #    That is precisely the deadlock above, reintroduced. So the tagged set must always be
-  #    a SUBSET of the labelled set; never tag a node that isn't label-eligible.
+  # Keep the tagged set and the labelled set EQUAL. Note this is a change from what this
+  # file said while it was strict-local, and the change is real rather than editorial: back
+  # then a tagged-but-unlabelled node recreated the deadlock outright, so the rule was the
+  # one-directional "tagged must be a subset of labelled". With best-effort neither mismatch
+  # can strand a VM any more -- both merely cost IO locality, quietly:
+  #  - Labelled but untagged: the VM may run there, and Longhorn may never place a replica
+  #    there -- so best-effort's locality rebuild has nowhere to go and silently gives up
+  #    (it is best-effort; failing to achieve locality is not an error). The volume then
+  #    runs over the network for as long as the VM stays on that node. No alarm anywhere.
+  #  - Tagged but unlabelled: a replica may land on a node no VM will ever attach from,
+  #    costing one full rebuild to migrate it back once the VM does attach elsewhere.
+  #    Wasteful, not fatal.
   #  - Tagged nowhere at all: Longhorn rejects volume creation outright ("specified node
   #    tag ... does not exist") and the PVC stays Pending. Loud and obvious, which is the
   #    good failure mode -- but it does mean the tag must exist before the first PVC on
-  #    this class is created, not after.
+  #    this class is created, not after. This is the one case that is still hard-failing.
   #
   # Not applied to the sc-longhorn-local-non-replicated (Retain) twin on purpose: its
   # consumers (coder/authentik/litellm/home-automation databases) have no virtualization

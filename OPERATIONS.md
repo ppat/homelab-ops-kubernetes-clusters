@@ -223,14 +223,21 @@ per node in `clusters/homelab/storage/infra/node/` and applied by the
 `config-storage` Flux `Kustomization` — see the reasoning block in any of
 those manifests for why they declare `spec.tags` and nothing else.
 
-**The label and the Longhorn tag are a pair, and the pairing is asymmetric.**
-Tag only nodes that also carry the label — never the reverse. A node that is
-labelled but untagged is harmless (the VM may run there; Longhorn just won't
-put a disk there). A node that is tagged but *not* labelled lets Longhorn
-place a VM's disk on a node the VM's own `nodeSelector` forbids it to run on,
-which pins the resulting PV's `nodeAffinity` to an unusable node and leaves
-the VM permanently unschedulable. See the reasoning block in
-`clusters/homelab/storage/infra/sc/sc-longhorn-local-non-replicated-ephemeral.yaml`.
+**The label and the Longhorn tag are a pair — keep the two sets equal.** A
+node that carries one without the other no longer strands a VM, but it does
+silently cost disk locality in both directions: labelled-but-untagged means
+the VM may run on a node Longhorn will not place its replica on, so the
+volume runs over the network indefinitely with nothing reporting it;
+tagged-but-unlabelled means a replica may land where no VM will ever attach,
+costing a full rebuild to migrate it back.
+
+This is weaker than the rule that stood while that class used
+`dataLocality: strict-local`, when tagged-but-unlabelled recreated a
+permanent deadlock and the rule was the one-directional "tagged must be a
+subset of labelled". The class is `best-effort` now, which is what removed
+that failure mode. See the reasoning block in
+`clusters/homelab/storage/infra/sc/sc-longhorn-local-non-replicated-ephemeral.yaml`
+for the mechanism and for what would bring the deadlock back.
 
 The two halves live in different places on purpose and that is the drift
 risk: the label is hand-applied node prep (k3s only reads `node-label+` at
@@ -347,8 +354,9 @@ Both target nodes are already registered, so the drop-in alone will
 automatically at registration (Path B's reason it doesn't need that step).
 Keep the drop-in and the `kubectl label` in sync on already-registered nodes
 — if one is ever removed, remove the other too, and retire the Longhorn node
-tag first. Dropping the label while the tag remains is the one ordering that
-recreates the unschedulable-VM deadlock described in Path A.
+tag first. Dropping the label while the tag remains leaves replicas placeable
+on a node no VM can attach from, which is the locality cost described in
+Path A rather than an outage.
 
 Retiring the tag is **not** just deleting the manifest: `prune` is patched to
 `false` for every `Kustomization` in this cluster (see
