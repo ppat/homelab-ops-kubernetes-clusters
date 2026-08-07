@@ -482,8 +482,9 @@ kubectl label node beelink-ser8-1 homelab-ops.internal/virtualization-
 
 ### 6. Sequencing hazard: label before `infra-virtualization-core` reconciles
 
-**As of this writing, no node carries `homelab-ops.internal/virtualization=enabled`
-yet** — step 2 above is written but not yet applied. If the
+**Both target nodes now carry `homelab-ops.internal/virtualization=enabled`** —
+step 2 above has been applied to `beelink-ser8-1` and `minisforum-nab9-1`, so
+this hazard is live only for a node added or rebuilt later. If the
 `infra-virtualization-core` `Kustomization` reconciles first, `virt-handler` has
 nowhere to schedule and the `KubeVirt` custom resource sits un-`Deployed`
 indefinitely. From the outside that looks identical to a real failure
@@ -503,7 +504,9 @@ belong in this file (see this file's own opening paragraph).
 - **The runbook and its reasoning:**
   [`experiments/apps/sandbox-talos/OPERATIONS.md`](https://github.com/ppat/homelab-ops-kubernetes-experiments/blob/main/experiments/apps/sandbox-talos/OPERATIONS.md)
 - **The runnable task itself** (`mise run build-containerdisk`), not a script in a fence:
-  [`experiments/apps/sandbox-talos/mise.toml`](https://github.com/ppat/homelab-ops-kubernetes-experiments/blob/main/experiments/apps/sandbox-talos/mise.toml)
+  [`experiments/apps/image-builder/mise.toml`](https://github.com/ppat/homelab-ops-kubernetes-experiments/blob/main/experiments/apps/image-builder/mise.toml)
+  — it lives in `image-builder/`, not `sandbox-talos/`, and the primary way it runs today is
+  in-cluster via that module's `CronJob`; the by-hand run on the Docker VM is the fallback
 - **Where it actually runs, and why**, plus the mise base/per-use-case split and the per-build
   setup sequence:
   [`experiments/apps/docker-host/OPERATIONS.md`](https://github.com/ppat/homelab-ops-kubernetes-experiments/blob/main/experiments/apps/docker-host/OPERATIONS.md)
@@ -589,11 +592,17 @@ kubectl run netpol-baseline --rm -it --restart=Never -n sandbox-docker \
 ```
 
 (swap `sandbox-docker`/its node-IP-only targets for `sandbox-talos` — same
-target list plus `docker-vm.sandbox-docker.svc.cluster.local:22`, which is
-expected to fail DNS resolution until Phase 4 creates that Service — to
-baseline the other namespace).
+target list plus `docker-vm.sandbox-docker.svc.cluster.local:22` — to baseline
+the other namespace. That one target is the exception to the expectation
+below, and it is the only one: it now *resolves* (the Service exists), but it
+must still fail to connect even at baseline, because what denies it is
+`sandbox-docker`'s own default-deny `NetworkPolicy`, whose sole ingress allow
+is the `coder` namespace — and this procedure removes `sandbox-talos`'s
+policy, not that one. Two independent policies deny that path; the baseline
+only lifts one of them.)
 
-**Expected result: every target above connects (or resolves) successfully.**
+**Expected result: every target above connects (or resolves) successfully**
+(except the cross-namespace one just noted).
 A connection failure here means the probe target itself is wrong (bad IP,
 bad port, a target that was never reachable in the first place, i.e. not
 actually exposed on a node IP) — fix
@@ -794,14 +803,20 @@ pre-explained here so it reads as expected behavior, not a bug to debug.
 `kubectl port-forward` is the supported substitute — a completely different mechanism, not
 subject to that NetworkPolicy: containerd's CRI implementation enters the *pod's own*
 network namespace and dials `localhost`, so it never reaches the veth where policy is
-enforced. Target the VM's `virt-launcher` pod directly by its standard KubeVirt label
-(`kubevirt.io/domain=<vm-name>`) — substitute the actual VM name once the VM workload
-manifests (a separate, not-yet-merged phase) exist:
+enforced. Target the VM's `virt-launcher` pod directly by the KubeVirt label
+`vm.kubevirt.io/name=<vm-name>` — the VM workload manifests live in the experiments repo
+and are deployed, and the VM names are `talos-vm` and `docker-vm`.
+
+**Not `kubevirt.io/domain`, which is an annotation on that pod, not a label** — measured on
+both live `virt-launcher` pods. `-l kubevirt.io/domain=talos-vm` therefore matches nothing
+and the `$(...)` below expands to an empty string, so `port-forward` fails with a usage
+error rather than anything that points at the real cause. The labels KubeVirt actually sets
+are `vm.kubevirt.io/name`, `vmi.kubevirt.io/id` and `kubevirt.io=virt-launcher`.
 
 ```bash
 # Talos API (talosctl, :50000) -- sandbox-talos namespace
 kubectl port-forward -n sandbox-talos \
-  "$(kubectl get pod -n sandbox-talos -l kubevirt.io/domain=<talos-vm-name> -o name)" \
+  "$(kubectl get pod -n sandbox-talos -l vm.kubevirt.io/name=talos-vm -o name)" \
   50000:50000
 # then point talosctl at the forwarded port:
 talosctl --talosconfig <path> config endpoint 127.0.0.1
@@ -809,17 +824,16 @@ talosctl --talosconfig <path> config node 127.0.0.1
 
 # Sandbox Kubernetes API (:6443) -- sandbox-talos namespace
 kubectl port-forward -n sandbox-talos \
-  "$(kubectl get pod -n sandbox-talos -l kubevirt.io/domain=<talos-vm-name> -o name)" \
+  "$(kubectl get pod -n sandbox-talos -l vm.kubevirt.io/name=talos-vm -o name)" \
   6443:6443
 # then point kubectl at it -- set `server: https://127.0.0.1:6443` in that sandbox
 # cluster's own kubeconfig, not this cluster's.
 
-# SSH to the Docker VM (:22) -- sandbox-docker namespace. cronjob-netpol-falsifiability-
-# probe.yaml's DOCKER_SSH_SERVICE already anticipates this landing as a Service named
-# docker-vm -- once Phase 4 creates it, `svc/docker-vm` replaces the pod lookup below.
-kubectl port-forward -n sandbox-docker \
-  "$(kubectl get pod -n sandbox-docker -l kubevirt.io/domain=<docker-vm-name> -o name)" \
-  2222:22
+# SSH to the Docker VM (:22) -- sandbox-docker namespace. sandbox-talos's
+# deployment-netpol-falsifiability-probe.yaml probes this same Service by name as its
+# cross-namespace deny check; it exists now, so `svc/docker-vm` works here too and is
+# preferable to the pod lookup -- it survives the VM being destroyed and rebuilt.
+kubectl port-forward -n sandbox-docker svc/docker-vm 2222:22
 ssh -p 2222 <user>@127.0.0.1
 ```
 

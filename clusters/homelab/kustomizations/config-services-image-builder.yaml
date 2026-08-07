@@ -14,9 +14,9 @@ spec:
   # config-services-sandbox-docker.yaml: a brand-new namespace's own manifests failing to
   # apply (e.g. before this namespace exists at all, on first merge) must not fail the
   # shared Kustomization that ai/dns/downloaders/logging/longhorn-system/monitoring/
-  # tailscale also reconcile through. 15m0s, not those two's 1m0s -- neither the "AI agents
-  # have full write access" nor the "fronts a real dockerd" reasoning that justifies their
-  # fast drift-correction interval applies here.
+  # tailscale also reconcile through. 15m0s, not those two's 1m0s -- neither the "hosts a
+  # VM whose guest AI agents have full write access to" nor the "fronts a real dockerd"
+  # reasoning that justifies their fast drift-correction interval applies here.
   interval: 15m0s
   path: ./clusters/homelab/services/image-builder
   prune: true

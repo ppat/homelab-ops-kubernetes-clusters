@@ -10,12 +10,13 @@
 #
 # One probe here has no sandbox-docker equivalent: reachability of the Docker namespace's
 # SSH Service from this namespace, which is the one that must NEVER pass -- see
-# network-policy.yaml for why. That Service doesn't exist until Phase 4 creates the
-# dockerd VM, so the probe below treats "name doesn't resolve yet" as SKIP rather than
-# a violation: this Deployment has to make sense with no VM ever built (an unresolvable
-# name isn't evidence the policy works, it's evidence there's nothing there yet), and it
-# starts actually asserting the moment Phase 4 creates a Service at DOCKER_SSH_SERVICE
-# below with no change needed here. Update the env var if Phase 4 names it differently.
+# network-policy.yaml for why. That Service now exists -- `docker-vm` in sandbox-docker,
+# the exact name DOCKER_SSH_SERVICE below was written to anticipate -- so this check
+# resolves and asserts on every cycle rather than skipping. The SKIP-on-unresolvable
+# branch below stays anyway: it has to hold whenever that Service is absent (a
+# destroy-and-rebuild window, or a cluster where the dockerd VM was never built), because
+# an unresolvable name isn't evidence the policy works, it's evidence there's nothing
+# there. Update the env var if that Service is ever renamed.
 #
 # A second probe here also has no sandbox-docker equivalent, and for a sharper reason than
 # "no such need there": same-namespace reachability of this VM's own Service, on both
@@ -84,8 +85,8 @@ spec:
           # it and the ipBlock allow actually applies.
           value: "192.168.8.192"
         - name: DOCKER_SSH_SERVICE
-          # Anticipated name/port of the Service Phase 4 fronts dockerd's SSH with, in the
-          # sandbox-docker namespace. Doesn't exist yet -- see the file-level comment above.
+          # Name/port of the Service fronting dockerd's SSH in the sandbox-docker namespace.
+          # Live today -- see the file-level comment above for what happens when it isn't.
           value: "docker-vm.sandbox-docker.svc.cluster.local"
         - name: DOCKER_SSH_PORT
           value: "22"
@@ -272,9 +273,9 @@ spec:
           # See sandbox-docker's copy of this Deployment for the full rationale (Fix 2):
           # catches the probe loop hanging mid-cycle on something with no timeout of its
           # own (the plain `nslookup api.github.com` call above, or -- unique to this
-          # namespace -- a DNS lookup on DOCKER_SSH_SERVICE before Phase 4 creates that
-          # Service, though `nslookup` failing fast on NXDOMAIN is the expected case there,
-          # not a hang). Every `nc` call in this script is `-w`-bounded, so a hung `nc`
+          # namespace -- a DNS lookup on DOCKER_SSH_SERVICE during a window where that
+          # Service is absent, though `nslookup` failing fast on NXDOMAIN is the expected
+          # case there, not a hang). Every `nc` call is `-w`-bounded, so a hung `nc`
           # can't happen here either. `exec: ["true"]` would satisfy Kyverno's
           # require-pod-probes policy too, and would detect nothing; this is deliberately
           # not that.
