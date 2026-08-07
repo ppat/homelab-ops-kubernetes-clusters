@@ -1,4 +1,18 @@
 #!/bin/sh
+#
+# The netpol-falsifiability-probe loop for the sandbox-talos namespace. Run by
+# ../deployment-netpol-falsifiability-probe.yaml, mounted at /etc/scripts from the
+# ConfigMap ../kustomization.yaml generates from this directory. Every value read below is
+# an env var set on that Deployment, which also carries the file-level rationale for the
+# two probes unique to this namespace: the cross-sandbox DOCKER_SSH_SERVICE deny (must
+# never pass, SKIP until Phase 4 creates it) and the same-namespace TALOS_VM_SERVICE
+# positive control (added because the deny-only suite would not have caught the ingress
+# bug it exists to catch).
+#
+# Comments below that defer to "sandbox-docker's copy" mean
+# ../../sandbox-docker/scripts/probe.sh for anything about the probe logic, and
+# ../../sandbox-docker/deployment-netpol-falsifiability-probe.yaml for anything about a
+# specific env var's value.
 set -u
 
 # --- Warm-up: establish enforcement before trusting anything below ---
@@ -96,7 +110,7 @@ while true; do
   fi
 
   # Same-namespace positive control: the Talos VM's own Service, both ports it
-  # serves. See the file-level comment above for why this exists and why it's
+  # serves. See the Deployment's own file-level comment for why this exists and why it's
   # SKIP (not a violation) when the Service doesn't resolve yet. Two ports, so
   # (unlike the single-target DOCKER_SSH_SERVICE check above) the SKIP branch
   # bumps `probes` by 2 itself rather than sharing one outer increment --

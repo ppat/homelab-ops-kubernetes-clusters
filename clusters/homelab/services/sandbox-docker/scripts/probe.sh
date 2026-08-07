@@ -1,4 +1,15 @@
 #!/bin/sh
+#
+# The netpol-falsifiability-probe loop for the sandbox-docker namespace. Run by
+# ../deployment-netpol-falsifiability-probe.yaml, mounted at /etc/scripts from the
+# ConfigMap ../kustomization.yaml generates from this directory. Every value read below
+# (NODE_IPS, UNIFI_GATEWAY, LB_INGRESS_VIP_*, the TIMEOUT/WARMUP/INTERVAL knobs,
+# HEARTBEAT_FILE) is an env var set on that Deployment, and each carries its own comment
+# there explaining why that target is a deny assertion or a positive control -- this file
+# says what is probed, the Deployment says why each address is what it is.
+#
+# ../network-policy.yaml is the control this exists to falsify; OPERATIONS.md covers how
+# its output is read (Loki, no AlertManager wiring, by design).
 set -u
 
 # --- Warm-up: establish enforcement before trusting anything below ---
@@ -122,8 +133,9 @@ while true; do
   probe_deny "UniFi gateway" "$UNIFI_GATEWAY" 443
   probe_deny "in-cluster kubernetes Service" "$IN_CLUSTER_KUBERNETES_SERVICE" 443
 
-  # LB_INGRESS_VIP_HOMELAB is a deny-assertion, not a positive control -- see its
-  # env var comment above and network-policy.yaml for the full DNAT-vs-NetworkPolicy
+  # LB_INGRESS_VIP_HOMELAB is a deny-assertion, not a positive control -- see that env
+  # var's own comment on the Deployment, and ../network-policy.yaml, for the full
+  # DNAT-vs-NetworkPolicy
   # mechanism (this is what caught the original version of this policy allowing a
   # range that could never actually match). This stack REJECTs rather than DROPs,
   # so BLOCKED alone can't distinguish a policy denial from a dead port -- proof
