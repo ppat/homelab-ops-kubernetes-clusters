@@ -34,20 +34,24 @@ This cluster runs no `*-extra` infrastructure modules and no `observability-core
 Unlike `homelab`, this cluster has no `services/` directory — there's no
 `config-services` umbrella Kustomization here either. Instead, content
 authored directly in this repo (rather than pulled from the apps repo as a
-versioned module) lives as its own top-level directory, each with its own
+versioned module) lives as its own top-level directory, with its own
 dedicated `Kustomization` sourced from `root`, not a module `GitRepository`:
 
 | Directory | Purpose |
 | --- | --- |
 | `outpost/` | Deploys a remote Authentik outpost, with the routing/ingress to reach it, so this cluster's Ingress can authenticate against the Authentik instance running on `homelab` without running Authentik itself here |
-| `harbor-dockerio-mirror/` | An `Ingress` + rewrite `Middleware` pair fronting `harbor-core` on its own hostname (`dockerio-harbor.${domain_name}`), rewriting `/v2/<repo>/...` to `/v2/docker.io/<repo>/...` so Docker Hub pulls from any Docker client on the network land in Harbor's `docker.io` proxy-cache project. Exists because Docker's `registry-mirrors` has no equivalent of containerd's `overridePath`, so it can only work against a registry that accepts unprefixed `/v2/...` paths — see `apps-harbor-dockerio-mirror`'s `Kustomization` and ppat/homelab-ops-kubernetes-experiments#226 |
 
 This exists because SSO (`components/sso`) is used across both clusters, but
 Authentik itself (`security-extra`) only runs on `homelab` — the outpost lets
-`nas`'s apps (Harbor, Bitwarden) participate in the same SSO domain. The
-`docker.io` mirror ingress exists for the unrelated reason above, and is
-listed here purely because it shares the same "content authored directly in
-this repo, sourced from `root`" shape as `outpost/`.
+`nas`'s apps (Harbor, Bitwarden) participate in the same SSO domain.
+
+The `docker.io` pull-through mirror (`Ingress` + rewrite `Middleware` pair
+fronting `harbor-core` on its own hostname, `dockerio-harbor.${domain_name}`)
+that used to live here as `harbor-dockerio-mirror/` has been upstreamed into
+the `apps-harbor` module itself (`apps-harbor` ships it directly as of
+`apps-harbor-v0.0.19`) — it's no longer cluster-specific content. See the
+[harbor module README](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/apps/subsystems/harbor/README.md)
+and ppat/homelab-ops-kubernetes-experiments#226 for why it exists.
 
 ## Module dependency graph
 
@@ -56,7 +60,6 @@ flowchart TB
     classDef core fill:#dcfce7,stroke:#059669,color:#064e3b
     classDef apps fill:#93c5fd,stroke:#2563eb,color:#1e3a8a
     classDef outpost fill:#fde68a,stroke:#d97706,color:#92400e
-    classDef mirror fill:#fecaca,stroke:#dc2626,color:#7f1d1d
 
     subgraph Core["Infrastructure (Core)"]
         sec[security-core]:::core
@@ -74,21 +77,21 @@ flowchart TB
     end
 
     out[Authentik outpost]:::outpost
-    dio[docker.io mirror ingress]:::mirror
 
     k8s --> sec
     net --> sec & nfs
     minio --> nfs
     db --> net & nfs
     out --> sec & net
-    dio --> net & harbor
 
     Core --> Apps
 ```
 
 `ops` (clusterops-core) has no module dependencies — it bootstraps Flux itself.
-`out` (Authentik outpost) and `dio` (docker.io mirror ingress) aren't apps-repo
-modules — they're the top-level, repo-authored Kustomizations described in
+`out` (Authentik outpost) isn't an apps-repo module — it's the top-level,
+repo-authored Kustomization described in
 [Cluster-specific resources](#cluster-specific-resources) above, included here
-because they carry real `dependsOn` edges of their own. Exact per-module
-`dependsOn` lists are in each `kustomizations/*.yaml`.
+because it carries real `dependsOn` edges of its own. Exact per-module
+`dependsOn` lists are in each `kustomizations/*.yaml`. The `docker.io` mirror's
+routing dependency on `harbor`/`networking-core` is now internal to the
+`apps-harbor` module (see above) and isn't a separate cluster-level edge.

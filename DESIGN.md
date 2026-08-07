@@ -209,10 +209,9 @@ on purpose and reconciled by its own dedicated Kustomization instead.
 
 This section describes `homelab`'s `services/` directory specifically. `nas`
 has neither a `services/` directory nor a `config-services` umbrella
-Kustomization — its equivalent of repo-authored, non-module content is a set
-of top-level directories directly under `clusters/nas/` (currently `outpost/`
-and `harbor-dockerio-mirror/`), each with its own dedicated Kustomization
-sourced from `root`. See
+Kustomization — its equivalent of repo-authored, non-module content is a
+top-level directory directly under `clusters/nas/` (currently just
+`outpost/`), with its own dedicated Kustomization sourced from `root`. See
 [clusters/nas/README.md#cluster-specific-resources](./clusters/nas/README.md#cluster-specific-resources).
 
 ## Storage

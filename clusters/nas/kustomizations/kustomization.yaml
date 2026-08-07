@@ -14,7 +14,6 @@ resources:
 - apps-bitwarden.yaml
 - infra-database-core.yaml
 - apps-harbor.yaml
-- apps-harbor-dockerio-mirror.yaml
 - config-storage.yaml
 - policy-baseline-pss.yaml
 - policy-best-practices.yaml
