@@ -1,7 +1,11 @@
 #!/bin/sh
 #
-# The netpol-falsifiability-probe loop for the sandbox-talos namespace. Run by
-# ../deployment-netpol-falsifiability-probe.yaml, mounted at /etc/scripts from the
+# The NetworkPolicy falsifiability assertion loop for the sandbox-talos namespace -- same
+# shape and same not-a-Kubernetes-probe caveat as
+# ../../sandbox-docker/scripts/falsifiability-check.sh's header, which carries the full
+# explanation. The kubelet probe in this directory is liveness-heartbeat-age.sh.
+#
+# Run by ../deployment-netpol-falsifiability-probe.yaml, mounted at /etc/scripts from the
 # ConfigMap ../kustomization.yaml generates from this directory. Every value read below is
 # an env var set on that Deployment, which also carries the file-level rationale for the
 # two probes unique to this namespace: the cross-sandbox DOCKER_SSH_SERVICE deny (must
@@ -10,9 +14,9 @@
 # bug it exists to catch).
 #
 # Comments below that defer to "sandbox-docker's copy" mean
-# ../../sandbox-docker/scripts/probe.sh for anything about the probe logic, and
-# ../../sandbox-docker/deployment-netpol-falsifiability-probe.yaml for anything about a
-# specific env var's value.
+# ../../sandbox-docker/scripts/falsifiability-check.sh for anything about the assertion
+# logic, and ../../sandbox-docker/deployment-netpol-falsifiability-probe.yaml for anything
+# about a specific env var's value.
 set -u
 
 # --- Warm-up: establish enforcement before trusting anything below ---

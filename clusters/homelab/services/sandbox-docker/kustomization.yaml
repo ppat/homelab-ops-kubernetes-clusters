@@ -7,7 +7,7 @@ resources:
 - network-policy.yaml
 - deployment-netpol-falsifiability-probe.yaml
 
-# The probe loop and its liveness heartbeat check, extracted from the Deployment so
+# The falsifiability assertion loop and the liveness check, extracted from the Deployment so
 # shellcheck actually sees them -- a NetworkPolicy falsifiability probe whose own shell was
 # never linted is a slightly awkward thing to own. One ConfigMap for both files because one
 # container consumes both; the hash suffix is deliberately left on so an edit to either
@@ -23,8 +23,8 @@ configMapGenerator:
 - name: netpol-falsifiability-probe-scripts
   namespace: sandbox-docker
   files:
-  - scripts/probe.sh
-  - scripts/heartbeat-liveness.sh
+  - scripts/falsifiability-check.sh
+  - scripts/liveness-heartbeat-age.sh
   options:
     annotations:
       kustomize.toolkit.fluxcd.io/substitute: disabled

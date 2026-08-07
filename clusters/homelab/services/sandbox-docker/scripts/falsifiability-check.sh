@@ -1,7 +1,14 @@
 #!/bin/sh
 #
-# The netpol-falsifiability-probe loop for the sandbox-docker namespace. Run by
-# ../deployment-netpol-falsifiability-probe.yaml, mounted at /etc/scripts from the
+# The NetworkPolicy falsifiability assertion loop for the sandbox-docker namespace: it
+# continuously attempts connections that ../network-policy.yaml must deny (plus a handful
+# that it must allow), so that a passing policy is falsifiable rather than merely green.
+#
+# NOT a Kubernetes probe, despite the workload being named netpol-falsifiability-probe and
+# despite liveness-heartbeat-age.sh sitting next to it in this directory -- that file is
+# the kubelet probe; this one is the assertion body and is this container's own command.
+#
+# Run by ../deployment-netpol-falsifiability-probe.yaml, mounted at /etc/scripts from the
 # ConfigMap ../kustomization.yaml generates from this directory. Every value read below
 # (NODE_IPS, UNIFI_GATEWAY, LB_INGRESS_VIP_*, the TIMEOUT/WARMUP/INTERVAL knobs,
 # HEARTBEAT_FILE) is an env var set on that Deployment, and each carries its own comment
