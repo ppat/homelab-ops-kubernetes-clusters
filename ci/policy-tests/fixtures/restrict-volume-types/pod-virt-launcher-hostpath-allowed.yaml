@@ -1,0 +1,48 @@
+---
+# EXPECTED: ALLOWED (kyverno apply exits 0), by exclusion rather than by the allow-list.
+#
+# SYNTHETIC SHAPE, AND DELIBERATELY SO -- read this before "correcting" it against a live pod.
+# Measured against both live virt-launcher pods (virt-launcher-docker-vm-*, ns sandbox-docker;
+# virt-launcher-talos-vm-*, ns sandbox-talos): every volume they carry is either allow-listed
+# already (emptyDir, persistentVolumeClaim, secret) or one of two `image` volumes -- `bootdisk`
+# and `launcher-volume`. Now that `image` is allow-listed globally, a fixture reproducing a real
+# virt-launcher pod would pass with the `virt-launcher*` exclusion present AND with it deleted.
+# That is a test that passes for the wrong reason, which is worse than no test.
+#
+# So this fixture asserts what that exclusion still decides rather than what it used to: a
+# hostPath volume in a virt-launcher pod. That is not hypothetical grandstanding -- virt-launcher's
+# volume set is generated per-VMI by virt-controller, and a VMI using KubeVirt's `hostDisk` disk
+# type or a hostPath-backed virtiofs filesystem would reintroduce hostPath here. Neither VM does
+# today, which is exactly why nothing else in this suite would notice the exclusion disappearing.
+#
+# Its paired control is pod-virt-launcher-in-kubevirt-hostpath-denied.yaml (right name, wrong
+# namespace). Note the honest consequence this fixture pins: the exclusion means a future VM in
+# sandbox-docker or sandbox-talos that mounts a host path lands unflagged in the audit stream.
+# That was true before this change too -- it is retained, not introduced, here.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: virt-launcher-talos-vm-zqrlj
+  namespace: sandbox-talos
+spec:
+  restartPolicy: Never
+  containers:
+  - name: compute
+    image: quay.io/kubevirt/virt-launcher:v1.9.0
+    volumeMounts:
+    - name: bootdisk
+      mountPath: /var/run/kubevirt-image-volume/disk_0
+      readOnly: true
+    - name: hostdisk
+      mountPath: /var/run/kubevirt-private/vmi-disks/hostdisk
+  volumes:
+  - name: bootdisk
+    image:
+      reference: quay.io/kubevirt/virt-launcher:v1.9.0
+      pullPolicy: IfNotPresent
+  - name: ephemeral-disks
+    emptyDir: {}
+  - name: hostdisk
+    hostPath:
+      path: /var/lib/kubevirt/hostdisks
+      type: DirectoryOrCreate
