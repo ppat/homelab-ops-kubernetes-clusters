@@ -7,6 +7,28 @@ resources:
 - network-policy.yaml
 - deployment-netpol-falsifiability-probe.yaml
 
+# The probe loop and its liveness heartbeat check, extracted from the Deployment so
+# shellcheck actually sees them -- a NetworkPolicy falsifiability probe whose own shell was
+# never linted is a slightly awkward thing to own. One ConfigMap for both files because one
+# container consumes both; the hash suffix is deliberately left on so an edit to either
+# rolls the Deployment, and kustomize's built-in nameReference transformer rewrites the name
+# on spec/template/spec/volumes/configMap/name for us.
+#
+# `substitute: disabled`: both scripts are full of braced `${UNIFI_GATEWAY}`,
+# `${WARMUP_TIMEOUT_SECONDS}`, `${cycle}`, `${HEARTBEAT_FILE}` references that Flux's
+# postBuild envsubst would otherwise try to resolve as its own substitution variables and
+# blank. Every value they read is set as an env var on the Deployment; none of it comes from
+# Flux substitution.
+configMapGenerator:
+- name: netpol-falsifiability-probe-scripts
+  namespace: sandbox-talos
+  files:
+  - scripts/probe.sh
+  - scripts/heartbeat-liveness.sh
+  options:
+    annotations:
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+
 commonAnnotations:
   # This namespace's own isolation is the point of the module -- prevent pruning
   # unintentionally, same convention as clusters/nas/outpost.
