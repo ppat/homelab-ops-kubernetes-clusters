@@ -137,7 +137,7 @@ is deployed there. The exact values are in each cluster's
 ## The `services/` directory
 
 `services/<name>/` holds cluster-specific resources that exist *outside* any
-module's own manifests, for two distinct reasons:
+module's own manifests, for three distinct reasons:
 
 1. **Extra config/secrets consumed by a module.** A module's app may look up a
    `ConfigMap`/`Secret` by a fixed name at runtime, or a cluster `Kustomization`
@@ -154,24 +154,66 @@ module's own manifests, for two distinct reasons:
    Tailscale `Connector` advertising the homelab subnet and acting as an exit
    node) and `proxyclass.yaml` — these aren't referenced by any module, they're
    deployed because this cluster needs a subnet router.
+3. **Cluster-owned workloads with their own `Kustomization`.** A directory
+   under `services/` can also be a first-class workload the cluster itself
+   owns — not config a module looks up, not a no-awareness standalone CR
+   either, but something with its own `kustomizations/<name>.yaml` entry,
+   deliberately left out of `services/kustomization.yaml`'s `resources:` list
+   so the blanket `config-services` Kustomization doesn't also own it. Two
+   distinct reasons justify splitting a directory out this way, and an entry
+   can have either:
+   - **Fast self-heal on a security boundary.** `homelab`'s
+     `services/sandbox-docker/`, `services/sandbox-talos/`, and
+     `services/sandbox-lifecycle/` are each reconciled on a 1-minute interval
+     rather than `config-services`'s 15-minute one, so a reverted patch or a
+     hand-edited policy on that boundary self-heals within a minute instead of
+     drifting for up to fifteen. `sandbox-docker`/`sandbox-talos` are each a
+     security-isolation boundary (a KubeVirt-hosted VM namespace with its own
+     default-deny `NetworkPolicy`); `sandbox-lifecycle` holds the RBAC an
+     external, scheduled process uses to destroy and rebuild those two VMs,
+     kept in a namespace neither sandbox can reach — its own Kustomization
+     `dependsOn`s both of theirs, since its `Role`s target objects inside
+     those two namespaces.
+   - **Isolating a brand-new namespace's first-merge risk.** `homelab`'s
+     `services/image-builder/` reconciles on `config-services`'s own
+     15-minute interval — nothing about it needs fast self-heal — but still
+     gets a dedicated Kustomization so a new namespace's manifests failing to
+     apply (as can happen the moment a directory is first merged) can't fail
+     the shared `config-services` Kustomization that several unrelated
+     `services/` entries also reconcile through.
+   Splitting the Kustomization out — rather than tightening
+   `config-services`'s own interval, or accepting the shared blast radius —
+   keeps each of these properties scoped to the entry that actually needs it.
 
 ```mermaid
 flowchart LR
     subgraph svc["services/&lt;name&gt;/"]
         A["ConfigMap / Secret\nlooked up by name from inside a module"]
         B["Standalone CRs\n(no module awareness)"]
+        C["Cluster-owned workload,\nown Kustomization,\nexcluded from the umbrella"]
     end
 
     A -.->|"consumed by name\n(optional or required)"| MOD["a deployed module"]
     B -->|"exists independently"| CLUSTER["the cluster itself"]
+    C -->|"reconciled on its own\ninterval and dependsOn"| CLUSTER
 
     classDef svcStyle fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
-    class A,B svcStyle
+    class A,B,C svcStyle
 ```
 
 `config-services` (a `kustomizations/config-services.yaml` entry) applies
 everything under `services/` cluster-wide, `dependsOn` whatever
-security/networking core it needs.
+security/networking core it needs — except any directory covered by category 3
+above, which is excluded from `services/kustomization.yaml`'s `resources:` list
+on purpose and reconciled by its own dedicated Kustomization instead.
+
+This section describes `homelab`'s `services/` directory specifically. `nas`
+has neither a `services/` directory nor a `config-services` umbrella
+Kustomization — its equivalent of repo-authored, non-module content is a set
+of top-level directories directly under `clusters/nas/` (currently `outpost/`
+and `harbor-dockerio-mirror/`), each with its own dedicated Kustomization
+sourced from `root`. See
+[clusters/nas/README.md#cluster-specific-resources](./clusters/nas/README.md#cluster-specific-resources).
 
 ## Storage
 
@@ -308,6 +350,7 @@ what's enforced and in what mode.
 | --- | --- | --- |
 | `lint.yaml` | every PR + weekly | yamllint, markdownlint, shellcheck, commitlint, Renovate config check, and `kubeconform`-based Kubernetes manifest validation (via `ci/validation/kustomization.yaml` + `ci/validation/.env` dummy `postBuild` values) restricted to `clusters/*` and `policies/*` |
 | `diff-changes.yaml` | PRs touching `clusters/**` or `policies/**` | Checks out the apps repo (`main`) alongside before/after versions of this repo, resolves each `Kustomization`'s `sourceRef` tag via `.github/scripts/prepare-sources.sh`, then runs `flux-diff` to comment a rendered HelmRelease/Kustomization diff on the PR — so a reviewer sees the actual resource-level effect of a version bump or config change before merging |
+| `static-analysis.yaml` | PRs touching whatever each job below analyses (see the workflow's own `paths:`) + weekly | Kyverno-CLI checks of security invariants, run with no cluster — the class of check `lint.yaml`'s style/formatting jobs don't cover. Each job is separately triggered and separately scoped; the workflow is the source of truth for the current set. Today: `rbac-clusterroles`, which applies the test-only policies in `ci/policy-tests/` to every cluster's read-only RBAC `ClusterRole`s/`ClusterRoleBinding`s to statically confirm they stay read-only |
 | `renovate.yaml` | schedule/dispatch | Runs Renovate to open dependency-update PRs |
 
 `pre-commit` mirrors the yamllint/markdownlint/shellcheck/commitlint/kubeconform
