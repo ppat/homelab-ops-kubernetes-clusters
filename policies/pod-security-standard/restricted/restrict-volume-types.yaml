@@ -159,3 +159,37 @@ spec:
           namespaces:
           - sandbox-docker
           - sandbox-talos
+      # promtail hostPath-mounts node log files, /etc/machine-id, and other pods' CSI-mounted
+      # volumes under /var/lib/kubelet/pods to do its job as a node-level log collector --
+      # hostPath isn't on this policy's allow-list at all, so it fails the `restricted-volumes`
+      # rule below (confirmed on the live PolicyReport for a promtail pod: `restrict-volume-types`
+      # / `restricted-volumes` is one of four rules it fails, alongside
+      # require-run-as-non-root-user, require-run-as-nonroot and restrict-seccomp-strict, none
+      # of which this exclusion touches). It has failed this rule, unflagged, since this policy
+      # was added; added here retroactively rather than left to keep masquerading as compliant.
+      # Grafana Alloy is replacing promtail as the node-level log collector; both run in
+      # parallel for a 24-72h comparison before promtail is removed (same pairing as
+      # ../baseline/disallow-host-path.yaml), so this exclusion is temporary and goes away with
+      # promtail in the cutover PR.
+      - resources:
+          names:
+          - 'promtail*'
+          namespaces:
+          - logging
+      # Alloy needs the same node-filesystem access for the same reason: node log files
+      # (/var/log/pods, /var/log/journal, /run/log/journal), /etc/machine-id, other pods'
+      # CSI-mounted PVC paths under /var/lib/kubelet/pods, and its own read-offset state are
+      # only reachable from the node filesystem -- inherent to any node-level collector, not a
+      # shortcut a refactor removes. Unlike promtail, Alloy runs non-root (runAsNonRoot, uid/gid
+      # 473, supplementalGroups: [0, <journal gid>]), so it already passes
+      # require-run-as-nonroot; this hostPath-driven volume-type exclusion is the only
+      # restricted-profile rule it needs relaxed. Bounded by namespace (logging) AND name prefix
+      # (alloy*) together -- the prefix match is coarse, so anything else deployed into
+      # `logging` named alloy* inherits it too. Wrong if Alloy ever stops needing node-level
+      # file access, or if `logging` becomes a namespace where arbitrary workloads can be
+      # created. Stays after promtail's exclusion above is removed at cutover.
+      - resources:
+          names:
+          - 'alloy*'
+          namespaces:
+          - logging
