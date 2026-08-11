@@ -49,6 +49,15 @@ spec:
       loki_singlebinary_storage_size: 16Gi
       loki_results_cache_memory: "1024"
       loki_chunks_cache_memory: "4096"
+      # !!! PLACEHOLDER - OWNER ACTION REQUIRED BEFORE MERGE !!!
+      # Alloy runs non-root and needs the node's systemd-journal group in its
+      # supplementalGroups to read the journal. Read the real value off any node with
+      # `getent group systemd-journal` and put the numeric GID here. Left as an obviously
+      # invalid string on purpose: the module gives this variable no default because a
+      # wrong GID fails *silently* (the journal component reports "journal tailer is
+      # running" and collects zero entries), whereas a non-numeric value is rejected by
+      # the API server when the DaemonSet is applied.
+      systemd_journal_gid: "REPLACE-ME-getent-group-systemd-journal"
       # see: https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-substitution-of-numbers-and-booleans
       quote: '"'
       secret_store: bitwarden-secret-manager-store
@@ -147,3 +156,416 @@ spec:
       kind: HelmRelease
       name: kube-prometheus-stack-release
       namespace: monitoring
+  # Mount the kubelet pod directory so the collector can reach the CSI-mounted PVCs of
+  # other pods (see the cluster-pvc-logs.alloy patch below). mountPropagation is not
+  # optional: kubelet creates each pod's CSI mount *after* this container's own bind
+  # mount exists, and under the default (None/private) propagation those later mounts
+  # stay invisible here forever - the globs then match nothing, with no error and no
+  # unhealthy component. That is the promtail bug fixed in #883; this must not repeat it.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/controller/volumes/extra/-
+        value:
+          name: kubelet-pods
+          hostPath:
+            path: /var/lib/kubelet/pods
+      - op: add
+        path: /spec/values/alloy/mounts/extra/-
+        value:
+          name: kubelet-pods
+          mountPath: /var/lib/kubelet/pods
+          readOnly: true
+          mountPropagation: HostToContainer
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-release
+      namespace: logging
+  # The three PVC-tailing log jobs this cluster owns, added as an extra key in the
+  # module's alloy-config ConfigMap - the extension seam its README documents. Alloy
+  # loads /etc/alloy as a directory, so this file joins the module's own *.alloy files
+  # in one component graph; the cluster_ name prefix keeps it collision-free.
+  #
+  # The body below is a verbatim copy of
+  # clusters/homelab/services/logging/conf.d/cluster-pvc-logs.alloy. It is duplicated
+  # because a Flux patch is inline-only and cannot reference a file; edit that file, not
+  # this copy - `ci/scripts/alloy-lint.sh check-embedded` fails when the two differ.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: alloy-config
+        namespace: logging
+      data:
+        cluster-pvc-logs.alloy: |
+          // Cluster-owned log collection jobs for three apps that write their logs into a
+          // CSI-mounted PVC instead of stdout. They are read on the node, through the pod's
+          // own kubelet directory, so they are invisible to the module's /var/log/pods job.
+          //
+          // Read before editing:
+          //
+          //   - This file is the source of truth, but it is not what Flux applies. A Flux
+          //     Kustomization's spec.patches are inline-only, so a verbatim copy of this file
+          //     is embedded in clusters/homelab/kustomizations/infra-observability-core.yaml,
+          //     which is how it reaches the module's alloy-config ConfigMap and thereby
+          //     /etc/alloy. `ci/scripts/alloy-lint.sh check-embedded` fails if the two drift.
+          //   - Every *.alloy file in /etc/alloy shares one component namespace, so
+          //     cluster-supplied components must carry the `cluster_` prefix the module
+          //     requires. A duplicate name fails the whole config load, not just this file --
+          //     and it fails asymmetrically: a running collector rejects a bad reload with a
+          //     400 and keeps its last valid config, while a fresh pod exits. A broken
+          //     fragment therefore stays invisible until the DaemonSet next rolls, then takes
+          //     out log collection node by node.
+          //   - These streams deliberately carry no `job` label, unlike the module's pod-log
+          //     job. That is inherited from the promtail jobs they replace; adding one would
+          //     change the identity of series that already exist in Loki.
+          //   - `file_match` is required on every loki.source.file here: without it
+          //     loki.source.file os.Stat()s __path__ literally and a glob matches nothing,
+          //     with no error and no unhealthy component.
+
+          // ----------------------------------------------------------------------------------
+          // pihole -- *.log at the root of its CSI volume
+          // ----------------------------------------------------------------------------------
+
+          discovery.relabel "cluster_pihole_pvc_logs" {
+          	targets = discovery.kubernetes.pods.targets
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          		regex         = "pihole"
+          	}
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__meta_kubernetes_pod_container_name"]
+          		regex         = "pihole"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_uid"]
+          		replacement   = "/var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/*.log"
+          		target_label  = "__path__"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_name",
+          			"__meta_kubernetes_pod_label_app",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "app"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_instance",
+          			"__meta_kubernetes_pod_label_instance",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "instance"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_component",
+          			"__meta_kubernetes_pod_label_component",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "component"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_node_name"]
+          		target_label  = "node_name"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_namespace"]
+          		target_label  = "namespace"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_name"]
+          		target_label  = "pod"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_container_name"]
+          		target_label  = "container"
+          	}
+          }
+
+          loki.source.file "cluster_pihole_pvc_logs" {
+          	targets    = discovery.relabel.cluster_pihole_pvc_logs.output
+          	forward_to = [loki.process.cluster_pihole_pvc_logs.receiver]
+
+          	file_match {
+          		enabled = true
+          	}
+          }
+
+          loki.process "cluster_pihole_pvc_logs" {
+          	forward_to = [loki.write.default.receiver]
+
+          	// Reduce the filename label to the path within the volume; the kubelet prefix is
+          	// per-pod and would make every stream unique across restarts.
+          	stage.regex {
+          		source     = "filename"
+          		expression = ".*/kubernetes.io~csi/[^/]+/mount/(?P<clean_filename>.*)"
+          	}
+
+          	stage.labels {
+          		values = {
+          			filename = "clean_filename",
+          		}
+          	}
+          }
+
+          // ----------------------------------------------------------------------------------
+          // plex -- *.log at any depth below the CSI volume root
+          // ----------------------------------------------------------------------------------
+
+          discovery.relabel "cluster_plex_pvc_logs" {
+          	targets = discovery.kubernetes.pods.targets
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          		regex         = "plex"
+          	}
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__meta_kubernetes_pod_container_name"]
+          		regex         = "plex"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_uid"]
+          		replacement   = "/var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/**/*.log"
+          		target_label  = "__path__"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_name",
+          			"__meta_kubernetes_pod_label_app",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "app"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_instance",
+          			"__meta_kubernetes_pod_label_instance",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "instance"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_component",
+          			"__meta_kubernetes_pod_label_component",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "component"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_node_name"]
+          		target_label  = "node_name"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_namespace"]
+          		target_label  = "namespace"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_name"]
+          		target_label  = "pod"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_container_name"]
+          		target_label  = "container"
+          	}
+          }
+
+          loki.source.file "cluster_plex_pvc_logs" {
+          	targets    = discovery.relabel.cluster_plex_pvc_logs.output
+          	forward_to = [loki.process.cluster_plex_pvc_logs.receiver]
+
+          	file_match {
+          		enabled = true
+          	}
+          }
+
+          loki.process "cluster_plex_pvc_logs" {
+          	forward_to = [loki.write.default.receiver]
+
+          	stage.regex {
+          		source     = "filename"
+          		expression = ".*/kubernetes.io~csi/[^/]+/mount/(?P<clean_filename>.*)"
+          	}
+
+          	stage.labels {
+          		values = {
+          			filename = "clean_filename",
+          		}
+          	}
+          }
+
+          // ----------------------------------------------------------------------------------
+          // traefik -- one access.log per pod on a shared RWX volume, so the pod name is part
+          // of the path and every pod's collector would otherwise see all of them
+          // ----------------------------------------------------------------------------------
+
+          discovery.relabel "cluster_traefik_access_rwx_logs" {
+          	targets = discovery.kubernetes.pods.targets
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          		regex         = "traefik"
+          	}
+
+          	// Excludes the log-rotate sidecar, which shares the volume.
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__meta_kubernetes_pod_container_name"]
+          		regex         = "traefik"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_name"]
+          		separator     = ";"
+          		regex         = "(.+);(.+)"
+          		replacement   = "/var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/$2/access.log"
+          		target_label  = "__path__"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_name",
+          			"__meta_kubernetes_pod_label_app",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "app"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_instance",
+          			"__meta_kubernetes_pod_label_instance",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "instance"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = [
+          			"__meta_kubernetes_pod_label_app_kubernetes_io_component",
+          			"__meta_kubernetes_pod_label_component",
+          		]
+          		regex        = "^;*([^;]+)(;.*)?$"
+          		target_label = "component"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_node_name"]
+          		target_label  = "node_name"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_namespace"]
+          		target_label  = "namespace"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_name"]
+          		target_label  = "pod"
+          	}
+
+          	rule {
+          		action        = "replace"
+          		source_labels = ["__meta_kubernetes_pod_container_name"]
+          		target_label  = "container"
+          	}
+          }
+
+          loki.source.file "cluster_traefik_access_rwx_logs" {
+          	targets    = discovery.relabel.cluster_traefik_access_rwx_logs.output
+          	forward_to = [loki.process.cluster_traefik_access_rwx_logs.receiver]
+
+          	file_match {
+          		enabled = true
+          	}
+          }
+
+          loki.process "cluster_traefik_access_rwx_logs" {
+          	forward_to = [loki.write.default.receiver]
+
+          	// drop_malformed discards the rotation marker lines the log-rotate sidecar
+          	// writes, which are not JSON.
+          	stage.json {
+          		expressions = {
+          			timestamp = "time",
+          			status    = "DownstreamStatus",
+          			method    = "RequestMethod",
+          		}
+          		drop_malformed = true
+          	}
+
+          	// One directory deeper than the other two jobs: the pod name sits between the
+          	// volume root and the file.
+          	stage.regex {
+          		source     = "filename"
+          		expression = ".*/kubernetes.io~csi/[^/]+/mount/.*/(?P<clean_filename>.*)"
+          	}
+
+          	stage.labels {
+          		values = {
+          			status   = "status",
+          			method   = "method",
+          			filename = "clean_filename",
+          		}
+          	}
+
+          	stage.timestamp {
+          		source = "timestamp"
+          		format = "RFC3339"
+          	}
+          }
+    target:
+      kind: ConfigMap
+      name: alloy-config
+      namespace: logging

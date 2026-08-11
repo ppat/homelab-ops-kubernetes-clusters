@@ -48,6 +48,40 @@ jobs:
       from: ${{ github.event.pull_request.head.sha || 'HEAD' }}~${{ github.event.pull_request.commits || '1' }}
       to: ${{ github.event.pull_request.head.sha || 'HEAD' }}
 
+  alloy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+
+    # Deliberately not gated on detect-changes, unlike the jobs around it:
+    # ci/scripts/alloy-lint.sh is a no-op when the repo has no *.alloy files, and
+    # check-embedded has to run whenever *either* side of the duplicated fragment
+    # changes - a glob covering both is one more thing to go stale as files move.
+    - name: alloy fmt --test
+      shell: bash
+      # yamllint disable-line rule:indentation
+      run: |
+        mapfile -t files < <(git ls-files -- '*.alloy')
+        ./ci/scripts/alloy-lint.sh fmt-check "${files[@]}"
+
+    - name: alloy validate
+      if: success() || failure()
+      shell: bash
+      # yamllint disable-line rule:indentation
+      run: |
+        mapfile -t files < <(git ls-files -- '*.alloy')
+        ./ci/scripts/alloy-lint.sh validate "${files[@]}"
+
+    - name: alloy embedded fragment sync
+      if: success() || failure()
+      shell: bash
+      run: ./ci/scripts/alloy-lint.sh check-embedded
+
   github-actions:
     needs: [detect-changes]
     if: ${{ github.event_name != 'pull_request' || fromJSON(needs.detect-changes.outputs.results).actions_any_changed == 'true' }}

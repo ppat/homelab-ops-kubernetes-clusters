@@ -65,3 +65,34 @@ repos:
     - --base-kustomization-file
     - ci/validation/kustomization.yaml
     - --debug
+# These three are also run as the `alloy` job in .github/workflows/lint.yaml. That is
+# not belt-and-braces: the shared lint-pre-commit workflow runs a fixed list of hook
+# ids, so a hook added here alone would have no CI coverage whatsoever.
+- repo: local
+  hooks:
+  - id: alloy-fmt
+    name: alloy fmt
+    description: Auto-format Grafana Alloy (.alloy) configuration files
+    entry: ci/scripts/alloy-lint.sh fmt-write
+    language: script
+    files: \.alloy$
+    require_serial: true
+  - id: alloy-validate
+    name: alloy validate
+    description: >-
+      Validate Grafana Alloy (.alloy) fragments against a stub of the module components
+      they reference, and enforce the cluster_ component name prefix
+    entry: ci/scripts/alloy-lint.sh validate
+    language: script
+    files: \.alloy$
+    require_serial: true
+  - id: alloy-embedded-sync
+    name: alloy embedded fragment sync
+    description: >-
+      Check each .alloy fragment against the verbatim copy embedded in the Flux
+      Kustomization that injects it
+    entry: ci/scripts/alloy-lint.sh check-embedded
+    language: script
+    files: (\.alloy$|^clusters/[^/]+/kustomizations/.*\.yaml$)
+    pass_filenames: false
+    require_serial: true
