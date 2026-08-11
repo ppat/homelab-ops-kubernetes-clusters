@@ -50,6 +50,24 @@ spec:
           - 'promtail*'
           namespaces:
           - logging
+      # Grafana Alloy is replacing promtail as the node-level log collector; both run in
+      # parallel for a 24-72h equivalence comparison before promtail is removed, so this
+      # exclusion exists alongside (not instead of) the promtail one above -- it is not
+      # cutover yet. Necessary because node log files (/var/log/pods, /var/log/journal,
+      # /run/log/journal), /etc/machine-id, and Alloy's own read-offset state
+      # (/var/lib/alloy) are only reachable via the node filesystem, which is inherent to
+      # any node-level log collector, not a shortcut specific to Alloy. Bounded by
+      # namespace (logging) AND name prefix (alloy*) together -- the prefix match is a
+      # coarse control, so anything else deployed into `logging` named alloy* inherits it
+      # too. Wrong if Alloy ever stops needing node-level file access, or if `logging`
+      # becomes a namespace where arbitrary workloads can be created. The promtail entry
+      # above is removed in the cutover PR once the comparison window closes; this one
+      # stays after that.
+      - resources:
+          names:
+          - 'alloy*'
+          namespaces:
+          - logging
       - resources:
           names:
           - 'intel-gpu-plugin-gpu-device*'
