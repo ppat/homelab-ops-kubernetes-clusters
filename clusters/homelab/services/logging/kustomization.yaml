@@ -10,6 +10,12 @@ configMapGenerator:
   options:
     annotations:
       kustomize.toolkit.fluxcd.io/substitute: disabled
+    # This ConfigMap is consumed by loki-release via spec.valuesFrom under this stable
+    # name (disableNameSuffixHash below), so helm-controller only notices a content
+    # change at its own reconcile interval unless it carries this label. See
+    # services/ai/kustomization.yaml's litellm-model-config for the same pattern.
+    labels:
+      reconcile.fluxcd.io/watch: "Enabled"
     disableNameSuffixHash: true
 - name: promtail-extra-config
   namespace: logging
@@ -19,4 +25,9 @@ configMapGenerator:
   options:
     annotations:
       kustomize.toolkit.fluxcd.io/substitute: disabled
+    # Same trap, same fix: promtail-release consumes this via spec.valuesFrom under a
+    # stable name, so a content-only change (e.g. #883's mountPropagation fix) was
+    # applied to the ConfigMap but never reached the HelmRelease - see #883 postmortem.
+    labels:
+      reconcile.fluxcd.io/watch: "Enabled"
     disableNameSuffixHash: true
