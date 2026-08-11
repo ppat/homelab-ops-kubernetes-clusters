@@ -61,9 +61,9 @@ the doc:
   and listing it just gives the doc more surface area to drift out of sync
   as files get added/renamed/split inside a directory whose *purpose*
   hasn't changed. Read every file in the directory before writing the row —
-  don't infer purpose from filenames alone (e.g. a Promtail scrape-config
-  file named after one app may also scrape several others; check
-  `job_name`s, not just the filename).
+  don't infer purpose from filenames alone (e.g. an Alloy scrape-config
+  fragment named after one app may also scrape several others; check what
+  it actually discovers/relabels, not just the filename).
 - **Dependency graph diagram** (Mermaid `flowchart`): should mirror
   `spec.dependsOn` across all this cluster's `Kustomization`s, grouped by
   core/extra/apps the same way the existing diagram does. Regenerate the
