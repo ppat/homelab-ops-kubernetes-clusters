@@ -14,12 +14,11 @@ spec:
     !/infrastructure/subsystems/observability-core
   interval: 1m0s
   ref:
-    # !!! PLACEHOLDER - OWNER ACTION REQUIRED BEFORE MERGE !!!
-    # Replace with the squash-merge commit of apps#3595 on the apps repo's main branch.
+    # Pinned to the squash-merge commit of apps#3595 on the apps repo's main branch.
     # A commit rather than a tag only for the promtail/alloy parallel run, so the
     # comparison doesn't wait on a release; `branch` is a clone hint only (Flux resolves
     # `commit` first) and is also what CI's prepare-sources.sh renders the diff against.
     # Step C-4 of the migration restores a `tag:` pin at cutover.
     branch: main
-    commit: REPLACE-ME-apps-pr-3595-merge-commit
+    commit: a359fa751399db258f983fa0fb35697f0dc32d79
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git
