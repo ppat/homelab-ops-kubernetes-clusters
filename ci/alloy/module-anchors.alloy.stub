@@ -1,0 +1,25 @@
+// Stand-ins for the two module-owned components that this cluster's *.alloy fragments
+// reference across the /etc/alloy directory. They live in the apps repo
+// (infrastructure/subsystems/observability-core/alloy/conf.d/), so a fragment cannot be
+// validated on its own -- `alloy validate` rejects it with
+// "component ... does not exist or is out of scope".
+//
+// ci/scripts/alloy-lint.sh copies this file alongside the fragments into a scratch
+// directory and validates the two together. The extension is deliberately NOT `.alloy`
+// so nothing else in this repo picks it up as config.
+//
+// Scope, stated so nobody reads more into a green run than is there: this makes
+// argument names, component types and stability level checkable. It does NOT prove the
+// fragments are collision-free against the *rest* of the module's component graph --
+// only these two names are known here. That is what the `cluster_` name prefix is for,
+// and alloy-lint.sh asserts the prefix separately.
+
+discovery.kubernetes "pods" {
+	role = "pod"
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki.invalid./loki/api/v1/push"
+	}
+}

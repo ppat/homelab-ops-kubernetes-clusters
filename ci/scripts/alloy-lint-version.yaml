@@ -1,0 +1,12 @@
+---
+# Pinned version of the grafana/alloy container image used by ci/scripts/alloy-lint.sh
+# (local pre-commit hooks + the `alloy` job in lint.yaml). Kept in its own file, like
+# the apps repo does, because Renovate's `# renovate:` comment convention here (see
+# .github/renovate.json) only scans `.ya?ml$` files and .pre-commit-config.yaml's hook
+# schema has no field to hang the comment on.
+#
+# Track the appVersion of the alloy chart the observability-core module deploys, not
+# the newest release: `alloy validate` is only evidence if it is the same binary that
+# will load the config.
+# renovate: datasource=docker depName=grafana/alloy
+version: "v1.18.1"
