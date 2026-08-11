@@ -23,6 +23,13 @@ jobs:
       files_yaml: |
         actions:
         - .github/workflows/**.yaml
+        alloy:
+        - '**/*.alloy'
+        - 'clusters/*/kustomizations/*.yaml'
+        - ci/scripts/alloy-lint.sh
+        - ci/scripts/alloy-lint-version.yaml
+        - ci/alloy/module-anchors.alloy.stub
+        - .github/workflows/lint.yaml
         kubernetes:
         - 'clusters/**/*.yaml'
         - 'ci/**/*.yaml'
@@ -49,6 +56,8 @@ jobs:
       to: ${{ github.event.pull_request.head.sha || 'HEAD' }}
 
   alloy:
+    needs: [detect-changes]
+    if: ${{ github.event_name != 'pull_request' || fromJSON(needs.detect-changes.outputs.results).alloy_any_changed == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -58,10 +67,16 @@ jobs:
         fetch-depth: 1
         persist-credentials: false
 
-    # Deliberately not gated on detect-changes, unlike the jobs around it:
-    # ci/scripts/alloy-lint.sh is a no-op when the repo has no *.alloy files, and
-    # check-embedded has to run whenever *either* side of the duplicated fragment
-    # changes - a glob covering both is one more thing to go stale as files move.
+    # Whether this job runs at all is gated by detect-changes (above), scoped to every
+    # *.alloy fragment, every clusters/*/kustomizations/*.yaml -- the same path pattern
+    # ci/scripts/alloy-lint.sh itself scans for the embedded-copy side of check-embedded,
+    # so the trigger glob and the script's own discovery can't drift apart -- and this
+    # gate's own inputs (the script, its version pin, the module-anchor stub, this
+    # workflow file). What it checks once running is a separate concern: each step below
+    # still discovers every *.alloy file and every kustomization in the repo, not just
+    # the changed ones -- alloy validate operates on a directory as one merged unit and
+    # check-embedded scans all kustomizations regardless (see ci/scripts/alloy-lint.sh),
+    # so a partial file list would produce false negatives or positives either way.
     - name: alloy fmt --test
       shell: bash
       # yamllint disable-line rule:indentation

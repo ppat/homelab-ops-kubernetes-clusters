@@ -10,11 +10,16 @@
 # plus its own stand-in fragment, never this cluster's.
 #
 # Usage:
-#   alloy-lint.sh fmt-write <file>...    # format in place (local pre-commit hook)
 #   alloy-lint.sh fmt-check <file>...    # fail if formatting would change a file
 #   alloy-lint.sh validate  <file>...    # validate each parent directory + name prefix
 #   alloy-lint.sh check-embedded         # fragment file == the copy embedded in the
 #                                        # Flux Kustomization that injects it
+#
+# All three modes are driven by the `alloy` CI job in .github/workflows/lint.yaml --
+# there is no local pre-commit hook (this repo's primary dev environment has no Docker,
+# and the shared lint-pre-commit reusable workflow only runs a fixed hardcoded hook-id
+# list, so a local hook here would get zero CI coverage anyway). There is deliberately
+# no `fmt-write` mode: it existed only to back that hook, and nothing else calls it.
 #
 # `validate` is directory-scoped and adds ci/alloy/module-anchors.alloy.stub, because
 # alloy loads /etc/alloy as one merged component graph and these fragments reference
@@ -136,7 +141,7 @@ check_embedded() {
   return "${rc}"
 }
 
-mode="${1:?usage: alloy-lint.sh <fmt-write|fmt-check|validate|check-embedded> [file...]}"
+mode="${1:?usage: alloy-lint.sh <fmt-check|validate|check-embedded> [file...]}"
 shift
 
 if [[ "${mode}" == "check-embedded" ]]; then
@@ -144,19 +149,14 @@ if [[ "${mode}" == "check-embedded" ]]; then
   exit
 fi
 
-# The pre-commit hooks and the CI job both skip these modes when no *.alloy file
-# matches; this guard only makes a manual invocation with no files a no-op.
+# The CI job skips these modes when no *.alloy file matches; this guard only makes a
+# manual invocation with no files a no-op.
 if [[ $# -eq 0 ]]; then
   echo "alloy-lint.sh: no files given, nothing to do"
   exit 0
 fi
 
 case "${mode}" in
-fmt-write)
-  for f in "$@"; do
-    run_alloy "$(pwd)" fmt --write "${f}"
-  done
-  ;;
 fmt-check)
   for f in "$@"; do
     run_alloy "$(pwd)" fmt --test "${f}"
@@ -170,7 +170,7 @@ validate)
   exit "${rc}"
   ;;
 *)
-  echo "alloy-lint.sh: unknown mode '${mode}' (expected fmt-write, fmt-check, validate or check-embedded)" >&2
+  echo "alloy-lint.sh: unknown mode '${mode}' (expected fmt-check, validate or check-embedded)" >&2
   exit 1
   ;;
 esac
