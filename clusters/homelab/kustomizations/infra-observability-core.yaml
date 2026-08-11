@@ -330,7 +330,7 @@ spec:
           }
 
           // ----------------------------------------------------------------------------------
-          // plex -- *.log at any depth below the CSI volume root
+          // plex -- *.log at the CSI volume root, or one level down in a named subdirectory
           // ----------------------------------------------------------------------------------
 
           discovery.relabel "cluster_plex_pvc_logs" {
@@ -348,10 +348,28 @@ spec:
           		regex         = "plex"
           	}
 
+          	// The middle `*` matches the pod's CSI volume by PersistentVolume name, which this
+          	// job deliberately does not pin -- plex-logs is dynamically provisioned, so its PV
+          	// name is generated and would change (silently stopping collection) if the volume
+          	// were ever recreated.
+          	//
+          	// Do not widen `{*,*/*}` back to `**`: this pod also mounts its 32Gi config volume
+          	// and the entire read-only media library through the same kubernetes.io~csi/
+          	// prefix, and `**` recursively re-walks all three on every file_match sync_period,
+          	// not just plex-logs -- that walk measured ~740m CPU sustained on the node this pod
+          	// lands on (vs 17-52m for the DaemonSet's other pods), from a glob that did less
+          	// useful work than its peers while doing it. `{*,*/*}` is a doublestar alternation
+          	// bounded to the two depths plex actually writes logs at: the volume root, and one
+          	// named subdirectory (`PMS Plugin Logs/`). It deliberately excludes the crash
+          	// report file several levels deep in the *config* volume (Library/Application
+          	// Support/Plex Media Server/Crash Reports/...): that's a diagnostic dump from the
+          	// wrong volume, not a log this job is meant to collect, and reaching it would mean
+          	// either pinning the config volume's PV name or re-adding the expensive recursive
+          	// walk this change removes.
           	rule {
           		action        = "replace"
           		source_labels = ["__meta_kubernetes_pod_uid"]
-          		replacement   = "/var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/**/*.log"
+          		replacement   = "/var/lib/kubelet/pods/$1/volumes/kubernetes.io~csi/*/mount/{*,*/*}.log"
           		target_label  = "__path__"
           	}
 
@@ -414,8 +432,13 @@ spec:
           	targets    = discovery.relabel.cluster_plex_pvc_logs.output
           	forward_to = [loki.process.cluster_plex_pvc_logs.receiver]
 
+          	// Defence-in-depth alongside the bounded glob above: these are tailed files, not a
+          	// once-per-period scrape, so a slower re-glob only delays *new* files/pods showing
+          	// up, by up to a minute -- not a problem for logs nothing alerts on. A future glob
+          	// mistake here (or a fourth volume added to the pod) re-walks less often.
           	file_match {
-          		enabled = true
+          		enabled     = true
+          		sync_period = "1m"
           	}
           }
 
