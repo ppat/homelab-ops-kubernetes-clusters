@@ -312,7 +312,7 @@ rules:
   - postgresql.cnpg.io
   - barmancloud.cnpg.io
   - dragonflydb.io
-  # nas is getting prometheus exporters and promtail/alloy
+  # nas is getting prometheus exporters and alloy
   - monitoring.coreos.com
   - kyverno.io
   - policies.kyverno.io

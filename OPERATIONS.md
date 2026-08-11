@@ -655,7 +655,7 @@ The recurring probe keeps running afterward on its own
 `PROBE_INTERVAL_SECONDS` loop (300s by default). There is no `kube_job_failed`
 metric anymore (no Job object) — instead, query Loki directly for the verdict
 lines (confirmed working against the live `loki` datasource; the probe's pod
-logs carry `namespace`/`pod`/`node_name`/`container` labels via promtail):
+logs carry `namespace`/`pod`/`node_name`/`container` labels via Alloy):
 
 ```logql
 # Latest cycle summary per namespace:

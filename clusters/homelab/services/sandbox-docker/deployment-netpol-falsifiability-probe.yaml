@@ -31,7 +31,7 @@
 #
 # What this costs: no more discrete `kube_job_failed` per-run signal, since there's no Job
 # object. What it doesn't cost: the individual PASS/FAIL-style verdict lines were always
-# going to Loki via promtail regardless of the Job/Deployment split (confirmed against the
+# going to Loki via Alloy regardless of the Job/Deployment split (confirmed against the
 # live `loki` datasource: `{namespace="sandbox-docker"}` already returned this probe's
 # lines with `pod`/`node_name`/`container` labels) -- that per-target detail is strictly
 # richer than a binary job-failed flag. The `SUMMARY` line each cycle emits below exists so
