@@ -49,15 +49,12 @@ spec:
       loki_singlebinary_storage_size: 16Gi
       loki_results_cache_memory: "1024"
       loki_chunks_cache_memory: "4096"
-      # !!! PLACEHOLDER - OWNER ACTION REQUIRED BEFORE MERGE !!!
-      # Alloy runs non-root and needs the node's systemd-journal group in its
-      # supplementalGroups to read the journal. Read the real value off any node with
-      # `getent group systemd-journal` and put the numeric GID here. Left as an obviously
-      # invalid string on purpose: the module gives this variable no default because a
-      # wrong GID fails *silently* (the journal component reports "journal tailer is
-      # running" and collects zero entries), whereas a non-numeric value is rejected by
-      # the API server when the DaemonSet is applied.
-      systemd_journal_gid: "REPLACE-ME-getent-group-systemd-journal"
+      # `getent group systemd-journal` on minisforum-nab9-1 (2026-08-11). The GID is
+      # allocated per host, not a fixed constant - a rebuilt node or a newly-added node
+      # could land on a different value, which fails *silently* (journal tailer reports
+      # healthy, collects zero entries). Re-derive per node before trusting this value
+      # elsewhere; see the per-node verification query in the PR description.
+      systemd_journal_gid: "999"
       # see: https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-substitution-of-numbers-and-booleans
       quote: '"'
       secret_store: bitwarden-secret-manager-store
