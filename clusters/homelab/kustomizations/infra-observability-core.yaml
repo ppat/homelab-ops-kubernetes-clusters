@@ -37,10 +37,22 @@ spec:
       #   prometheus_retention_size = 70-80% x prometheus_storage_size
       # must match: should match '(^0|([0-9]*[.])?[0-9]+((K|M|G|T|E|P)i?)?B)$'
       prometheus_retention_size: 50GiB
-      prometheus_retention_period: 336h
+      # 720h (30d) so the Garage-vs-MinIO trial (apps#3611) has a comparable 30-day
+      # metrics window. Storage headroom checked, not assumed: prometheus_tsdb_storage_blocks_bytes
+      # measured ~15.8GiB at 336h (2026-08-12), which projects to ~34GiB at 720h -- comfortably
+      # inside both prometheus_retention_size (50GiB) and the 60Gi PV below, so storage is
+      # unchanged here. See apps#3613 for why memory (not storage) is this cluster's actual
+      # constraint at 30d retention.
+      prometheus_retention_period: 720h
       prometheus_storage_class: sc-longhorn-replicated
       prometheus_storage_size: 60Gi
       prometheus_volume_name: pv-prometheus
+      # Pre-existing defect (apps#3613): measured 2026-08-12 at 99.9% of the module's
+      # previously-hardcoded 2Gi limit (max_over_time(container_memory_working_set_bytes{
+      # container="prometheus"}[14d]) = 1.9975GiB), and a 30-day range query over ~349k head
+      # series risks an OOMKill at that margin.
+      prometheus_memory_request: 2Gi
+      prometheus_memory_limit: 4Gi
       loki_storage_class: sc-longhorn-replicated
       loki_retention_size: 30d
       # each of the 3 monolithic replicas combines the write/read/backend roles that SimpleScalable
@@ -49,6 +61,16 @@ spec:
       loki_singlebinary_storage_size: 16Gi
       loki_results_cache_memory: "1024"
       loki_chunks_cache_memory: "4096"
+      # Required as of apps-v0.29.0 (apps#3618) -- the module no longer hardcodes these
+      # Bitwarden key names, so every consumer must supply them explicitly. These three
+      # preserve today's behaviour exactly (Loki stays on MinIO); they only change when
+      # Loki cuts over to Garage (apps#3611). Deliberately NOT setting loki_s3_region here:
+      # it defaults to empty, which is correct for MinIO (which ignores the signed region);
+      # setting it prematurely would have no effect against MinIO but would need to be
+      # reverted for the eventual Garage cutover, so it should be set only at that point.
+      loki_s3_endpoint_key: cluster_homelab_minio_loki_endpoint
+      loki_s3_accesskeyid_key: cluster_homelab_minio_loki_accesskeyid
+      loki_s3_secretkey_key: cluster_homelab_minio_loki_secretkey
       # `getent group systemd-journal` on minisforum-nab9-1 (2026-08-11). The GID is
       # allocated per host, not a fixed constant - a rebuilt node or a newly-added node
       # could land on a different value, which fails *silently* (journal tailer reports
