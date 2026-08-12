@@ -1,0 +1,29 @@
+---
+# Statically created Longhorn volume, adopted into GitOps here (apps#3614) so it is
+# recoverable from Git rather than existing only as live cluster state -- created
+# 2025-07-03, outside Flux, with no manifest in either this repo or the apps repo until
+# now. Every field below is a verbatim copy of the live object (field-by-field diff done
+# in the PR description); do not "clean up" values that look redundant (e.g. the empty
+# diskSelector/nodeSelector) without re-diffing against the live PV first, since most of
+# spec.csi is immutable once bound and a mismatch fails the apply rather than converging.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-prometheus
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: 60Gi
+  csi:
+    driver: driver.longhorn.io
+    fsType: ext4
+    volumeAttributes:
+      diskSelector: ""
+      nodeSelector: ""
+      numberOfReplicas: "2"
+      staleReplicaTimeout: "20"
+    volumeHandle: pv-prometheus
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: sc-longhorn-replicated
+  volumeMode: Filesystem
