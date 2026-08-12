@@ -36,14 +36,17 @@ spec:
       garage_storage_replicas: "1"
       # Follows what MinIO's own PVC (minio-data) uses on this cluster.
       garage_storage_class: sc-longhorn-replicated
-      # Measured, not guessed: a benchmark at the production object count (3,439,460
-      # objects) put metadata_dir at 6361.8 MiB. 12Gi is ~2x that for headroom.
-      garage_metadata_size: 12Gi
-      # Same benchmark measured data_dir at 11217 MiB (~10.95Gi) for the full object set.
-      # Garage's data_dir tracks live object bytes ~1:1 (unlike MinIO's measured 3.2x
-      # delete-marker amplification, apps#3611), so 24Gi (~2.2x) covers both that
-      # dataset and months of the estate's ongoing growth (~3,095 objects/day per #3611)
-      # before this PVC needs expansion.
+      # metadata.size is a PVC size, not a memory knob -- Garage's LMDB metadata store is
+      # a memory-mapped file on disk; the process's own RSS measured just 5.7 MiB in the
+      # same benchmark. Measured, not guessed: a benchmark at the production object count
+      # (3,439,460 objects) put metadata_dir at 6361.8 MiB. 16Gi is ~2.5x that for headroom.
+      garage_metadata_size: 16Gi
+      # Same benchmark measured data_dir at 11217 MiB (~10.95Gi) for the full object set
+      # (vs. 14293 MiB for the identical dataset on MinIO -- Garage uses ~78%). Garage's
+      # data_dir tracks live object bytes ~1:1 (unlike MinIO's measured 3.2x delete-marker
+      # amplification, apps#3611), so 24Gi (~2.2x) covers both that dataset and months of
+      # the estate's ongoing growth (~3,095 objects/day per #3611) before this PVC needs
+      # expansion.
       garage_data_size: 24Gi
       # Literal, not composed from ${domain_name}: Flux's postBuild substitution is a
       # single text-replacement pass, so a substitute value containing another ${var}
