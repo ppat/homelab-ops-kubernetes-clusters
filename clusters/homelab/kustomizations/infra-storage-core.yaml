@@ -48,11 +48,6 @@ spec:
       # the estate's ongoing growth (~3,095 objects/day per #3611) before this PVC needs
       # expansion.
       garage_data_size: 24Gi
-      # Literal, not composed from ${domain_name}: Flux's postBuild substitution is a
-      # single text-replacement pass, so a substitute value containing another ${var}
-      # token is never expanded -- it would land in the manifest verbatim. domain_name
-      # resolves to homelab.nikara.net (confirmed via the live minio Ingress hosts).
-      garage_web_root_domain: garage-web.homelab.nikara.net
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
