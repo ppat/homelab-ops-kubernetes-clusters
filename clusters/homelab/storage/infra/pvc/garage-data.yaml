@@ -1,0 +1,26 @@
+---
+# Sized from the same H1 falsification run (apps#3611) as garage-metadata: data_dir
+# measured 11217.3 MiB at 3,439,460 objects. 28Gi applies the same ~2.5x headroom
+# multiplier used for garage-metadata's 16Gi (11217.3 MiB * 2.5 = 28043.25 MiB,
+# rounded up to the nearest whole Gi) rather than reusing any size a prior,
+# now-reverted Garage attempt on this cluster computed by a different method --
+# re-derive from a fresh measurement before resizing, don't just bump the multiplier.
+#
+# Name ends in "-data" on purpose: storage/infra/pvc/kustomization.yaml's Longhorn
+# recurring-job-label patch matches on that suffix, so this PVC gets the same
+# backup/snapshot labels as minio-data/grafana-data without repeating them here.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: garage-data
+  namespace: garage
+  labels:
+    app.kubernetes.io/name: garage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 28Gi
+  storageClassName: sc-longhorn-replicated
+  volumeMode: Filesystem

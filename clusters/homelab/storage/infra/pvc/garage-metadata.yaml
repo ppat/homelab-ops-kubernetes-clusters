@@ -1,0 +1,30 @@
+---
+# Sized from the H1 falsification run (apps#3611): metadata_dir measured 6361.8 MiB
+# at 3,439,460 objects. 16Gi is ~2.5x that figure for headroom -- Garage's LMDB
+# metadata store grows with object *count*, not object size, so this is the volume
+# to watch as the bucket's item count grows, independent of garage-data's own growth.
+#
+# Not named "garage-metadata-data": storage/infra/pvc/kustomization.yaml's Longhorn
+# recurring-job-label patch only matches PVC names ending in "-data", so this PVC's
+# labels are set explicitly below rather than renamed to fit that pattern -- losing
+# Garage's node identity/cluster layout (this volume) is as disruptive as losing
+# object data, so it gets the same backup/snapshot treatment as garage-data.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: garage-metadata
+  namespace: garage
+  labels:
+    app.kubernetes.io/name: garage
+    recurring-job.longhorn.io/source: enabled
+    recurring-job-group.longhorn.io/default: enabled
+    recurring-job-group.longhorn.io/snapshot-ops: enabled
+    recurring-job-group.longhorn.io/backup-ops: enabled
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 16Gi
+  storageClassName: sc-longhorn-replicated
+  volumeMode: Filesystem
