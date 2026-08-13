@@ -28,100 +28,35 @@ spec:
       secret_store: bitwarden-secret-manager-store
       minio_admin_username_key: cluster_homelab_minio_admin_username
       minio_admin_password_key: cluster_homelab_minio_admin_password
-      # Garage stood up alongside MinIO (apps#3611) -- no consumer points at it yet.
-      # cert-manager ClusterIssuer for the Garage website endpoint's TLS certificate.
-      # Matches what apps-coder, apps-misc, infra-networking-core and
-      # infra-security-extra already pass on this cluster.
-      cert_issuer: letsencrypt-production-issuer
+      # Garage rebuilt on plain Kubernetes resources, no operator/CRDs (apps#3611,
+      # apps#3639) -- garage_replication_factor/garage_storage_replicas/
+      # garage_storage_class/garage_metadata_size/garage_data_size/
+      # garage_layout_capacity (variables the module carried at various points
+      # during that rebuild) no longer exist on the module; cert_issuer doesn't
+      # either, since the website Ingress relies on Traefik's default certificate
+      # the same way MinIO's own Ingresses do, not a dedicated cert-manager
+      # Certificate. garage-credentials keys unchanged from the pre-#3639 design.
       garage_admin_token_key: cluster_homelab_garage_admin_token
       garage_rpc_secret_key: cluster_homelab_garage_rpc_secret
-      # Single node, so both are 1: one Garage storage node, no cross-node replication.
-      garage_replication_factor: "1"
-      garage_storage_replicas: "1"
-      # Follows what MinIO's own PVC (minio-data) uses on this cluster.
-      garage_storage_class: sc-longhorn-replicated
-      # metadata.size is a PVC size, not a memory knob -- Garage's LMDB metadata store is
-      # a memory-mapped file on disk; the process's own RSS measured just 5.7 MiB in the
-      # same benchmark. Measured, not guessed: a benchmark at the production object count
-      # (3,439,460 objects) put metadata_dir at 6361.8 MiB. 16Gi is ~2.5x that for headroom.
-      garage_metadata_size: 16Gi
-      # Same benchmark measured data_dir at 11217 MiB (~10.95Gi) for the full object set
-      # (vs. 14293 MiB for the identical dataset on MinIO -- Garage uses ~78%). Garage's
-      # data_dir tracks live object bytes ~1:1 (unlike MinIO's measured 3.2x delete-marker
-      # amplification, apps#3611), so 24Gi (~2.2x) covers both that dataset and months of
-      # the estate's ongoing growth (~3,095 objects/day per #3611) before this PVC needs
-      # expansion.
-      garage_data_size: 24Gi
+      # Claim names for the externally-provisioned PVCs in
+      # ../../storage/infra/pvc/garage-{metadata,data}.yaml -- this module never
+      # provisions its own storage, matching every other module on this cluster.
+      garage_metadata_claim: garage-metadata
+      garage_data_claim: garage-data
+      # Estate-wide S3 signing region (owner decision; also set for Loki already
+      # in clusters#909's infra-observability-core.yaml, ahead of its own eventual
+      # cutover to Garage): boto3's hardcoded default, already what
+      # barman-cloud/CNPG backups sign with, and a value both MinIO and Garage
+      # accept -- one region for every S3 consumer on this cluster instead of
+      # three. Required: the module's conf.d/garage.toml has no default for this,
+      # so an unsupplied value fails the Kustomization build loudly rather than
+      # silently landing on something else. Garage rejects any S3 client whose
+      # signed region doesn't match this exactly (AuthorizationHeaderMalformed).
+      garage_s3_region: us-east-1
     substituteFrom:
     - kind: Secret
       name: cluster-secrets
   patches:
-  # Garage is being rebuilt on plain Kubernetes resources (apps#3611): the
-  # garage-operator is dropped -- it granted itself a cluster-wide ClusterRole
-  # including secret reads across all namespaces, which is a large standing
-  # privilege for something whose only job is managing one Garage instance per
-  # cluster. Until the module ships that rebuild, delete both the operator and
-  # the GarageCluster CR here so infra-storage-core reconciles: the CR cannot be
-  # dry-run at all (its CRD only exists once the operator's chart installs, and
-  # the chart never installs because the CR fails the Kustomization's dry-run
-  # first), which took the whole Kustomization -- MinIO and Longhorn included --
-  # to Ready: False.
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: garage.rajsingh.info/v1beta2
-      kind: GarageCluster
-      metadata:
-        name: garage
-        namespace: garage
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: helm.toolkit.fluxcd.io/v2
-      kind: HelmRelease
-      metadata:
-        name: garage-operator-release
-        namespace: garage-operator-system
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: source.toolkit.fluxcd.io/v1
-      kind: OCIRepository
-      metadata:
-        name: garage-operator
-        namespace: flux-system
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: cert-manager.io/v1
-      kind: Certificate
-      metadata:
-        name: garage-web-tls-cert
-        namespace: garage
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: networking.k8s.io/v1
-      kind: Ingress
-      metadata:
-        name: garage-s3
-        namespace: garage
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: networking.k8s.io/v1
-      kind: Ingress
-      metadata:
-        name: garage-web
-        namespace: garage
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      $patch: delete
-      apiVersion: external-secrets.io/v1
-      kind: ExternalSecret
-      metadata:
-        name: garage-credentials
-        namespace: garage
   # yamllint disable-line rule:indentation
   - patch: |-
       apiVersion: helm.toolkit.fluxcd.io/v2
