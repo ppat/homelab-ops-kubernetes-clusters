@@ -29,6 +29,10 @@ spec:
       minio_admin_username_key: cluster_homelab_minio_admin_username
       minio_admin_password_key: cluster_homelab_minio_admin_password
       # Garage stood up alongside MinIO (apps#3611) -- no consumer points at it yet.
+      # cert-manager ClusterIssuer for the Garage website endpoint's TLS certificate.
+      # Matches what apps-coder, apps-misc, infra-networking-core and
+      # infra-security-extra already pass on this cluster.
+      cert_issuer: letsencrypt-production-issuer
       garage_admin_token_key: cluster_homelab_garage_admin_token
       garage_rpc_secret_key: cluster_homelab_garage_rpc_secret
       # Single node, so both are 1: one Garage storage node, no cross-node replication.
