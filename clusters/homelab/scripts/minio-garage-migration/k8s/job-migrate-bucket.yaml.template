@@ -1,0 +1,72 @@
+---
+# job-migrate-bucket.yaml.template -- one Job manifest, reused for every phase
+# (preflight / copy / verify) by changing the PHASE/BUCKET/MODE template variables.
+# Apply with:
+#
+#   MINIO_ENDPOINT=... MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=... \
+#   GARAGE_ENDPOINT=... GARAGE_ACCESS_KEY=... GARAGE_SECRET_KEY=... GARAGE_S3_REGION=... \
+#   NAMESPACE=... RUN_ID=$(date +%s) CPU_REQUEST=200m MEM_REQUEST=256Mi CPU_LIMIT=1 MEM_LIMIT=768Mi \
+#   BUCKET=homelab-loki-ruler PHASE=preflight MODE=once \
+#     envsubst < job-migrate-bucket.yaml.template | kubectl apply -f -
+#
+# See ../bin/entrypoint.sh for what PHASE values exist, and clusters#910 for the full
+# stop -> copy -> restart sequence this Job is one step of. Never commit the rendered
+# output -- it is not templated by Flux/Kustomize and would contain literal credential
+# values.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: migrate-${BUCKET}-${PHASE}-creds
+  namespace: ${NAMESPACE}
+type: Opaque
+stringData:
+  MINIO_ENDPOINT: "${MINIO_ENDPOINT}"
+  MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
+  MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+  GARAGE_ENDPOINT: "${GARAGE_ENDPOINT}"
+  GARAGE_ACCESS_KEY: "${GARAGE_ACCESS_KEY}"
+  GARAGE_SECRET_KEY: "${GARAGE_SECRET_KEY}"
+  GARAGE_S3_REGION: "${GARAGE_S3_REGION}"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-${BUCKET}-${PHASE}-${RUN_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/component: minio-to-garage-migration
+    migration/bucket: "${BUCKET}"
+    migration/phase: "${PHASE}"
+spec:
+  backoffLimit: 6 # OnFailure retry IS the resume mechanism -- rclone copy skips objects
+                   # already present with a matching checksum, so a retried Job resumes
+                   # safely with no separate checkpoint needed.
+  activeDeadlineSeconds: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: migrate
+        image: rclone/rclone:1.68
+        command: ["/bin/scripts/entrypoint.sh"]
+        args: ["${PHASE}", "${BUCKET}", "${MODE}"]
+        envFrom:
+        - secretRef: {name: "migrate-${BUCKET}-${PHASE}-creds"}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: ["ALL"]}
+        resources:
+          requests: {cpu: "${CPU_REQUEST}", memory: "${MEM_REQUEST}"}
+          limits: {cpu: "${CPU_LIMIT}", memory: "${MEM_LIMIT}"}
+        volumeMounts:
+        - {name: scripts, mountPath: /bin/scripts}
+      volumes:
+      - name: scripts
+        configMap:
+          name: migration-scripts
+          defaultMode: 0o755

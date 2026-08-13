@@ -1,0 +1,33 @@
+# rclone remotes for the MinIO -> Garage migration.
+#
+# Rendered from env vars at runtime (see render-rclone-conf.sh) so no endpoint, domain,
+# or credential is ever a literal in this repo -- both remotes' values come from the
+# same Secret keys Loki's own ExternalSecret resolves against (apps#3618: the S3
+# secret-store key *names* are postBuild variables, so the migration Job and Loki read
+# the same credential, never a duplicate copy of it).
+#
+# "src" intentionally has no region set: MinIO ignores the signed region entirely
+# (grafana/loki#11453, confirmed in apps#3611), so there's nothing to get wrong here.
+# "dst" MUST set region to Garage's own configured s3_api.s3_region exactly -- Garage
+# enforces an exact match and rejects anything else with AuthorizationHeaderMalformed,
+# on every request, including the very first one this tool makes. Get this wrong and
+# the job fails loudly and immediately, never silently -- clusters#910's pre-flight
+# region canary catches this in about a second, rather than partway through a
+# multi-million-object copy.
+
+[src]
+type = s3
+provider = Minio
+env_auth = false
+access_key_id = ${MINIO_ACCESS_KEY}
+secret_access_key = ${MINIO_SECRET_KEY}
+endpoint = ${MINIO_ENDPOINT}
+
+[dst]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = ${GARAGE_ACCESS_KEY}
+secret_access_key = ${GARAGE_SECRET_KEY}
+endpoint = ${GARAGE_ENDPOINT}
+region = ${GARAGE_S3_REGION}
