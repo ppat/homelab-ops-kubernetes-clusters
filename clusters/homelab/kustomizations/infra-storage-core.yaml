@@ -84,6 +84,46 @@ spec:
         namespace: garage-operator-system
   # yamllint disable-line rule:indentation
   - patch: |-
+      $patch: delete
+      apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: garage-operator
+        namespace: flux-system
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      $patch: delete
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: garage-web-tls-cert
+        namespace: garage
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: garage-s3
+        namespace: garage
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: garage-web
+        namespace: garage
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: garage-credentials
+        namespace: garage
+  # yamllint disable-line rule:indentation
+  - patch: |-
       apiVersion: helm.toolkit.fluxcd.io/v2
       kind: HelmRelease
       metadata:
