@@ -23,6 +23,7 @@ resources:
 - apps-media.yaml
 - apps-misc.yaml
 - config-storage.yaml
+- config-storage-garage.yaml
 - config-services.yaml
 - config-services-image-builder.yaml
 - config-services-sandbox-docker.yaml
