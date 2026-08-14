@@ -67,7 +67,27 @@ spec:
           - name: temp
             emptyDir: {}
       ttlSecondsAfterFinished: 604800  # 1 week
-  schedule: "30 3 * * *"
+  # Hourly, not daily: the only signal this check has is
+  # kube_cronjob_status_last_successful_time (see prometheusrule in this same
+  # directory), and this estate leaves AlertManager unwired deliberately -
+  # nothing pages on it, someone has to look. At a daily cadence "stale"
+  # means nothing until 24h+ has passed; hourly makes that metric mean
+  # something within a couple of hours instead.
+  #
+  # This cadence must not change between the KPI baseline period and the
+  # Garage trial: the check's own query_range calls are load against the
+  # object store under benchmark, so its cadence is part of the measured
+  # profile. Identical cadence on both backends cancels out of the
+  # comparison; changing it partway biases the result. Once the trial
+  # starts, leave this alone until it ends.
+  #
+  # A schedule is also the wrong tool for cutover verification - waiting up
+  # to an hour for the answer at the moment it matters most isn't
+  # acceptable, and this value should not be twisted to compensate. Trigger
+  # a run on demand instead, immediately after the Garage cutover and after
+  # each direction of the rollback drill:
+  #   kubectl -n <namespace> create job --from=cronjob/loki-query-correctness qc-postcutover-1
+  schedule: "0 * * * *"
   startingDeadlineSeconds: 43200  # 12 hours
   successfulJobsHistoryLimit: 8
   timeZone: Etc/UTC
