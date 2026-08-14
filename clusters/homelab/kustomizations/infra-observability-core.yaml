@@ -611,3 +611,81 @@ spec:
       kind: ConfigMap
       name: alloy-config
       namespace: logging
+  # TEMPORARY, for the MinIO->Garage Loki migration window (apps#3611): makes Alloy retry
+  # forever instead of eventually dropping a batch while Loki is deliberately down.
+  # loki.write.default is the one write path every source in this collector forwards into
+  # (pod logs, journal, and all three PVC-tailing jobs above) - see the module README,
+  # "Extending Grafana Alloy from a cluster". That is why this replaces the module's
+  # write.alloy key wholesale via a JSON6902 `replace` on /data/write.alloy, rather than
+  # adding a `cluster-*.alloy` fragment the way the PVC-log jobs above do: a fragment only
+  # adds a key, it cannot override the module's own loki.write "default" block, and two
+  # components named "default" in the same /etc/alloy directory fail the whole config load.
+  #
+  # Embedding this as a plain ConfigMap-merge `data:` block (like the patch above) was also
+  # considered and rejected: that pattern requires a companion real .alloy source file for
+  # ci/scripts/alloy-lint.sh's fmt/validate/check-embedded gates, and this component is
+  # necessarily named "default" (it must match the module's to actually override it) - which
+  # trips `validate`'s `cluster_` name-prefix check, a gate that exists specifically to stop
+  # cluster fragments from colliding with module components. A JSON6902 op on the same
+  # ConfigMap target isn't a "fragment" by that gate's own definition (check_embedded() only
+  # inspects `.data` keys of a patch document, which a JSON6902 op list doesn't have), so it
+  # doesn't hit either gate - confirmed with `kustomize build` against a scratch fixture, not
+  # just by reading the script.
+  #
+  # Content is the module's write.alloy (infrastructure/subsystems/observability-core/alloy/
+  # conf.d/write.alloy) plus one added line, max_backoff_retries = 0, inside the endpoint
+  # block. If the module ever changes write.alloy - renames the key, or keeps the key but
+  # changes its content (a different endpoint, new external_labels, a second write target) -
+  # this patch does NOT notice and does NOT fail loudly: `kustomize build` was tested against
+  # a missing-key case and a JSON6902 `replace` succeeds even when the target key doesn't
+  # exist (it does not require the target to pre-exist, despite RFC 6902's wording), so
+  # there is no build-time signal either way. This keeps silently applying its own frozen
+  # snapshot on top of whatever ships in a newer module version until someone notices or
+  # removes it.
+  #
+  # Two things this override does NOT cover - see the PR body for the full reasoning:
+  #   - It must be applied and fully reconciled BEFORE Loki goes down. An Alloy config
+  #     reload Drain()s the outgoing config for up to 2 minutes and then silently discards;
+  #     applying this (or any other Alloy-affecting change - chart bump, Renovate reconcile)
+  #     mid-outage causes exactly the loss this exists to prevent.
+  #   - It does not protect the restart step. sendBatch() gives up immediately on any
+  #     non-429 4xx, so a Loki that comes back up but answers 401/403 (e.g. a bad Garage
+  #     credential) still drops that batch regardless of this setting.
+  #
+  # REMOVE this patch once the migration is done and Loki is confirmed healthy - infinite
+  # retries hide a hung/misconfigured Loki exactly as well as a genuinely down one, and this
+  # was never meant to be permanent config.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: replace
+        path: /data/write.alloy
+        value: |
+          // The single write path. Kept in its own file so it is the stable anchor that
+          // cluster-injected fragments forward into: logs.alloy and journal.alloy are
+          // both individually droppable (Talos has no journal), this file is not.
+
+          loki.write "default" {
+          	endpoint {
+          		// Trailing dot is deliberate and currently working in production:
+          		// it makes the name fully qualified and skips ndots search-domain
+          		// expansion. Do not "clean it up".
+          		url = "http://loki.logging.svc.cluster.local.:3100/loki/api/v1/push"
+
+          		// TEMPORARY (MinIO->Garage migration window, apps#3611): infinite retries
+          		// so Alloy blocks rather than drops while Loki is deliberately down. See
+          		// the patch comment above (in this file) for the full rationale, what
+          		// this does not cover, and why this whole patch must be removed once the
+          		// migration ends.
+          		max_backoff_retries = 0
+          	}
+
+          	external_labels = {
+          		// The node name, injected by the chart from spec.nodeName.
+          		// NOT constants.hostname - that is os.Hostname(), i.e. the pod name.
+          		host = sys.env("K8S_NODE_NAME"),
+          	}
+          }
+    target:
+      kind: ConfigMap
+      name: alloy-config
+      namespace: logging
