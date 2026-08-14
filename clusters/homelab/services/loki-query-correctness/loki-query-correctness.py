@@ -60,7 +60,30 @@ ANCHOR_LAG_SECONDS = 2 * 3600
 # so a wider window makes a divergence harder to miss.
 ANCHOR_WIDTH_SECONDS = 2 * 3600
 
-K8S_API = "https://kubernetes.default.svc"
+# Must stay fully qualified as "...svc.cluster.local" - but, unlike
+# LOKI_URL above, WITHOUT a trailing dot. Both parts matter:
+#
+# - Fully qualified, because the short form "kubernetes.default.svc" (two
+#   dots) broke under this cluster's ndots:1 (policies/best-practices/
+#   add-ndots.yaml). The obvious read of ndots is "glibc semantics": try
+#   the bare name first, fall back to the search list on failure. musl
+#   (this image is python:3.14-alpine) does not do that fallback - once
+#   dots >= ndots, musl's name_from_dns_search() zeroes out the search
+#   list entirely and only ever tries the bare name (src/network/
+#   lookup_name.c). No absolute record for the bare name exists, so
+#   resolution just fails; it never reaches the search list that would
+#   have appended cluster.local. Confirmed by reading musl source, not
+#   observed live.
+# - No trailing dot, because this is https:// and, unlike LOKI_URL's
+#   http://, verify_mode checks the hostname against the cert's SAN.
+#   Tested locally (self-signed cert, SAN "kubernetes.default.svc.
+#   cluster.local", no trailing dot - matching a stock kube-apiserver
+#   cert - served over TLS, verified with ssl.create_default_context()
+#   exactly as below): a server_hostname WITH a trailing dot fails
+#   verification ("Hostname mismatch"); without the dot it passes. The
+#   dot buys nothing for DNS here anyway - four dots already clears
+#   ndots:1 with or without it - so there's no tradeoff in dropping it.
+K8S_API = "https://kubernetes.default.svc.cluster.local"
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 
 
