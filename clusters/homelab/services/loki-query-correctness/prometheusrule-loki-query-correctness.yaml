@@ -1,0 +1,26 @@
+---
+# Freshness of the scripted LogQL correctness check (loki-query-correctness
+# CronJob in this same directory). kube_cronjob_status_last_successful_time
+# is already exported by kube-state-metrics (observability-core) - no new
+# instrumentation. A rising value means the check has stopped succeeding,
+# whether from a hash mismatch (a real migration-safety failure) or an infra
+# hiccup; kubectl logs on the CronJob tells them apart, which is enough for a
+# homelab with no on-call. No alert rule - this estate leaves AlertManager
+# unwired until there's an AI triage path for it.
+#
+# Trial-scoped (homelab-ops-kubernetes-apps#3611): retire alongside the
+# CronJob once cutover is proven, by deleting this directory.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    release: kube-prometheus-stack
+  name: loki-query-correctness
+  namespace: logging
+spec:
+  groups:
+  - name: object-store-query-correctness
+    rules:
+    - record: object_store:query_correctness_check_seconds_since_success
+      expr: |
+        time() - kube_cronjob_status_last_successful_time{namespace="logging", cronjob="loki-query-correctness"}
