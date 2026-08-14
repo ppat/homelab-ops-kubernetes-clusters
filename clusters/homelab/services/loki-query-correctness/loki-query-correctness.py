@@ -45,8 +45,20 @@ QUERIES = ['{namespace="kube-system"}', '{namespace="flux-system"}']
 
 MIN_LINES_PER_QUERY = 10
 PAGE_SIZE = 2000
-ANCHOR_LAG_SECONDS = 2 * 3600  # how far behind "now" the anchor window's end sits
-ANCHOR_WIDTH_SECONDS = 3600
+
+# ANCHOR_LAG_SECONDS is how far behind "now" the anchor window's end sits -
+# it puts the window behind Loki's chunk flush and compaction so the
+# content has settled before it's ever hashed. Don't shrink it to widen the
+# window instead; that trades away the margin the lag exists for. This
+# margin matters only at capture time: the window is frozen into the
+# baseline ConfigMap on first run (see capture_baseline) and only ever gets
+# older after that, so a larger lag here never costs anything once captured.
+ANCHOR_LAG_SECONDS = 2 * 3600
+
+# ANCHOR_WIDTH_SECONDS is the free lever for a thicker baseline instead:
+# MIN_LINES_PER_QUERY only guards against an empty window, not a thin one,
+# so a wider window makes a divergence harder to miss.
+ANCHOR_WIDTH_SECONDS = 2 * 3600
 
 K8S_API = "https://kubernetes.default.svc"
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
