@@ -137,8 +137,13 @@ def query_loki_page(query, start_ns, end_ns, page_size):
         }
     )
     url = f"{LOKI_URL}/loki/api/v1/query_range?{params}"
-    with urllib.request.urlopen(url, timeout=60) as resp:
-        payload = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            payload = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"loki query failed for {query!r}: HTTP {e.code} {e.read()[:500]!r}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"loki query failed for {query!r}: {e.reason}") from e
     if payload.get("status") != "success":
         raise RuntimeError(f"loki query failed for {query!r}: {payload}")
     return payload["data"]["result"]
@@ -187,7 +192,17 @@ def capture_baseline(now_ns):
     end_ns = (now_ns // 10**9 - ANCHOR_LAG_SECONDS) * 10**9
     start_ns = end_ns - ANCHOR_WIDTH_SECONDS * 10**9
 
-    data = {"start_ns": str(start_ns), "end_ns": str(end_ns)}
+    # Query strings are LogQL, not valid ConfigMap data keys (they contain
+    # '{', '"', '=', '}' - the key regex is '[-._a-zA-Z0-9]+'). Store the
+    # whole query->hash mapping as a single JSON blob under one valid key
+    # instead of using each query as a key: that sidesteps the charset
+    # constraint, keeps the mapping explicit in the value (so it self-
+    # describes which hash belongs to which query), and - unlike positional
+    # keys such as "query_0" - can't silently remap a stored hash onto a
+    # different query if QUERIES is ever reordered or edited. See
+    # verify_baseline for how a changed QUERIES is detected instead of
+    # silently mismatched.
+    hashes = {}
     for query in QUERIES:
         entries = fetch_all_entries(query, start_ns, end_ns)
         if len(entries) < MIN_LINES_PER_QUERY:
@@ -197,9 +212,14 @@ def capture_baseline(now_ns):
                 f"could pass on empty results proves nothing. Retrying next schedule."
             )
             return 2
-        data[query] = canonical_hash(entries)
-        print(f"baseline: {query!r} -> {len(entries)} lines, hash {data[query][:12]}")
+        hashes[query] = canonical_hash(entries)
+        print(f"baseline: {query!r} -> {len(entries)} lines, hash {hashes[query][:12]}")
 
+    data = {
+        "start_ns": str(start_ns),
+        "end_ns": str(end_ns),
+        "hashes": json.dumps(hashes, sort_keys=True),
+    }
     write_baseline(data)
     print(f"baseline captured for window [{start_ns}, {end_ns}) and stored in {BASELINE_CONFIGMAP}")
     return 0
@@ -208,11 +228,32 @@ def capture_baseline(now_ns):
 def verify_baseline(baseline):
     start_ns = int(baseline["start_ns"])
     end_ns = int(baseline["end_ns"])
+    hashes = json.loads(baseline["hashes"])
+
+    # QUERIES was edited after this baseline was captured. A baseline is
+    # only meaningful for the exact query set it was captured against -
+    # comparing a subset would silently skip a query, and comparing against
+    # a query absent from the baseline would KeyError. Either way the
+    # operator needs to be told the baseline isn't comparable, not shown a
+    # partial or crashed result.
+    baseline_queries = set(hashes)
+    current_queries = set(QUERIES)
+    if baseline_queries != current_queries:
+        print(
+            "QUERY SET MISMATCH: baseline in "
+            f"{BASELINE_CONFIGMAP} was captured for {sorted(baseline_queries)} "
+            f"but QUERIES is now {sorted(current_queries)}. This baseline is not "
+            "comparable to the current query set - delete the "
+            f"{BASELINE_CONFIGMAP} ConfigMap to force a fresh capture, or revert "
+            "QUERIES to match."
+        )
+        return 1
+
     mismatches = []
     for query in QUERIES:
         entries = fetch_all_entries(query, start_ns, end_ns)
         actual_hash = canonical_hash(entries)
-        expected_hash = baseline[query]
+        expected_hash = hashes[query]
         if actual_hash != expected_hash:
             mismatches.append((query, expected_hash, actual_hash, len(entries)))
             print(
