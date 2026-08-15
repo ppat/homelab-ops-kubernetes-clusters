@@ -32,10 +32,23 @@ spec:
       # apps#3639) -- garage_replication_factor/garage_storage_replicas/
       # garage_storage_class/garage_metadata_size/garage_data_size/
       # garage_layout_capacity (variables the module carried at various points
-      # during that rebuild) no longer exist on the module; cert_issuer doesn't
-      # either, since the website Ingress relies on Traefik's default certificate
-      # the same way MinIO's own Ingresses do, not a dedicated cert-manager
-      # Certificate. garage-credentials keys unchanged from the pre-#3639 design.
+      # during that rebuild) no longer exist on the module. garage-credentials
+      # keys unchanged from the pre-#3639 design.
+      #
+      # cert_issuer: supplied ahead of the module version that requires it. An
+      # upcoming storage-core release adds a dedicated cert-manager Certificate
+      # for the Garage website Ingress's nested wildcard host
+      # (*.garage-web.${domain_name}) -- Traefik's own default certificate only
+      # covers one label of wildcard (*.${domain_name}), the same reason
+      # coder/coder-tls-cert exists. That Certificate's issuerRef.name renders
+      # from this variable, so it must already be here before ref.tag moves to
+      # that release, or Flux's strict-mode envsubst fails the whole
+      # Kustomization build -- taking MinIO and Longhorn down with it, since all
+      # four components share this one Kustomization. This happened for real
+      # (#902, reverted at #903): landing the variable first, while unused, means
+      # the tag bump can never meet a cluster that lacks it. Matches what
+      # apps-coder and infra-networking-core already pass here.
+      cert_issuer: letsencrypt-production-issuer
       garage_admin_token_key: cluster_homelab_garage_admin_token
       garage_rpc_secret_key: cluster_homelab_garage_rpc_secret
       # Claim names for the externally-provisioned PVCs in
