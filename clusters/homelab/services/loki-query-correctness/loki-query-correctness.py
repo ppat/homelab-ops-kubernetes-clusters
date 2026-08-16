@@ -480,21 +480,30 @@ def query_loki_count(query, start_ns, end_ns):
     (not just the max_ts-stall case fetch_all_entries itself guards)
     by comparing against Loki's own count_over_time aggregation.
 
-    Deliberately uses query_range (matrix result, one bucket) rather than
-    the instant /query endpoint: same endpoint and same start/end params as
-    fetch_all_entries itself, so there is no separate start/end boundary
-    convention to reconcile between the two calls being compared.
+    Uses an *instant* query of sum(count_over_time(<query>[duration])),
+    evaluated at the window's end, against /loki/api/v1/query - not
+    query_range summed over per-step `values` against the unaggregated
+    form, which is what this looked like before and was wrong two ways:
+    count_over_time() without sum() returns one series *per stream*, and
+    <query> here (e.g. the kube-system selector) matches many streams -
+    vpa, node-feature-discovery, descheduler, kubernetes-events and more -
+    so reading only result[0] silently discarded every other stream's
+    count. And query_range buckets its result into per-step `values`;
+    unless step is set to exactly the window width those buckets overlap
+    or gap, so summing them isn't the window total either. Wrapping in
+    sum() and asking for a single instant value sidesteps both: one
+    aggregated selector, one bucket, one scalar - and it's what actually
+    agrees with fetch_all_entries's own paginated count (verified against
+    production Loki; see the PR that introduced this fix for the numbers).
     """
     duration_s = (end_ns - start_ns) // 10**9
     params = urllib.parse.urlencode(
         {
-            "query": f"count_over_time({query}[{duration_s}s])",
-            "start": start_ns,
-            "end": end_ns,
-            "step": duration_s,
+            "query": f"sum(count_over_time({query}[{duration_s}s]))",
+            "time": end_ns,
         }
     )
-    url = f"{LOKI_URL}/loki/api/v1/query_range?{params}"
+    url = f"{LOKI_URL}/loki/api/v1/query?{params}"
     try:
         with urllib.request.urlopen(url, timeout=60) as resp:
             payload = json.loads(resp.read())
@@ -507,7 +516,7 @@ def query_loki_count(query, start_ns, end_ns):
     result = payload["data"]["result"]
     if not result:
         return 0
-    return int(sum(float(v) for _, v in result[0]["values"]))
+    return int(float(result[0]["value"][1]))
 
 
 def fetch_all_entries_checked(query, start_ns, end_ns):
