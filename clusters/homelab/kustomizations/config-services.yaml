@@ -20,6 +20,18 @@ spec:
   timeout: 2m0s
   wait: true
   postBuild:
+    substitute:
+      # MUST match `loki_retention_size` in kustomizations/
+      # infra-observability-core.yaml - that's the value that actually
+      # governs the compactor's global retention_period; Flux has no
+      # mechanism to reference one Kustomization's postBuild variable from
+      # another, so this is a manually-maintained duplicate. Consumed by
+      # loki-query-correctness's retention guard/expiry ledger (its
+      # GLOBAL_RETENTION env var, see loki-query-correctness.py) to compute
+      # when a baselined window's content stops being safely immutable -
+      # a stale duplicate here makes that computation wrong silently. Update
+      # both together.
+      global_loki_retention: 30d
     substituteFrom:
     - kind: Secret
       name: cluster-secrets

@@ -41,6 +41,15 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # The compactor's global retention_period - not itself present
+            # in the retention-config volume below, which only carries the
+            # retention_stream overrides (see loki-query-correctness.py's
+            # GLOBAL_RETENTION comment for why this is a manually-maintained
+            # duplicate of kustomizations/infra-observability-core.yaml's
+            # loki_retention_size, sourced here via
+            # kustomizations/config-services.yaml's global_loki_retention).
+            - name: GLOBAL_RETENTION
+              value: "${global_loki_retention}"
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
@@ -53,6 +62,17 @@ spec:
               readOnly: true
             - mountPath: /tmp
               name: temp
+            # loki-retention.yaml, the retention_stream selectors that
+            # actually govern what Loki deletes and when - the same
+            # ConfigMap logging/kustomization.yaml generates and Loki's own
+            # HelmRelease reads via valuesFrom. Mounted read-only, no RBAC
+            # widening needed: volume mounts are resolved by the kubelet
+            # against the pod's namespace, not the pod's own ServiceAccount
+            # token (see rbac-loki-query-correctness.yaml, which stays
+            # scoped to just the baseline ConfigMap).
+            - mountPath: /etc/loki-retention
+              name: retention-config
+              readOnly: true
           restartPolicy: OnFailure
           securityContext:
             runAsUser: 11111
@@ -66,6 +86,9 @@ spec:
               name: loki-query-correctness-script
           - name: temp
             emptyDir: {}
+          - name: retention-config
+            configMap:
+              name: loki-extra-config
       ttlSecondsAfterFinished: 604800  # 1 week
   # Hourly, not daily: the only signal this check has is
   # kube_cronjob_status_last_successful_time (see prometheusrule in this same
