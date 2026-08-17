@@ -151,6 +151,17 @@ DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
 USER_AGENT = "ci-diagnostics-ingester/1 (+homelab-ops-kubernetes-clusters)"
 
+# Two timeouts, because the two calls fail differently. A job-log download is a multi-MB
+# transfer and legitimately takes a while. A Loki query is small and local: if it has not
+# answered in 20s, Loki is rolling or down, and waiting is not going to help.
+#
+# This is sized against a real incident. With a single 120s timeout and four retries, the
+# first pass after a merge sat silent for eight minutes per suite because helm-controller
+# was restarting Loki with the new limits at the same moment -- and eight minutes of silence
+# is indistinguishable from eight minutes of work.
+HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "120"))
+LOKI_TIMEOUT = int(os.environ.get("LOKI_TIMEOUT", "20"))
+
 # --------------------------------------------------------------------------------------
 # The published line grammar.
 #
@@ -354,7 +365,7 @@ class HttpError(Exception):
         self.status = status
 
 
-def _request(url, *, headers=None, data=None, method=None, retries=4):
+def _request(url, *, headers=None, data=None, method=None, retries=4, timeout=None):
     last = None
     for attempt in range(retries):
         req = urllib.request.Request(url, data=data, method=method)
@@ -362,7 +373,7 @@ def _request(url, *, headers=None, data=None, method=None, retries=4):
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as resp:
                 raw = resp.read()
                 if resp.headers.get("Content-Encoding") == "gzip":
                     raw = gzip.decompress(raw)
@@ -526,8 +537,27 @@ def loki_query(logql, start_ns, end_ns, limit=5000):
             "direction": "backward",
         }
     )
-    _, raw, _ = _request(url, headers={"Accept": "application/json"})
+    _, raw, _ = _request(url, headers={"Accept": "application/json"},
+                         retries=2, timeout=LOKI_TIMEOUT)
     return json.loads(raw).get("data", {}).get("result", [])
+
+
+def loki_index_stats(logql, start_ns, end_ns):
+    """Stream/chunk/entry counts for a selector, straight off the index.
+
+    Exists to answer one question cheaply: **does this selector have anything at all?**
+    `/index/stats` is an index lookup and is **not** split by `split_queries_by_interval`, so
+    it costs the same whether the window is an hour or a year.
+
+    Measured against this Loki, same selector, same 92-day window: **0.080s**, against
+    **10.766s** for the equivalent `query_range`.
+    """
+    url = f"{LOKI}/loki/api/v1/index/stats?" + urllib.parse.urlencode(
+        {"query": logql, "start": str(start_ns), "end": str(end_ns)}
+    )
+    _, raw, _ = _request(url, headers={"Accept": "application/json"},
+                         retries=2, timeout=LOKI_TIMEOUT)
+    return json.loads(raw)
 
 
 def loki_push(streams):
@@ -540,6 +570,8 @@ def loki_push(streams):
         headers={"Content-Type": "application/json"},
         data=body,
         method="POST",
+        retries=3,
+        timeout=LOKI_TIMEOUT,
     )
     if status >= 300:
         raise HttpError(status, raw.decode("utf-8", "replace"))
@@ -671,42 +703,60 @@ def plan_window(suite: str, now: datetime):
     Derived from what Loki already holds rather than from a stored watermark. A watermark
     advances past data a partially-failed push never wrote, and that hole is silent and
     permanent once the source log expires; reading the store instead makes a gap from any
-    cause refill itself on the next run, and makes first-run backfill and steady-state
+    cause refill itself on the next pass, and makes first-run backfill and steady-state
     operation the same code path rather than two modes.
+
+    **Two calls, and the order is the entire optimisation.** Loki splits a range query into
+    one subquery per `split_queries_by_interval` (15m here), but a `direction=backward,
+    limit=1` query short-circuits the moment the limit is satisfied -- so against a populated
+    selector it stops at the newest split and is essentially free. Against an **empty**
+    selector the limit is never satisfied, so it grinds every split: a 92-day window is 8,832
+    of them, times seventeen suites is ~150,000. Measured on this Loki: **0.187s populated,
+    10.766s empty**.
+
+    So the empty case is settled first with an index lookup that is not split at all and
+    costs 0.080s over the same window. Only a selector that actually has data runs the real
+    query, and that is exactly the case in which the real query is fast.
     """
     end_ns = int(now.timestamp() * 1_000_000_000)
-    # Clamped, because a window wider than Loki's max_query_length returns 400 -- and with the
-    # deep-seed setting (META_LOOKBACK_DAYS=365) the naive `+ 2` lands two days past the 366-day
-    # limit, so *every* watermark query would fail, on every suite, on every pass.
     span = min(META_LOOKBACK_DAYS + 2, MAX_QUERY_DAYS)
     start_ns = int((now - timedelta(days=span)).timestamp() * 1_000_000_000)
     selector = (
         f'{{job="{STREAM_JOB}", suite="{suite}", instrument="{INSTRUMENT_OUTCOME}"}}'
     )
     try:
+        if int(loki_index_stats(selector, start_ns, end_ns).get("entries", 0)) == 0:
+            log(f"  {suite}: nothing in Loki, will read back {META_LOOKBACK_DAYS}d")
+            return META_LOOKBACK_DAYS
         results = loki_query(selector, start_ns, end_ns, limit=1)
-    except HttpError as exc:
+    except (HttpError, urllib.error.URLError, TimeoutError, OSError) as exc:
         # Deliberately not "assume empty". Assuming empty on a read failure turns a transient
         # Loki blip into a full re-push of the window -- into streams whose watermark is
-        # already at now, so Loki rejects everything older than an hour and the pass dies.
-        # A read failure means "do not know", and the only safe action is to do nothing.
+        # already at now, so Loki rejects everything older than an hour and the pass dies. A
+        # read failure means "do not know", and the only safe action is to do nothing.
+        #
+        # URLError/OSError are caught alongside HttpError deliberately: a *connection*
+        # failure is the common case while Loki is rolling, and catching only HttpError meant
+        # it escaped and killed the whole pass instead of skipping one suite.
         hint = ""
         if "query time range exceeds the limit" in str(exc):
-            # Almost always the deploy-order case: this workload and Loki's limits ship in the
-            # same Kustomization, so a pass can run before helm-controller has rolled Loki with
-            # the new max_query_length. It resolves itself on the next pass; nothing to do.
             hint = (" -- Loki has not picked up the new max_query_length yet; this resolves "
                     "itself once helm-controller rolls it")
-        log(f"  {suite}: Loki watermark query failed ({exc}); skipping this suite this pass{hint}")
+        log(f"  {suite}: Loki watermark query failed ({exc}); "
+            f"skipping this suite this pass{hint}")
         return None
     newest = 0
     for stream in results:
         for ts, _ in stream.get("values", []):
             newest = max(newest, int(ts))
     if newest == 0:
+        log(f"  {suite}: index reports data but no entry returned, reading back "
+            f"{META_LOOKBACK_DAYS}d")
         return META_LOOKBACK_DAYS
     age_days = (end_ns - newest) / 86_400e9
-    return int(min(META_LOOKBACK_DAYS, max(MIN_LOOKBACK_DAYS, age_days + 1)))
+    window = int(min(META_LOOKBACK_DAYS, max(MIN_LOOKBACK_DAYS, age_days + 1)))
+    log(f"  {suite}: newest in Loki {age_days:.1f}d old, reading back {window}d")
+    return window
 
 
 def known_attempts(suite: str, days: int, now: datetime):
@@ -745,7 +795,7 @@ def known_attempts(suite: str, days: int, now: datetime):
             except ValueError:
                 attempt_n = 1
             seen[run_id] = max(seen.get(run_id, 0), attempt_n)
-    except HttpError as exc:
+    except (HttpError, urllib.error.URLError, TimeoutError, OSError) as exc:
         log(f"  {suite}: Loki dedupe query failed ({exc}); skipping this suite this pass")
         return None
     if entries >= QUERY_LIMIT:
@@ -1018,6 +1068,9 @@ def main():
     # a PR run have different run ids, so they coexist in the same per-suite map without
     # colliding.
     windows, known = {}, {}
+    # Announced, because this loop makes one Loki round-trip per suite and used to be the
+    # quietest part of the pass -- see LOKI_TIMEOUT above for what that cost.
+    log(f"reading watermarks from {LOKI} ({len(suites)} queries)")
     for suite in suites:
         window = plan_window(suite, now)
         if window is None:
@@ -1026,6 +1079,7 @@ def main():
         if attempts is None:
             continue
         windows[suite], known[suite] = window, attempts
+    log(f"watermarks read for {len(windows)}/{len(suites)} suites")
     if not windows:
         log("FATAL: could not read any suite's watermark from Loki; doing nothing")
         return 1
