@@ -33,7 +33,7 @@
       }
     ]
   },
-  "description": "**If a run failed tonight, this is the wrong page -- go and look at the run.** This is an archive for reading a change from months away: GitHub deletes CI logs after 90 days and a CronJob copies the diagnostic lines here first, so every panel is a weekly or 28-day aggregate.\\n\\nStart with the panel titled *Read this first* at the top -- it defines the handful of terms the rest of the page assumes. Then work down; the four row titles are the four questions, in the order people ask them.\\n\\nTwo things that will mislead you if you skip them: the `Runs` filter defaults to `schedule` because only those are a controlled sample, and the CPU stat at the top warns when a range spans more than one kind of machine.\\n\\nGuide: `dashboards/README.md` in the clusters repo. Design notes: `MAINTAINER.md`.",
+  "description": "**If a run failed tonight, this is the wrong page -- go and look at the run.** This is an archive for reading a change from months away: GitHub deletes CI logs after 90 days and a CronJob copies the diagnostic lines here first, so every panel is a weekly or 28-day aggregate.\n\nStart with the panel titled *Read this first* at the top -- it defines the handful of terms the rest of the page assumes. Then work down; the four row titles are the four questions, in the order people ask them.\n\nTwo things that will mislead you if you skip them: the `Runs` filter defaults to `schedule` because only those are a controlled sample, and the CPU stat at the top warns when a range spans more than one kind of machine.\n\nGuide: `dashboards/README.md` in the clusters repo. Design notes: `MAINTAINER.md`.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -70,7 +70,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "### If a run failed tonight, this is the wrong page -- go and look at the run.\n\nThis is an **archive**, built to answer *\"we changed something months ago, did it help?\"* The\nsource logs are deleted by GitHub after 90 days; a CronJob copies the diagnostic lines here\nfirst. Every panel is a weekly or 28-day aggregate.\n\n**Five things that make the rest make sense:**\n\n1. Each Kubernetes module is tested by a **suite** -- assertions run against a throwaway kind\n   cluster in GitHub Actions. Every assertion has a **budget**: a timeout, in the suite's YAML,\n   that decides whether waiting for something is a pass or a failure.\n2. Each CI job prints structured lines tagged `instrument`: `OUTCOME`, `PHASE`, `READY`, `PULL`,\n   `MODE`, `CONTENTION`, `RESTART`, `UNCENSORED`. **Every panel here is those lines aggregated --\n   so if the scraper stops, the whole page renders as \"fine\".** That is what the stats below are\n   for.\n3. The three failures this page catches: something took **longer** than its budget (a red run);\n   something took **nearly** as long (a future red run -- the leading indicators in row 3); and\n   something **never came up at all and nothing asserted on it** (a coverage gap).\n4. Only `schedule` runs are a controlled sample -- 16 suites, 4 fixed slots a day, always `main`.\n   PR runs execute branch code *and* only fire for suites someone touched, so their volume rises\n   with attention. **That is why nothing here is a raw count.**\n5. GitHub's runners are silently mixed -- five CPU models in six hours, all reporting 4 cores. So\n   single-digit-percent differences across a range spanning that are not real.\n\nGuide: `dashboards/README.md` in the clusters repo. Why it is built this way: `MAINTAINER.md`.",
+        "content": "### If a run failed tonight, this is the wrong page -- go and look at the run.\n\nThis is an **archive**, built to answer *\"we changed something months ago, did it help?\"* The\nsource logs are deleted by GitHub after 90 days; a CronJob copies the diagnostic lines here\nfirst. Every panel is a weekly or 28-day aggregate.\n\n**Five things that make the rest make sense:**\n\n1. Each Kubernetes module is tested by a **suite** -- assertions run against a throwaway kind\n   cluster in GitHub Actions. Every assertion has a **budget**: a timeout, in the suite's YAML,\n   that decides whether waiting for something is a pass or a failure.\n2. Each CI job prints structured lines. Loki tags them `instrument`, lower-case:\n   `outcome`, `phase`, `ready`, `pull`, `mode`, `contention`, `restart`, `uncensored`, plus\n   `marker` for the purple \"landed\" verticals that mark when a change merged. **Every panel here\n   is those lines aggregated -- so if the scraper stops, the whole page renders as \"fine\".** That\n   is what the stats below are for. Two field names appear in panels: `t0_s` is seconds from the\n   first thing in a run becoming Ready, and `extra_s` is seconds a wait needed beyond its timeout.\n3. The three failures this page catches: something took **longer** than its budget (a red run);\n   something took **nearly** as long (a future red run -- the leading indicators in row 3); and\n   something **never came up at all and nothing asserted on it** (a coverage gap).\n4. Only `schedule` runs are a controlled sample -- 16 suites, 4 fixed slots a day, always `main`.\n   PR runs execute branch code *and* only fire for suites someone touched, so their volume rises\n   with attention. **That is why nothing here is a raw count.**\n5. GitHub's runners are silently mixed -- five CPU models in six hours, all reporting 4 cores. So\n   single-digit-percent differences across a range spanning that are not real.\n\n**Suite names look like `apps-ai`, `infra-security`, `apps-bitwarden`.** Two repos are referred to:\nthe **apps repo** holds the modules and their suites, the **clusters repo** holds this dashboard and\nthe scraper. **`phase` and `contention`'s CPU fields only exist for runs after 2026-08-17** -- on\nthose panels a flat left edge is absence, not health.\n\nGuide: `dashboards/README.md` in the clusters repo. Why it is built this way: `MAINTAINER.md`.",
         "mode": "markdown"
       },
       "pluginVersion": "13.1.3",
@@ -170,7 +170,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Did collection cover the whole fleet, or only part of it?\n\nA pass that died halfway leaves a healthy-looking total with some suites missing entirely. On a per-suite chart that gap looks like *the suite did not run* rather than *we failed to collect it*.\n\n**Act** below 16 for more than a few hours. 16 suites are sampled on schedule every day, so anything less means collection is incomplete.",
+      "description": "Did collection cover the whole fleet, or only part of it?\n\nA pass that died halfway leaves a healthy-looking total with some suites missing entirely. On a per-suite chart that gap looks like *the suite did not run* rather than *we failed to collect it*.\n\n**Act** below 16: 16 suites are sampled on schedule every day, so anything less means collection is incomplete. Read the last few Jobs in the `ci-diagnostics` namespace -- this stat is a single current value and cannot tell you how long it has been low.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -244,7 +244,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Were these runs even on the same kind of machine? **Follows the time picker.**\n\nGitHub's fleet is mixed and does not say so. Measured here: core count was uniformly 4 -- looking perfectly comparable -- while the real CPUs were **five different models**, spanning AMD EPYC and three Intel Xeon generations.\n\n**Act** on any reading above 1 by treating single-digit-percent differences elsewhere as unresolved. **Narrow the time range until this reads 1** to make a comparison you can defend.\n\n`?` means that runner exposed no CPU model.",
+      "description": "Were these runs even on the same kind of machine? **Follows the time picker.**\n\nGitHub's fleet is mixed and does not say so. Measured here: core count was uniformly 4 -- looking perfectly comparable -- while the real CPUs were **five different models**, spanning AMD EPYC and three Intel Xeon generations.\n\n**Act** on any reading above 1 by treating single-digit-percent differences elsewhere as unresolved -- the trend panels average over fixed 7- and 28-day windows regardless of the time picker, so narrowing the range here does *not* make them comparable. It tells you whether to believe a small difference, not how to fix one.\n\n`?` means that runner exposed no CPU model. **A reading of 0 means no data at all**, not uniform hardware.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -255,8 +255,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
               },
               {
                 "color": "orange",
@@ -540,7 +544,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "During setup, the external-secrets controller waits for its **own** admission webhook to come up. That wait takes either about **20-26 seconds or about 75-97 seconds, and never anything between** -- across every run ever recorded. Colour is how many runs landed in each 5-second band, one column per day.\n\nA shortage of CPU or network gives a smooth spread. Two clean bands with an empty gap mean something is **timing out and retrying on a fixed clock**: lose the race by a second, wait a whole interval. The slow band is a flake source, because it can outlast an assertion's budget.\n\n**Act** if anything lands in the empty middle -- that would mean the fixed-clock explanation is wrong, and it has never happened. Also act if the slow band thickens: see the panel below, which measures that directly.\n\nColour is a count, so a busy week is a hot week. Compare the spread *within* a column, not colour *between* columns.",
+      "description": "During setup, the external-secrets controller waits for its **own** admission webhook to come up. That wait takes either about **20-26 seconds or about 75-97 seconds, and never anything between** -- across every run ever recorded. Colour is how many runs landed in each 5-second band, one column per day.\n\nA shortage of CPU or network gives a smooth spread. Two clean bands with an empty gap mean something is **timing out and retrying on a fixed clock**: lose the race by a second, wait a whole interval. The slow band is a flake source, because it can outlast an assertion's budget.\n\n**Act** if the slow band thickens -- the panel below measures that directly and is the one to read for it. For the empty middle, read the counter beside this heatmap: it counts every observation in the gap exactly, whereas this heatmap keeps only the slowest run per suite per column and would hide an intermediate that shared a column with a slower one.\n\nSo read this for **shape** -- where the bands sit and how they move -- and not as a run count. Colour is the number of surviving points after that reduction, so a busy week is a hot week.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -558,7 +562,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
+        "w": 9,
         "x": 12,
         "y": 18
       },
@@ -636,6 +640,76 @@
         "type": "loki",
         "uid": "$datasource"
       },
+      "description": "How many runs landed between the two bands -- over 35s and under 60s -- in the selected range.\n\n**This should be 0, and always has been.** The whole fixed-clock explanation of the wait beside this rests on the gap being empty; a run in it would mean the wait is not quantised after all, and every conclusion drawn from the two-band model would need re-checking.\n\n**Act** on any non-zero value by finding the run -- it is a more interesting result than anything else on this page.\n\nCounted directly rather than read off the heatmap, because that heatmap reduces to one value per suite per column and could hide exactly this.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 3,
+        "x": 21,
+        "y": 18
+      },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "13.1.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"mode\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | mode != \"none\" | ctrl_webhook_gap_s != \"-\" | ctrl_webhook_gap_s > 35 | ctrl_webhook_gap_s < 60 [$__range])) or vector(0)",
+          "instant": true,
+          "queryType": "instant",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Runs in the impossible middle",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "$datasource"
+      },
       "description": "What fraction of runs hit the slow branch of the webhook wait above? `fast` is under 35s, `slow` is over 60s, `intermediate` is the gap that has never occurred, `none` means the suite has no external-secrets fixture or its pods never came up.\n\n**A rising `slow` share means more flake exposure**, because the slow branch can outlast an assertion's budget and turn a passing suite red.\n\n**Act** on `slow` trending up across several weeks -- that is a real change in how often the race is lost. Any `intermediate` at all is worth stopping for.\n\nA share, not a count: a count would rise simply because someone was working on a suite. The trade-off is that a week with two runs can read 50%, so cross-check the heatmap where a thin column is visibly thin. Runs before 2026-08-17 have no data here -- the measurement did not exist yet, so a flat left edge is absence, not health.",
       "fieldConfig": {
         "defaults": {
@@ -698,7 +772,7 @@
         "x": 0,
         "y": 27
       },
-      "id": 10,
+      "id": 11,
       "options": {
         "legend": {
           "calcs": [
@@ -741,7 +815,7 @@
         "x": 0,
         "y": 35
       },
-      "id": 11,
+      "id": 12,
       "panels": [],
       "title": "2. It got worse -- when did it start, and what moved?",
       "type": "row"
@@ -751,7 +825,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Which stage of a run is responsible for its length? The bands stack to the job's wall clock, so the height is the whole run.\n\n**The band that grew tells you which repo to open.** `setup` is checkout, creating the kind cluster and installing Flux -- none of it in this repo. `prerequisite` is the shared fixtures every suite installs first. `validates` is the suite's own assertions. `teardown` should be seconds.\n\n**Act** by taking the phase to the panel beside this one, which names the component.\n\nPrerequisite normally dominates, because everything deploys at once and whatever is checked first absorbs the wait -- so a small `validates` figure does not mean the assertions are cheap. Only runs where all four stages could be measured are included, so the bands always sum to a real job; runs that ended early are left out entirely rather than counted as zero.",
+      "description": "Which stage of a run is responsible for its length? The bands stack to the job's wall clock, so the height is the whole run.\n\n**The band that grew tells you which repo to open.** `setup` is checkout, creating the kind cluster and installing Flux -- none of it in this repo. `prerequisite` is the shared fixtures every suite installs first. `validates` is the suite's own assertions. `teardown` should be seconds.\n\n**Act** on the band that grew. If it is `prerequisite` or `validates`, the panel beside this one shows which namespace inside the cluster slowed down -- it has no phase dimension, so use it as a second, independent view rather than a drill-down.\n\nPrerequisite normally dominates, because everything deploys at once and whatever is checked first absorbs the wait -- so a small `validates` figure does not mean the assertions are cheap. All four series require all four stages to have been measurable, so they cover the same runs and the bands genuinely sum; a run that ended early is left out entirely rather than counted as zero. Currently that is a minority of runs, so read the shape rather than the absolute height.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -812,7 +886,7 @@
         "x": 0,
         "y": 36
       },
-      "id": 12,
+      "id": 13,
       "options": {
         "legend": {
           "calcs": [
@@ -837,7 +911,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | residual_s != \"\" | prerequisite_s != \"\" | unwrap setup_s [7d]) by ()",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap setup_s [7d]) by ()",
           "legendFormat": "setup",
           "queryType": "range",
           "range": true,
@@ -849,7 +923,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | residual_s != \"\" | prerequisite_s != \"\" | unwrap prerequisite_s [7d]) by ()",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap prerequisite_s [7d]) by ()",
           "legendFormat": "prerequisite (shared fixtures)",
           "queryType": "range",
           "range": true,
@@ -861,7 +935,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | residual_s != \"\" | validates_s != \"\" | unwrap validates_s [7d]) by ()",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap validates_s [7d]) by ()",
           "legendFormat": "validates (the suite's own checks)",
           "queryType": "range",
           "range": true,
@@ -873,7 +947,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | residual_s != \"\" | prerequisite_s != \"\" | unwrap teardown_s [7d]) by ()",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap teardown_s [7d]) by ()",
           "legendFormat": "teardown",
           "queryType": "range",
           "range": true,
@@ -888,7 +962,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "**Set `suite` to a single value before reading this** -- with all suites selected it is dozens of overlapping series.\n\nWhich part of the cluster is taking longer to come up, per week.\n\n**One namespace stepping up while the others stay flat is that component getting heavier** -- usually a chart or image bump. Everything rising together is the runner or the network.\n\n**Act** on a namespace that steps up and stays up: check what changed in that component's chart version. This moves before any timeout is exceeded and long before anything fails, which is why it is worth watching.\n\nGrouped by namespace rather than by object, so a namespace running several components shows whichever is slowest. Absolute values are only comparable between runs of the same suite.",
+      "description": "**Set `suite` to a single value before reading this** -- with all suites selected it is dozens of overlapping series.\n\nWhich part of the cluster is taking longer to come up, per week -- the 90th percentile of `t0_s`, seconds from the first thing in a run becoming Ready.\n\n**One namespace stepping up while the others stay flat is that component getting heavier** -- usually a chart or image bump. Everything rising together is the runner or the network.\n\n**Act** on a namespace that steps up and stays up: check what changed in that component's chart version. This moves before any timeout is exceeded and long before anything fails, which is why it is worth watching.\n\nGrouped by namespace rather than by object, so a namespace running several components shows whichever is slowest. Absolute values are only comparable between runs of the same suite.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -949,7 +1023,7 @@
         "x": 12,
         "y": 36
       },
-      "id": 13,
+      "id": 14,
       "options": {
         "legend": {
           "calcs": [
@@ -981,7 +1055,7 @@
           "refId": "A"
         }
       ],
-      "title": "Which component got slower",
+      "title": "Which namespace got slower",
       "type": "timeseries"
     },
     {
@@ -989,7 +1063,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Is a suite failing more than it used to?\n\n**Only a level that holds for months means anything.** Each point covers about 112 runs, where a true 10% rate has a 95% interval of roughly 5-17% -- so a move from 8% to 14% is noise.\n\n**Act** on a shift that persists for weeks, and only after checking the denominator beside it: suites run only when someone touches them, so a rate can move purely because sampling changed.\n\nFor an exact number, `ci/scripts/baseline-census.sh` in the apps repo is authoritative -- it reads job metadata rather than logs. This panel exists so a rate change can be lined up against everything else on the same time axis.",
+      "description": "Is a suite failing more than it used to?\n\n**Only a level that holds for months means anything.** Each point covers about 112 runs, where a true 10% rate has a 95% interval of roughly 5-17% -- so a move from 8% to 14% is noise.\n\n**Act** on a shift that persists for weeks. Under the default `Runs = schedule` the sample is fixed at 4 runs per suite per day, so the denominator should be flat -- if it is not, collection dropped runs and the rate moved for that reason. Widen `Runs` to include PR runs and the denominator moves with whoever is working on a suite, which is its own trap.\n\nFor an exact number, `ci/scripts/baseline-census.sh` in the apps repo is authoritative -- it reads job metadata rather than logs. This panel exists so a rate change can be lined up against everything else on the same time axis.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1051,7 +1125,7 @@
         "x": 0,
         "y": 45
       },
-      "id": 14,
+      "id": 15,
       "options": {
         "legend": {
           "calcs": [
@@ -1152,7 +1226,7 @@
         "x": 18,
         "y": 45
       },
-      "id": 15,
+      "id": 16,
       "options": {
         "legend": {
           "calcs": [
@@ -1195,7 +1269,7 @@
         "x": 0,
         "y": 53
       },
-      "id": 16,
+      "id": 17,
       "panels": [],
       "title": "3. What is about to break? (leading indicators)",
       "type": "row"
@@ -1205,7 +1279,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "How often something in the cluster never came up, and the suite passed anyway. Split by `ready_state` so the two causes are visible in the chart.\n\n**`Unknown` means it was still coming up when the suite stopped looking** -- an assertion passed on timing it barely had. **`False` means it actively failed** and nothing asserted on it, which is a coverage gap: nothing will ever catch a regression there.\n\n**Act** on a rising share, or on a series appearing that was not there before. For `Unknown`, the budget for that check is too tight. For `False`, search the suite's `validate-*.yaml` for the object -- if it is not named, that is the gap to close.\n\n**This is the only panel here that fires while runs are still green.** Everything in the table beside it has already failed.",
+      "description": "What share of the objects a suite reports on were **not** confirmed Ready, on runs that passed. Split by `ready_state` so the two causes are visible in the chart. Note this is a share of *objects observed*, not of runs -- 0.03 means 3% of reported objects, which may be one object in every run.\n\n**`Unknown` means it was still coming up when the suite stopped looking** -- an assertion passed on timing it barely had. **`False` means it actively failed** and nothing asserted on it, which is a coverage gap: nothing will ever catch a regression there.\n\n**Act** on a rising share, or on a series appearing that was not there before. For `Unknown`, the budget for that check is too tight. For `False`, search the suite's `validate-*.yaml` for the object -- if it is not named, that is the gap to close.\n\nThis is the **earliest** of the three signals in this row: it fires while runs are green and before any timeout is close. Everything in the table beside it has already failed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1266,7 +1340,7 @@
         "x": 0,
         "y": 54
       },
-      "id": 17,
+      "id": 18,
       "options": {
         "legend": {
           "calcs": [
@@ -1298,7 +1372,7 @@
           "refId": "A"
         }
       ],
-      "title": "Things that never became Ready, on runs that passed",
+      "title": "Objects not confirmed Ready, on runs that passed",
       "type": "timeseries"
     },
     {
@@ -1353,7 +1427,7 @@
         "x": 12,
         "y": 54
       },
-      "id": 18,
+      "id": 19,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -1395,7 +1469,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Which containers crashed and restarted **during** a test run, without failing it. One row per container, one cell per week it happened in.\n\nEvery cell is a real restart -- these lines are only printed when a container actually restarted, so a row cannot appear for a healthy container.\n\n**Act on a row that starts partway through the range** -- that is something that did not used to crash and now does, and it is invisible everywhere else because the suite still passes and the pod still reports Ready. A row present across the whole range is a long-standing crash loop that has been accepted; darker colour on one means it is getting worse.\n\nA timeline rather than a graph because the signal is a **new row**, not a number: a total would rise simply because someone was working on a suite, and a new series is far easier to see as a row than as another line in a legend. Grouped by container name, so two components using the same name would merge.",
+      "description": "Which containers crashed and restarted **during** a test run, without failing it. One row per container, one cell per week it happened in.\n\nEvery cell is a real restart count, and the highest seen in that cell's window. These lines are only printed when a container actually restarted -- the smallest value ever recorded is 1 -- so a row cannot appear for a healthy container, and a gap is genuinely no crash.\n\n**Act on a row that starts partway through the range** -- that is something that did not used to crash and now does, and it is invisible everywhere else because the suite still passes and the pod still reports Ready. A row present across the whole range is a long-standing crash loop that has been accepted; darker colour on one means it is getting worse.\n\nA timeline rather than a graph because the signal is a **new row**, not a number: a total would rise simply because someone was working on a suite, and a new series is far easier to see as a row than as another line in a legend. Cells are one panel step wide, so onset is dated to about that resolution. Grouped by container name, so two components using the same name would merge.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1432,7 +1506,7 @@
         "x": 0,
         "y": 63
       },
-      "id": 19,
+      "id": 20,
       "options": {
         "alignValue": "left",
         "legend": {
@@ -1457,7 +1531,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg by (container) (avg_over_time({job=\"ci-diagnostics\", instrument=\"restart\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | container != \"\" | unwrap restarts [7d]))",
+          "expr": "max by (container) (max_over_time({job=\"ci-diagnostics\", instrument=\"restart\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | container != \"\" | unwrap restarts [$__interval]))",
           "legendFormat": "{{container}}",
           "queryType": "range",
           "range": true,
@@ -1475,7 +1549,7 @@
         "x": 0,
         "y": 73
       },
-      "id": 20,
+      "id": 21,
       "panels": [],
       "title": "4. Can I trust a comparison across this range?",
       "type": "row"
@@ -1485,7 +1559,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Was the CI machine itself unusually bad this week? **Use this to discount other panels, never to act.**\n\nNetwork throughput is the axis that has been shown to matter: shaping a test link to 150mbit reproduced the failures 6 times out of 6, while halving the cluster's CPU changed nothing. **A collapse in the throughput floor means a bad week on the fleet, not a regression in your code** -- so if a rise above coincides with a dip here, you have not found a regression.\n\n**Act** only by re-reading the other panels with that week discounted, or by narrowing the range to exclude it.\n\nDisk latency is recorded and plotted for reference only -- it has never been shown to affect anything, and is kept because it is the leading untested explanation for the bimodal wait in row 1. Ignore it unless throughput is flat and you need somewhere else to look.\n\nThis does **not** establish that runs are comparable -- it describes conditions, not hardware. The CPU stat at the top of the page is what does that.",
+      "description": "Was the CI machine itself unusually bad this week? **Use this to discount other panels, never to act.**\n\nNetwork throughput is the axis that has been shown to matter: on a test harness, shaping the link to 150mbit made suites fail on assertion timeouts 6 times out of 6, while halving the cluster's CPU changed nothing. **A collapse in the throughput floor means a bad week on the fleet, not a regression in your code** -- so if a rise above coincides with a dip here, you have not found a regression.\n\n**Act** only by re-reading the other panels with that week discounted, or by narrowing the range to exclude it.\n\nDisk latency is recorded and plotted for reference only -- it has never been shown to affect anything, and is kept because it is the leading untested explanation for the bimodal wait in row 1. Ignore it unless throughput is flat and you need somewhere else to look.\n\nThis does **not** establish that runs are comparable -- it describes conditions, not hardware. The CPU stat at the top of the page is what does that.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1586,7 +1660,7 @@
         "x": 0,
         "y": 74
       },
-      "id": 21,
+      "id": 22,
       "options": {
         "legend": {
           "calcs": [
@@ -1635,7 +1709,7 @@
     }
   ],
   "preload": false,
-  "refresh": "15m",
+  "refresh": "",
   "schemaVersion": 41,
   "tags": [
     "ci",
@@ -1678,7 +1752,7 @@
           "uid": "$datasource"
         },
         "definition": "label_values({job=\"ci-diagnostics\"}, suite)",
-        "description": "Which test suites to include. Reaches every panel except the four stats at the top and the extra-seconds table. Set it to a single suite before reading absolute numbers on the per-component panel.",
+        "description": "Which test suites to include. Reaches every panel except the four stats at the top, which deliberately ignore all filters. Set it to a single suite before reading absolute numbers on the per-namespace panel.\n\nNote the **`Runs` filter does not reach the extra-seconds table** -- those rows come almost entirely from PR runs, so filtering them to `schedule` would leave it permanently empty. Read that table knowing it mixes populations.",
         "hide": 0,
         "includeAll": true,
         "label": "Suite",
