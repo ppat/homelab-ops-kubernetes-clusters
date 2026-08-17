@@ -20,9 +20,9 @@ loki:
     # so a year-long query over them scans at most 30 days of chunks. The only streams that
     # *hold* a year are ci-diagnostics, which is three orders of magnitude smaller.
     #
-    # What it does cost: split_queries_by_interval is 15m, so a two-year range query fans
-    # out into ~70k subqueries against a query_timeout of 300s. Most hit an index with no
-    # chunks and are cheap, but not free -- which is why the CI dashboard pins its trend
+    # What it does cost: split_queries_by_interval is 15m, so a full one-year range query
+    # fans out into ~35k subqueries against a query_timeout of 300s. Most hit an index with
+    # no chunks and are cheap, but not free -- which is why the CI dashboard pins its trend
     # panels to 90d rather than defaulting to the whole retention.
     # 8784h is one year plus an hour, mirroring Loki's own 30d1h idiom -- just past the
     # longest retention_stream period below, so nothing that is stored is unplottable.

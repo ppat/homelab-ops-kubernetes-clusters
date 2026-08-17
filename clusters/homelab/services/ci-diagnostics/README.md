@@ -83,7 +83,7 @@ failures that matter most.
 ### Why lines are stored verbatim
 
 Structuring at ingest is irreversible. After 90 days the source is gone, so a parser bug found
-in year two has destroyed the data it mis-parsed. Storing the original line makes the parse a
+any later than that has destroyed the data it mis-parsed. Storing the original line makes the parse a
 **read-time** concern: a wrong extraction is fixable in the dashboard with `| pattern` against
 lines already stored, with no re-ingest and no loss. The structured metadata beside it is a
 convenience, not the record.

@@ -42,7 +42,7 @@ VERBATIM, AND WHY THAT IS A DESIGN DECISION RATHER THAN LAZINESS
 ----------------------------------------------------------------
 The log line is stored exactly as emitted (ANSI stripped, indentation trimmed); the parse
 goes into structured metadata beside it. Structuring at ingest is irreversible -- after 90
-days the source is gone, so a parser bug found in year two has destroyed the data it
+days the source is gone, so a parser bug found any later than that has destroyed the data it
 mis-parsed. Storing verbatim makes the parse a *read-time* concern: a wrong extraction is
 fixable in the dashboard with `| pattern` against lines already stored, with no re-ingest.
 
