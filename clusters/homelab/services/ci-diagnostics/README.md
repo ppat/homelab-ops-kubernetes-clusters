@@ -133,6 +133,14 @@ not a backstop to one.
 | CronJob not running at all | `Jobs ingested, last 24h` reads 0 |
 | a pass failing partway | `Suites seen, last 24h` drops below ~16 |
 | a suite's own instrumentation broken | `Jobs with incomplete diagnostics` non-zero |
+
+That last stat counts only `success`/`failure` outcomes in the `no-lines` or `partial` state,
+and excludes `assertion-semantics`. Three kinds of silence are legitimate and would otherwise
+make it fire permanently: a ceiling-killed job emits nothing because chainsaw buffers stdout, a
+cancelled job never got far enough, and a job past 90 days has no log left to read. And
+`assertion-semantics` emits **zero** grammar lines by design -- verified 2026-08-17 against a
+real run -- because it pins chainsaw's assertion semantics rather than deploying a module, so it
+has no pods whose readiness to report.
 | a grammar field layout changed | `unparsed` non-zero on `OUTCOME` lines, and in the Job log |
 | the token expiring | the Job fails; `Jobs ingested` goes to 0 within a day |
 

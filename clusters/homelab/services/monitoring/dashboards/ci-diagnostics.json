@@ -183,7 +183,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "OUTCOME entries whose `instrumentation` field is not `ok`.\n\nThe verdict is a necessary-consequence test, computed at ingest: a job whose diagnostics worked **must** have left a `CONTENTION start`, a `CONTENTION end` and at least one `READY` behind. Anything less is `partial`; a job that emitted nothing at all is `no-lines`; a job whose log had already expired is `log-unavailable`.\n\nThis is the panel that stops the rest of the page lying by omission. A suite whose instrumentation broke contributes no PULL, MODE or READY samples, so its curves flatten or vanish and every chart above reads as an improvement.\n\nNot always a defect: a job killed at its `timeout-minutes` ceiling emits none of the grammar, because chainsaw buffers a script's stdout until the script exits. So `no-lines` alongside a `timed_out` outcome is expected. Drill into the raw lines at the bottom of this page and read `instrumentation` and `outcome` together.",
+      "description": "OUTCOME entries whose `instrumentation` field is not `ok`.\n\nThe verdict is a necessary-consequence test, computed at ingest: a job whose diagnostics worked **must** have left a `CONTENTION start`, a `CONTENTION end` and at least one `READY` behind. Anything less is `partial`; a job that emitted nothing at all is `no-lines`; a job whose log had already expired is `log-unavailable`.\n\nThis is the panel that stops the rest of the page lying by omission. A suite whose instrumentation broke contributes no PULL, MODE or READY samples, so its curves flatten or vanish and every chart above reads as an improvement.\n\n**Three legitimate sources of silence are excluded, or this panel would be noise and therefore ignored.** A job killed at its `timeout-minutes` ceiling emits none of the grammar, because chainsaw buffers a script's stdout until the script exits. A cancelled or superseded job never got far enough to emit any. And a job older than 90 days has no log left to read, which matters during a deep backfill. So this counts only `success` and `failure` outcomes -- runs that reached a verdict, where the grammar is obligatory and its absence really is a broken instrument.\n\n`assertion-semantics` is excluded by name. Verified 2026-08-17 against a real run: it emits **zero** grammar lines, because it pins chainsaw's assertion semantics rather than deploying a module, so it has no pods to report readiness for. Counting it would make this stat non-zero forever, and a stat that is always red is one nobody reads.\n\nThe states counted are `no-lines` and `partial`, enumerated positively rather than as `!= ok`. That is a deliberate coupling to the ingester's vocabulary: a new verdict value would be excluded here until someone adds it, which is the safer direction than having every future value silently counted as a defect.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -242,7 +242,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\"} | instrumentation != \"ok\" [24h])) or vector(0)",
+          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite!=\"assertion-semantics\"} | outcome =~ \"success|failure\" | instrumentation =~ \"no-lines|partial\" [24h])) or vector(0)",
           "instant": true,
           "queryType": "instant",
           "range": false,
