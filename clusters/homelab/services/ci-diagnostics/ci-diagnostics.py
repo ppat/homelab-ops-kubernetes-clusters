@@ -648,7 +648,14 @@ def plan_window(suite: str, now: datetime):
         # Loki blip into a full re-push of the window -- into streams whose watermark is
         # already at now, so Loki rejects everything older than an hour and the pass dies.
         # A read failure means "do not know", and the only safe action is to do nothing.
-        log(f"  {suite}: Loki watermark query failed ({exc}); skipping this suite this pass")
+        hint = ""
+        if "query time range exceeds the limit" in str(exc):
+            # Almost always the deploy-order case: this workload and Loki's limits ship in the
+            # same Kustomization, so a pass can run before helm-controller has rolled Loki with
+            # the new max_query_length. It resolves itself on the next pass; nothing to do.
+            hint = (" -- Loki has not picked up the new max_query_length yet; this resolves "
+                    "itself once helm-controller rolls it")
+        log(f"  {suite}: Loki watermark query failed ({exc}); skipping this suite this pass{hint}")
         return None
     newest = 0
     for stream in results:
@@ -978,46 +985,13 @@ def main():
         log("FATAL: could not read any suite's watermark from Loki; doing nothing")
         return 1
 
-    # -- Pass A: the per-suite `test-*` workflows (PR and dispatch runs). -------------------
+    # -- Pass 1: the scheduled fleet sample. FIRST, and the order is load-bearing. ----------
     #
-    # Pushed per suite rather than accumulated across the fleet, for two reasons that are both
-    # about failure rather than tidiness: it bounds peak memory to one suite's window, and it
-    # leaves the suites already done *ingested*, so an interrupted pass resumes by set
-    # difference instead of redoing everything.
-    log_fetches = deferred = 0
-    for suite, workflow_id in suites.items():
-        if suite not in windows:
-            continue
-        collected = {}
-        runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
-        new = 0
-        for run in runs:
-            if known[suite].get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
-                continue
-            # filter=all, not the default filter=latest. The runs API returns only the latest
-            # attempt, which is how 130 failures repo-wide once became invisible to a failure
-            # filter: a job that failed and was re-run green simply is not there. One parameter
-            # is the difference between a flake series and a survivorship-biased one.
-            try:
-                jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs", filter="all", per_page=100)
-            except HttpError as exc:
-                log(f"  {suite}: run {run['id']} jobs unavailable ({exc})")
-                continue
-            for job in jobs.get("jobs", []):
-                budget = MAX_LOG_FETCHES - log_fetches
-                verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
-                                      budget, collected, stats)
-                if verdict == "fetched":
-                    log_fetches += 1
-                elif verdict == "deferred":
-                    deferred += 1
-                if verdict != "known":
-                    new += 1
-        entries = _flush(collected, stats, suite)
-        log(f"  {suite}: window={windows[suite]}d runs={len(runs)} "
-            f"known={len(known[suite])} new_jobs={new} entries={entries}")
-
-    # -- Pass B: the scheduled fleet sample. ------------------------------------------------
+    # This is the smaller population by two orders of magnitude -- 25 baseline runs over 90
+    # days against ~4000 `test-*` runs -- and it is the one the dashboard defaults to. Running
+    # the PR sweep first would spend the whole of `activeDeadlineSeconds` on contaminated runs
+    # and never reach the controlled ones, so a first backfill would leave the dashboard empty
+    # at its own default filter for hours while appearing to work.
     #
     # One workflow, many suites: the suite is in the **job name**, not the workflow, so these
     # are routed by name rather than looked up. Jobs with no `[topology]` are the `plan` and
@@ -1025,6 +999,7 @@ def main():
     #
     # Pushed per run rather than per suite: a run spans several suites, and a run is the
     # natural resumable unit here.
+    log_fetches = deferred = 0
     days = max(windows.values())
     baseline = _completed_runs(BASELINE_WORKFLOW, days, now, MAX_RUNS_PER_SUITE)
     slot_jobs = skipped = 0
@@ -1057,6 +1032,44 @@ def main():
         _flush(collected, stats, "baseline")
     log(f"  baseline: window={days}d runs={len(baseline)} suite_jobs={slot_jobs} "
         f"scaffolding_skipped={skipped}")
+
+    # -- Pass 2: the per-suite `test-*` workflows (PR and dispatch runs). -------------------
+    #
+    # Pushed per suite rather than accumulated across the fleet, for two reasons that are both
+    # about failure rather than tidiness: it bounds peak memory to one suite's window, and it
+    # leaves the suites already done *ingested*, so an interrupted pass resumes by set
+    # difference instead of redoing everything.
+    for suite, workflow_id in suites.items():
+        if suite not in windows:
+            continue
+        collected = {}
+        runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
+        new = 0
+        for run in runs:
+            if known[suite].get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
+                continue
+            # filter=all, not the default filter=latest. The runs API returns only the latest
+            # attempt, which is how 130 failures repo-wide once became invisible to a failure
+            # filter: a job that failed and was re-run green simply is not there. One parameter
+            # is the difference between a flake series and a survivorship-biased one.
+            try:
+                jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs", filter="all", per_page=100)
+            except HttpError as exc:
+                log(f"  {suite}: run {run['id']} jobs unavailable ({exc})")
+                continue
+            for job in jobs.get("jobs", []):
+                budget = MAX_LOG_FETCHES - log_fetches
+                verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
+                                      budget, collected, stats)
+                if verdict == "fetched":
+                    log_fetches += 1
+                elif verdict == "deferred":
+                    deferred += 1
+                if verdict != "known":
+                    new += 1
+        entries = _flush(collected, stats, suite)
+        log(f"  {suite}: window={windows[suite]}d runs={len(runs)} "
+            f"known={len(known[suite])} new_jobs={new} entries={entries}")
 
     log(
         f"jobs={stats['jobs']} entries={stats['pushed']} logs_read={stats['logs_read']} "
