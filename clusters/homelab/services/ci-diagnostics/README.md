@@ -86,8 +86,11 @@ The rule that generated it: **a label describes where a stream came from; anythi
 what was observed is structured metadata.** Labels must be knowable at push time, bounded by
 something we control, and be what a query selects on.
 
-That gives 4 labels and roughly 240 populated streams (17 suites x 14 prefixes), against a
-`max_global_streams_per_user` of 5000 with ~1263 already in use.
+That gives 4 labels and **at most** ~240 streams (17 suites x 14 prefixes), against a
+`max_global_streams_per_user` of 5000 with ~1263 already in use. At most, not roughly: a suite
+with no external-secrets fixture never emits `ESOCERT`/`ESOLOG`, and a suite that never fails
+never emits any `UNCENSORED` variant, so the populated count is materially lower and grows only
+as suites find new ways to go wrong.
 
 What was deliberately kept out of the labels, because it is where Loki deployments go wrong:
 
