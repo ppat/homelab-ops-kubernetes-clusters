@@ -53,23 +53,6 @@ configMapGenerator:
     labels:
       grafana_dashboard: "1"
     disableNameSuffixHash: true
-- name: dashboard-ci-diagnostics
-  namespace: monitoring
-  files:
-  - dashboards/ci-diagnostics.json
-  options:
-    annotations:
-      # Not about anything this cluster runs -- it reads a CI series scraped from GitHub --
-      # so it gets its own folder rather than sitting among the cluster dashboards.
-      grafana_folder: CI
-      # Mandatory. This JSON is full of bare $datasource, $suite, $population, $window,
-      # $search and $__interval references, and Flux's post-build substitution expands bare
-      # $name as well as ${name}. Without this, every one becomes an empty string and the
-      # dashboard loads cleanly with every panel silently selecting nothing.
-      kustomize.toolkit.fluxcd.io/substitute: disabled
-    labels:
-      grafana_dashboard: "1"
-    disableNameSuffixHash: true
 - name: snmp-exporter-extra-config
   namespace: monitoring
   files:

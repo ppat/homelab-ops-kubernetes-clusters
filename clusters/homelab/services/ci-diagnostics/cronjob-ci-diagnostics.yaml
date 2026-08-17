@@ -15,7 +15,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: ci-diagnostics
-  namespace: logging
+  namespace: ci-diagnostics
   labels:
     app.kubernetes.io/name: ci-diagnostics
 spec:

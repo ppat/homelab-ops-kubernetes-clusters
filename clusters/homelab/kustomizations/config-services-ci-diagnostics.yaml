@@ -1,0 +1,32 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-ci-diagnostics
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  # Split out of config-services.yaml on the same grounds as
+  # config-services-image-builder.yaml: a brand-new namespace's own manifests failing to
+  # apply -- which is exactly what first merge risks -- must not fail the shared
+  # Kustomization that ai/dns/downloaders/logging/longhorn-system/monitoring/tailscale also
+  # reconcile through. The concrete hazard here is the ExternalSecret: it cannot resolve
+  # until the `ci_diagnostics_github_token` entry exists in Bitwarden, and under the shared
+  # umbrella's `wait: true` that would have taken seven unrelated directories down with it.
+  #
+  # 15m0s, not the 1m0s the sandbox namespaces use. Neither of the reasons for their fast
+  # drift-correction applies: this namespace hosts no VM whose guest has write access to
+  # anything, and fronts no daemon. Nothing here needs to self-heal inside a minute.
+  interval: 15m0s
+  path: ./clusters/homelab/services/ci-diagnostics
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true

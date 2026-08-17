@@ -3,32 +3,55 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+- namespace.yaml
 - externalsecret-ci-diagnostics.yaml
 - cronjob-ci-diagnostics.yaml
 
 configMapGenerator:
 - name: ci-diagnostics-script
-  namespace: logging
+  namespace: ci-diagnostics
   files:
   - ci-diagnostics.py
   options:
     annotations:
       # Prophylactic rather than presently load-bearing, and worth keeping for that.
       # config-services runs Flux post-build substitution over everything it builds, and
-      # envsubst expands bare `$name` as well as `${name}`. The `$` characters in this script
-      # today are all regex end-anchors followed by a quote, which envsubst leaves alone -- so
-      # strictly, nothing breaks without this line right now. What it buys is that a future
-      # edit adding `${...}` in an f-string or a `$word` in a character class cannot silently
-      # blank itself, and the failure mode it prevents is a script that still parses and
-      # quietly does the wrong thing. (On the *dashboard* ConfigMap next door the identical
-      # annotation genuinely is mandatory: `$datasource`, `$suite` and `$search` would all be
-      # substituted away.)
+      # envsubst expands bare `$name` as well as `${name}`. The `$` characters in this
+      # script today are all regex end-anchors followed by a quote, which envsubst leaves
+      # alone -- so strictly, nothing breaks without this line right now. What it buys is
+      # that a future edit adding `${...}` in an f-string or a `$word` in a character class
+      # cannot silently blank itself, and the failure mode it prevents is a script that
+      # still parses and quietly does the wrong thing.
       kustomize.toolkit.fluxcd.io/substitute: disabled
-    # Deliberately different from loki-query-correctness next door, which lets the name
-    # hash so a script edit rolls a new ConfigMap. That is the right call for a workload
-    # whose pods are long-lived; it is the wrong one here. A CronJob's pods are created
-    # fresh at each schedule and the kubelet projects the ConfigMap's current content at
-    # that moment, so a stable name already picks up an edit on the next run. Meanwhile
-    # Flux prune is disabled cluster-wide, so a hashed name would strand an orphaned
-    # ConfigMap on every single edit to the script.
+    # Deliberately different from loki-query-correctness, which lets the name hash so a
+    # script edit rolls a new ConfigMap. That is right for a workload with long-lived pods
+    # and wrong here. A CronJob's pods are created fresh at each schedule and the kubelet
+    # projects the ConfigMap's current content at that moment, so a stable name already
+    # picks up an edit on the next run. Meanwhile Flux prune is disabled cluster-wide, so a
+    # hashed name would strand an orphaned ConfigMap on every edit to the script.
+    disableNameSuffixHash: true
+# The dashboard lives here, with the thing it is about, rather than under services/
+# monitoring/ with the cluster's own dashboards. It reads a CI series scraped from GitHub
+# and describes nothing this cluster runs, so `monitoring/` would only have been a filing
+# cabinet.
+#
+# Landing it in this namespace instead of `monitoring` is safe because Grafana's dashboard
+# sidecar runs with `NAMESPACE=ALL` -- verified against the running Deployment, not just
+# the chart values, since a cluster patch could have narrowed it. It discovers by the
+# `grafana_dashboard: "1"` label and reads the folder from the `grafana_folder` annotation,
+# both of which are set below.
+- name: dashboard-ci-diagnostics
+  namespace: ci-diagnostics
+  files:
+  - dashboards/ci-diagnostics.json
+  options:
+    annotations:
+      grafana_folder: CI
+      # Mandatory here, unlike on the script above. This JSON is full of bare `$datasource`,
+      # `$suite`, `$population`, `$window`, `$search` and `$__interval` references, and Flux
+      # post-build substitution would expand every one of them to an empty string. The
+      # dashboard would then load cleanly with every panel silently selecting nothing.
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    labels:
+      grafana_dashboard: "1"
     disableNameSuffixHash: true

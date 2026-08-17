@@ -15,10 +15,13 @@ Nothing here writes to GitHub.
 
 Three things about that, in descending order of how much they will cost you if missed:
 
-- **`config-services` builds this directory with `wait: true` and `timeout: 2m0s`.** An
-  `ExternalSecret` that cannot resolve does not fail quietly in its own corner -- it can fail
-  the shared Kustomization that also owns `ai/`, `dns/`, `downloaders/`, `logging/`,
-  `longhorn-system/`, `monitoring/` and `tailscale/`. Create the entry first.
+- **If the entry is missing, only this directory breaks.** That is deliberate rather than
+  lucky: because this is a brand-new namespace it gets its own Kustomization
+  (`kustomizations/config-services-ci-diagnostics.yaml`) instead of riding the shared
+  `config-services` umbrella, so an `ExternalSecret` that cannot resolve under `wait: true`
+  fails here and nowhere else. On the umbrella it would have taken `ai/`, `dns/`,
+  `downloaders/`, `logging/`, `longhorn-system/`, `monitoring/` and `tailscale/` with it.
+  Create the entry first anyway -- the job cannot do anything without it.
 - **A token is mandatory, not a rate-limit nicety.** Measured 2026-08-17 against the public
   repo: unauthenticated calls get `200` on `/actions/runs` and `/actions/runs/{id}/jobs`, but
   `403` on `/actions/jobs/{id}/logs` -- with 50 requests still remaining, so it is an
@@ -34,7 +37,7 @@ reverts it.
 
 ## What it does
 
-A CronJob in `logging`, hourly at `:40`, running a stdlib-only Python script from a
+A CronJob in its own `ci-diagnostics` namespace, hourly at `:40`, running a stdlib-only Python script from a
 ConfigMap on `python:3.14-alpine`. Each pass:
 
 1. lists the `test-*` workflows and maps each to its suite name;
@@ -191,9 +194,9 @@ reviewer.
 
 ```bash
 # run now rather than waiting for :40
-kubectl -n logging create job --from=cronjob/ci-diagnostics ci-diagnostics-manual
+kubectl -n ci-diagnostics create job --from=cronjob/ci-diagnostics ci-diagnostics-manual
 
-kubectl -n logging logs job/ci-diagnostics-manual
+kubectl -n ci-diagnostics logs job/ci-diagnostics-manual
 ```
 
 Configuration is environment variables on the CronJob; the defaults are in the script's header.
@@ -208,9 +211,12 @@ The ones worth knowing:
 
 ## Retiring it
 
-Delete this directory, remove `- ci-diagnostics/` from `../kustomization.yaml`, remove the
-dashboard entry from `../monitoring/kustomization.yaml`, and drop the `ci-diagnostics`
-`retention_stream` entry from `../logging/conf.d/loki-retention.yaml`.
+Delete this directory, then remove the four references to it that live elsewhere:
+`kustomizations/config-services-ci-diagnostics.yaml` and its line in
+`kustomizations/kustomization.yaml`; the `ci-diagnostics` entry in the namespace allowlist in
+`cluster/secrets/bitwarden-secret-store.yaml`; and the `ci-diagnostics` `retention_stream`
+entry in `../logging/conf.d/loki-retention.yaml`. It is **not** in
+`services/kustomization.yaml` -- it never was, because it has its own Kustomization.
 
 Note that **Flux prune is disabled cluster-wide**, so deleting the files orphans the objects
 rather than removing them -- delete the CronJob, ExternalSecret and both ConfigMaps by hand.
