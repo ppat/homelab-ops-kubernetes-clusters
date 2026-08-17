@@ -110,6 +110,10 @@ MIN_LOOKBACK_DAYS = int(os.environ.get("MIN_LOOKBACK_DAYS", "2"))
 MAX_RUNS_PER_SUITE = int(os.environ.get("MAX_RUNS_PER_SUITE", "4000"))
 MAX_LOG_FETCHES = int(os.environ.get("MAX_LOG_FETCHES", "1200"))
 
+# Loki's own max_entries_limit_per_query. Not a tuning knob -- raising it past the server's
+# value silently truncates instead of erroring.
+QUERY_LIMIT = int(os.environ.get("LOKI_QUERY_LIMIT", "5000"))
+
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
 USER_AGENT = "ci-diagnostics-ingester/1 (+homelab-ops-kubernetes-clusters)"
@@ -608,9 +612,11 @@ def known_attempts(suite: str, days: int, now: datetime):
         f'{{job="{STREAM_JOB}", suite="{suite}", instrument="{INSTRUMENT_OUTCOME}"}}'
     )
     seen = {}
+    entries = 0
     try:
-        for stream in loki_query(selector, start_ns, end_ns, limit=5000):
+        for stream in loki_query(selector, start_ns, end_ns, limit=QUERY_LIMIT):
             labels = stream.get("stream", {})
+            entries += len(stream.get("values", []))
             run_id, attempt = labels.get("run_id"), labels.get("run_attempt")
             if not run_id:
                 continue
@@ -621,6 +627,14 @@ def known_attempts(suite: str, days: int, now: datetime):
             seen[run_id] = max(seen.get(run_id, 0), attempt_n)
     except HttpError as exc:
         log(f"  {suite}: Loki dedupe query failed ({exc}); treating window as empty")
+    if entries >= QUERY_LIMIT:
+        # Loki truncates at max_entries_limit_per_query and says nothing. Truncation drops
+        # the *oldest* entries (the query runs backward), so the effect is re-fetching logs
+        # for runs already ingested -- wasted API calls rather than lost data, since the
+        # re-push is dropped as a duplicate or rejected as out of order. Still worth saying
+        # out loud, because it is otherwise a silent, permanent inefficiency.
+        log(f"  {suite}: WARNING dedupe query hit the {QUERY_LIMIT}-entry limit over {days}d; "
+            "older runs in this window will be re-read every pass")
     return seen
 
 
