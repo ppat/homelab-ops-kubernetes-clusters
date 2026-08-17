@@ -8,6 +8,48 @@ loki:
     per_stream_rate_limit_burst: 128M
     shard_streams:
       enabled: true
+    # Loki's default is 30d1h, which silently caps every dashboard at a 30-day window --
+    # a range query past it returns `400 the query time range exceeds the limit`, while an
+    # *instant* query over the same span passes, because instant queries validate the
+    # `[range]` selector rather than start/end. So the ceiling is invisible until someone
+    # drags a time picker, and long retention without this is data you can store and
+    # cannot plot. Raised to just past the longest retention_stream period below.
+    #
+    # This is cheaper than it looks, and the reason is worth keeping: retention bounds what
+    # exists. Every high-volume stream here is capped at 30d (24h for media and coredns),
+    # so a year-long query over them scans at most 30 days of chunks. The only streams that
+    # *hold* a year are ci-diagnostics, which is three orders of magnitude smaller.
+    #
+    # What it does cost: split_queries_by_interval is 15m, so a full one-year range query
+    # fans out into ~35k subqueries against a query_timeout of 300s. Most hit an index with
+    # no chunks and are cheap, but not free -- which is why the CI dashboard pins its trend
+    # panels to 90d rather than defaulting to the whole retention.
+    # 8784h is one year plus an hour, mirroring Loki's own 30d1h idiom -- just past the
+    # longest retention_stream period below, so nothing that is stored is unplottable.
+    max_query_length: 8784h
+    # Default 168h. Raised because the ci-diagnostics ingester writes **retro-dated**
+    # entries by construction: it stamps each entry with the time the CI line was emitted,
+    # not the time it was scraped.
+    #
+    # The backfill case is the obvious one -- GitHub keeps job logs for exactly 90 days
+    # (measured 2026-08-17: a run from 2026-05-18 returns 410, one from 2026-05-20 returns
+    # 200), and job *metadata* survives indefinitely, so a one-shot seed can give the trend
+    # panels real history rather than three empty months.
+    #
+    # The better reason is the second one. At 168h, an ingester broken for eight days loses
+    # everything older than a week **permanently**, even though the source still holds 90
+    # days of it -- and this estate runs no alerting, so nothing would say so. Widening
+    # this leaves exactly one cliff (GitHub's 90 days) instead of two, and the second cliff
+    # was the one inside our own control. Recovery is then automatic: the ingester works by
+    # set difference against what Loki already holds, so the next successful run refills
+    # the gap without anyone intervening.
+    #
+    # Accepted cost: a client with a badly wrong clock could write far-past entries. Three
+    # push clients exist here, and retention still deletes whatever they write, so the blast
+    # radius is bounded. Reduce this if a fourth, less trusted, writer ever appears.
+    # 8760h is one year, matching the longest retention below: accepting an entry older than
+    # anything we keep would only give the compactor something to delete.
+    reject_old_samples_max_age: 8760h
     retention_stream:
     - selector: '{namespace="media"}'
       priority: 1
@@ -15,3 +57,26 @@ loki:
     - selector: '{service_name="coredns"}'
       priority: 1
       period: 24h
+    # The whole point of the ci-diagnostics stream is the trend across months, so the
+    # cluster-wide 30d would destroy it. Selected on service_name rather than a bespoke
+    # label because retention_stream selectors match **index labels only, never structured
+    # metadata**, and Loki derives service_name from the pushed `job` label for free
+    # (discover_service_name's default list includes `job`).
+    #
+    # Sizing: measured at ~44k lines / 4.6 MB raw on a busy day, ~14% of that once
+    # compressed -- so a year is a few hundred megabytes. Retention here is bounded by what is
+    # useful, not by what is affordable.
+    #
+    # Shortening this is destructive and irreversible: the compactor runs every 10m and
+    # deletes on the next pass, and the source it came from is gone after 90 days. Treat
+    # this number as the highest-consequence value in this file. 8760h is one year.
+    #
+    # NOTE FOR ANYONE EDITING THIS FILE: no value here may carry a trailing `#` comment.
+    # loki-query-correctness.py mounts this exact file and parses it with a hand-rolled
+    # line reader whose scalar extractor does not strip inline comments -- `8760h  # 1y`
+    # reaches its duration regex verbatim and raises `unsupported duration format`,
+    # taking that CronJob down on its next hourly run. Comment blocks above a key, like
+    # every one in this file, are skipped correctly. Inline ones are not.
+    - selector: '{service_name="ci-diagnostics"}'
+      priority: 1
+      period: 8760h

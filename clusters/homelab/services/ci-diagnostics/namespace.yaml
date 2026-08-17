@@ -1,0 +1,23 @@
+---
+# Its own namespace rather than sharing `logging`, even though `logging` is where the data
+# it writes ends up and where the sibling loki-query-correctness CronJob lives.
+#
+# The reason is what this pod carries: a GitHub credential, and egress to the open
+# internet. Nothing in `logging` has either -- Loki, Alloy and the syslog receiver are all
+# in-cluster only. Keeping a credential-bearing, internet-reaching workload out of the
+# namespace that holds the log store means a compromise of one is not automatically a
+# compromise of the other, and it keeps the token's blast radius equal to this one job.
+#
+# The consequence worth knowing: a brand-new namespace is exactly the case DESIGN.md
+# reserves a dedicated Kustomization for, so this directory is excluded from
+# `services/kustomization.yaml` and reconciled by `kustomizations/
+# config-services-ci-diagnostics.yaml` instead. That is not incidental tidiness -- it is
+# what stops an ExternalSecret that cannot resolve on first merge from failing the shared
+# `config-services` Kustomization that seven unrelated directories also reconcile through.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ci-diagnostics
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge
