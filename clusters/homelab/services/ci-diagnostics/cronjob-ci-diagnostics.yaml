@@ -1,0 +1,113 @@
+---
+# Keeps the chainsaw suites' published diagnostics grammar past the 90 days GitHub keeps
+# job logs. See ci-diagnostics.py for what it stores and why, and README.md in this
+# directory for what must exist before it can run.
+#
+# The direction is the design: this pulls from the homelab into Loki. There is no inbound
+# path, no CI-side secret, and CI stays ignorant that it exists -- a CI->homelab push was
+# considered and rejected. Do not invert it.
+#
+# Cluster-specific, not a module: nothing else would consume this at a different version
+# with different patches, and retiring it is deleting this directory rather than cutting a
+# module release. Same reasoning as loki-query-correctness next door -- see
+# clusters/homelab/README.md#cluster-specific-services.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ci-diagnostics
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: ci-diagnostics
+spec:
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 8
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ci-diagnostics
+    spec:
+      # Deliberately shorter than the schedule interval, so a long pass is cut off rather
+      # than colliding with the next one under concurrencyPolicy: Forbid. Being cut off is
+      # safe here and is a designed property, not a tolerated one: work is pushed per
+      # suite, and the next pass rebuilds its to-do list by set difference against what
+      # Loki already holds, so an interrupted run simply resumes. That is also what makes
+      # the first 90-day backfill safe without a separate mode -- it just takes several
+      # passes to catch up.
+      activeDeadlineSeconds: 3000
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ci-diagnostics
+        spec:
+          # Nothing here touches the Kubernetes API -- only api.github.com and Loki.
+          automountServiceAccountToken: false
+          containers:
+          - name: ci-diagnostics
+            image: python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc
+            # -B because /scripts is mounted read-only and CPython would otherwise try to
+            # write __pycache__ beside the script on every run.
+            command: ["python3", "-B", "/scripts/ci-diagnostics.py"]
+            env:
+            - name: GITHUB_REPO
+              value: ppat/homelab-ops-kubernetes-apps
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ci-diagnostics-secrets
+                  key: GITHUB_TOKEN
+            # Trailing dot is deliberate and matches every other Loki client in this
+            # estate: it makes the name fully qualified and skips ndots search-domain
+            # expansion. Load-bearing on this image -- Kyverno's add-ndots mutation forces
+            # ndots:1, and musl (alpine) does not fall back to the search list once a name
+            # has as many dots as ndots. Do not "clean it up".
+            - name: LOKI_BASE_URL
+              value: http://loki.logging.svc.cluster.local.:3100
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            # Declared rather than left to Kyverno's add-default-resources mutation, which
+            # would inject 32Mi. A pass holds one suite's window of parsed entries in
+            # memory before pushing, and a 90-day backfill window for a busy suite is a few
+            # tens of MB of Python objects -- 32Mi would OOM during exactly the first run
+            # that matters most.
+            resources:
+              requests:
+                cpu: 50m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+            volumeMounts:
+            - mountPath: /scripts
+              name: script
+              readOnly: true
+            - mountPath: /tmp
+              name: temp
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 11111
+            runAsGroup: 11111
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: script
+            configMap:
+              name: ci-diagnostics-script
+          - name: temp
+            emptyDir: {}
+      ttlSecondsAfterFinished: 604800  # 1 week
+  # Hourly, and cheap because of it. A pass over a fleet with nothing new costs seventeen
+  # Loki queries plus seventeen run listings -- runs already ingested are skipped before
+  # any per-run API call, by comparing attempt counts (see known_attempts).
+  #
+  # Frequency is not about freshness; the fleet only samples four times a day. It is about
+  # keeping each pass small, so that being cut off by activeDeadlineSeconds costs an hour
+  # of catch-up rather than a day.
+  schedule: "40 * * * *"
+  startingDeadlineSeconds: 43200  # 12 hours
+  successfulJobsHistoryLimit: 8
+  timeZone: Etc/UTC

@@ -1,0 +1,30 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- externalsecret-ci-diagnostics.yaml
+- cronjob-ci-diagnostics.yaml
+
+configMapGenerator:
+- name: ci-diagnostics-script
+  namespace: logging
+  files:
+  - ci-diagnostics.py
+  options:
+    annotations:
+      # Mandatory, not defensive. config-services runs Flux post-build substitution over
+      # everything it builds, and envsubst expands bare `$name` as well as `${name}`. The
+      # script contains a `$` today (an end-of-string anchor in a regex) and any future
+      # edit could add `${...}` in an f-string or a character class. The failure mode is a
+      # script that still parses and silently does the wrong thing, so it is not worth
+      # depending on "there happen to be no dollar signs".
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    # Deliberately different from loki-query-correctness next door, which lets the name
+    # hash so a script edit rolls a new ConfigMap. That is the right call for a workload
+    # whose pods are long-lived; it is the wrong one here. A CronJob's pods are created
+    # fresh at each schedule and the kubelet projects the ConfigMap's current content at
+    # that moment, so a stable name already picks up an edit on the next run. Meanwhile
+    # Flux prune is disabled cluster-wide, so a hashed name would strand an orphaned
+    # ConfigMap on every single edit to the script.
+    disableNameSuffixHash: true
