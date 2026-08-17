@@ -93,6 +93,16 @@ LOKI = os.environ.get("LOKI_BASE_URL", "http://loki.logging.svc.cluster.local.:3
 STREAM_JOB = os.environ.get("STREAM_JOB", "ci-diagnostics")
 WORKFLOW_PREFIX = os.environ.get("WORKFLOW_PREFIX", "test-")
 
+# The scheduled fleet sample does NOT live in the `test-*` workflows. Those run only on
+# `pull_request` and `workflow_dispatch` -- verified 2026-08-17: a query for schedule-event
+# runs across them returns **zero**. The four-times-daily controlled sample is a matrix
+# inside this one workflow, whose jobs are named `<suite> [<topology>] / test`.
+#
+# Reading only `test-*` therefore captures every contaminated PR run and none of the
+# controlled ones -- an instrument incapable of returning the population it exists to
+# measure. Both are read, and `gh_event` keeps them separable.
+BASELINE_WORKFLOW = os.environ.get("BASELINE_WORKFLOW", "scheduled-baseline.yaml")
+
 # Two windows, because the two halves have different lifetimes upstream.
 #
 # Instrument lines exist only while their job log does, so reaching past 90 days buys
@@ -818,6 +828,44 @@ def push_in_batches(streams, batch_entries=2000):
     return sent
 
 
+def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
+    """Route one job into `collected` unless it is already held. Returns log fetches used."""
+    attempt = int(job.get("run_attempt", run.get("run_attempt", 1)) or 1)
+    if known.get(str(run["id"]), 0) >= attempt:
+        return 0
+    completed = job.get("completed_at")
+    fresh = bool(completed) and iso_to_ns(completed) > int(lines_cutoff.timestamp() * 1e9)
+    fetch = fresh and budget > 0
+    for stream_key, values in collect_job(suite, run, job, fetch, stats).items():
+        collected.setdefault(stream_key, []).extend(values)
+    stats["jobs"] += 1
+    return 1 if fetch else 0
+
+
+def _completed_runs(workflow, days, now, cap):
+    since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    runs = gh_paginate(
+        f"repos/{REPO}/actions/workflows/{workflow}/runs",
+        "workflow_runs",
+        cap=cap,
+        created=f">={since}",
+        status="completed",
+    )
+    # Ascending by creation, so each stream's watermark advances monotonically across pushes
+    # rather than stranding older runs behind a newer one (Loki's out-of-order cutoff is
+    # relative to the highest timestamp already seen in that stream, not to now).
+    runs.sort(key=lambda r: r.get("created_at") or "")
+    return runs
+
+
+def _flush(collected, stats):
+    if not collected:
+        return 0
+    entries = push_in_batches(build_streams(collected))
+    stats["pushed"] += entries
+    return entries
+
+
 def main():
     if not TOKEN:
         # Verified 2026-08-17: an unauthenticated caller can list runs (200) but a job log
@@ -834,73 +882,91 @@ def main():
     log(f"{len(suites)} suites: {', '.join(suites)}")
 
     stats = {"logs_read": 0, "logs_gone": 0, "jobs": 0, "pushed": 0, "unparsed": 0}
-    log_fetches = 0
 
-    # Pushed per suite rather than accumulated across the fleet. Two reasons, both about
-    # failure rather than tidiness: it bounds peak memory to one suite's window (a 90-day
-    # first run over sixteen suites would otherwise hold the whole fleet's lines at once),
-    # and it makes a mid-run failure leave the suites already done *ingested* -- the next
-    # run's set-difference then resumes from there instead of redoing everything.
+    # One Loki round-trip per suite, up front, shared by both passes below. A baseline run and
+    # a PR run have different run ids, so they coexist in the same per-suite map without
+    # colliding.
+    windows = {suite: plan_window(suite, now) for suite in suites}
+    known = {suite: known_attempts(suite, windows[suite], now) for suite in suites}
+
+    # -- Pass A: the per-suite `test-*` workflows (PR and dispatch runs). -------------------
+    #
+    # Pushed per suite rather than accumulated across the fleet, for two reasons that are both
+    # about failure rather than tidiness: it bounds peak memory to one suite's window, and it
+    # leaves the suites already done *ingested*, so an interrupted pass resumes by set
+    # difference instead of redoing everything.
+    log_fetches = 0
     for suite, workflow_id in suites.items():
         collected = {}
-        days = plan_window(suite, now)
-        known = known_attempts(suite, days, now)
-        since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
-        runs = gh_paginate(
-            f"repos/{REPO}/actions/workflows/{workflow_id}/runs",
-            "workflow_runs",
-            cap=MAX_RUNS_PER_SUITE,
-            created=f">={since}",
-            status="completed",
-        )
-        # Ascending by creation, so each stream's watermark advances monotonically across
-        # pushes rather than stranding older runs behind a newer one.
-        runs.sort(key=lambda r: r.get("created_at") or "")
-        new_jobs = 0
+        runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
+        new = 0
         for run in runs:
-            # Skip before spending an API call. A run whose highest ingested attempt is
-            # already at or beyond the run's current attempt count has nothing new.
-            if known.get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
+            if known[suite].get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
                 continue
-            # filter=all, not the default filter=latest. `gh run list` and the runs API
-            # return only the latest attempt, which is how 130 failures repo-wide once
-            # became invisible to a failure filter: a job that failed and was re-run green
-            # simply is not there. One parameter buys the whole re-run history, and it is
-            # the difference between a flake series and a survivorship-biased one.
+            # filter=all, not the default filter=latest. The runs API returns only the latest
+            # attempt, which is how 130 failures repo-wide once became invisible to a failure
+            # filter: a job that failed and was re-run green simply is not there. One parameter
+            # is the difference between a flake series and a survivorship-biased one.
             try:
                 jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs", filter="all", per_page=100)
             except HttpError as exc:
                 log(f"  {suite}: run {run['id']} jobs unavailable ({exc})")
                 continue
             for job in jobs.get("jobs", []):
-                completed = job.get("completed_at")
-                fresh = bool(completed) and iso_to_ns(completed) > int(lines_cutoff.timestamp() * 1e9)
-                fetch = fresh and log_fetches < MAX_LOG_FETCHES
-                if fetch:
-                    log_fetches += 1
-                for stream_key, values in collect_job(suite, run, job, fetch, stats).items():
-                    collected.setdefault(stream_key, []).extend(values)
-                new_jobs += 1
-                stats["jobs"] += 1
-        entries = 0
-        if collected:
-            streams = build_streams(collected)
-            entries = push_in_batches(streams)
-            stats["pushed"] += entries
-        log(
-            f"  {suite}: window={days}d runs={len(runs)} known={len(known)} "
-            f"new_jobs={new_jobs} entries={entries}"
-        )
+                budget = MAX_LOG_FETCHES - log_fetches
+                log_fetches += _ingest_job(suite, run, job, known[suite], lines_cutoff,
+                                           budget, collected, stats)
+                new += 1
+        entries = _flush(collected, stats)
+        log(f"  {suite}: window={windows[suite]}d runs={len(runs)} "
+            f"known={len(known[suite])} new_jobs={new} entries={entries}")
+
+    # -- Pass B: the scheduled fleet sample. ------------------------------------------------
+    #
+    # One workflow, many suites: the suite is in the **job name**, not the workflow, so these
+    # are routed by name rather than looked up. Jobs with no `[topology]` are the `plan` and
+    # `harvest` scaffolding and carry no suite -- skipped rather than guessed at.
+    #
+    # Pushed per run rather than per suite: a run spans several suites, and a run is the
+    # natural resumable unit here.
+    days = max(windows.values()) if windows else META_LOOKBACK_DAYS
+    baseline = _completed_runs(BASELINE_WORKFLOW, days, now, MAX_RUNS_PER_SUITE)
+    slot_jobs = skipped = 0
+    for run in baseline:
+        collected = {}
+        try:
+            jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs", filter="all", per_page=100)
+        except HttpError as exc:
+            log(f"  baseline: run {run['id']} jobs unavailable ({exc})")
+            continue
+        for job in jobs.get("jobs", []):
+            suite = JOB_NAME_RE.match(job.get("name") or "")
+            if not suite:
+                skipped += 1
+                continue
+            suite = suite.group(1)
+            if suite not in known:
+                # A suite sampled by the fleet but with no `test-*` workflow of its own. Take
+                # it anyway rather than dropping data on the floor, with an empty dedupe map:
+                # the duplicate-timestamp rule keeps a re-read from doubling anything.
+                known[suite] = {}
+            budget = MAX_LOG_FETCHES - log_fetches
+            log_fetches += _ingest_job(suite, run, job, known[suite], lines_cutoff,
+                                       budget, collected, stats)
+            slot_jobs += 1
+        _flush(collected, stats)
+    log(f"  baseline: window={days}d runs={len(baseline)} suite_jobs={slot_jobs} "
+        f"scaffolding_skipped={skipped}")
 
     log(
         f"jobs={stats['jobs']} entries={stats['pushed']} logs_read={stats['logs_read']} "
         f"logs_gone={stats['logs_gone']}"
     )
     if stats["unparsed"]:
-        # A recognised prefix whose body did not yield fields. The line is stored either
-        # way (that is the point of storing verbatim), but a non-zero count here is the
-        # signal that a field layout has changed under us. Also carried per job on the
-        # OUTCOME line, so it reaches the dashboard rather than only this terminal.
+        # A recognised prefix whose body did not yield fields. The line is stored either way
+        # (that is the point of storing verbatim), but a non-zero count here is the signal
+        # that a field layout has changed under us. Also carried per job on the OUTCOME line,
+        # so it reaches the dashboard rather than only this terminal.
         log(f"WARNING: {stats['unparsed']} lines matched a known prefix but yielded no fields")
     return 0
 

@@ -39,10 +39,24 @@ ConfigMap on `python:3.14-alpine`. Each pass:
 
 1. lists the `test-*` workflows and maps each to its suite name;
 2. asks Loki, per suite, which runs it already holds;
-3. lists the runs GitHub has that Loki does not, oldest first;
+3. reads the runs GitHub has that Loki does not, oldest first, in two passes;
 4. downloads each new job's log, strips ANSI, and extracts the published grammar;
 5. pushes each line to Loki **verbatim**, with its parse in structured metadata, plus one
    synthetic `OUTCOME` line per job carrying the GitHub verdict.
+
+### Why there are two passes, and why one of them is not optional
+
+**The controlled sample is not in the `test-*` workflows.** Those run only on `pull_request` and
+`workflow_dispatch` -- verified 2026-08-17, a query for schedule-event runs across them returns
+**zero**. The four-times-daily fleet sample is a matrix inside `scheduled-baseline.yaml`, whose jobs
+are named `<suite> [<topology>] / test`.
+
+So pass A reads the `test-*` workflows, where the suite comes from the workflow, and pass B reads
+`scheduled-baseline.yaml`, where the suite comes from the **job name** and jobs without a
+`[topology]` are the `plan`/`harvest` scaffolding and are skipped. Reading only pass A would capture
+every contaminated PR run and none of the controlled ones -- an instrument incapable of returning
+the population it exists to measure, which would have left the dashboard empty at its own default
+filter.
 
 ### The direction is the design
 
