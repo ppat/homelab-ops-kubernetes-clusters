@@ -127,7 +127,7 @@ QUERY_LIMIT = int(os.environ.get("LOKI_QUERY_LIMIT", "5000"))
 # Loki's max_query_length, in days, minus a day of slack. A range query wider than this returns
 # 400, and every query below is clamped to it. Keep in step with
 # `services/logging/conf.d/loki-retention.yaml`.
-MAX_QUERY_DAYS = int(os.environ.get("LOKI_MAX_QUERY_DAYS", "730"))
+MAX_QUERY_DAYS = int(os.environ.get("LOKI_MAX_QUERY_DAYS", "365"))
 
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
@@ -634,7 +634,7 @@ def plan_window(suite: str, now: datetime):
     """
     end_ns = int(now.timestamp() * 1_000_000_000)
     # Clamped, because a window wider than Loki's max_query_length returns 400 -- and with the
-    # deep-seed setting (META_LOOKBACK_DAYS=730) the naive `+ 2` lands two days past the 731-day
+    # deep-seed setting (META_LOOKBACK_DAYS=365) the naive `+ 2` lands two days past the 366-day
     # limit, so *every* watermark query would fail, on every suite, on every pass.
     span = min(META_LOOKBACK_DAYS + 2, MAX_QUERY_DAYS)
     start_ns = int((now - timedelta(days=span)).timestamp() * 1_000_000_000)

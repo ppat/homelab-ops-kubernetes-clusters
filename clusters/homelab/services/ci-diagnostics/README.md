@@ -171,7 +171,7 @@ wrote, and that hole would be silent and, after 90 days, permanent.
 
 **The one gap this cannot self-heal.** If the ingester is broken for longer than GitHub's
 90-day log retention, that window is gone for good. `reject_old_samples_max_age` was raised to
-2 years specifically so that Loki is never the tighter of the two cliffs.
+one year specifically so that Loki is never the tighter of the two cliffs.
 
 ## Adding a grammar prefix
 
@@ -201,7 +201,7 @@ The ones worth knowing:
 
 | variable | default | why you would change it |
 | --- | --- | --- |
-| `META_LOOKBACK_DAYS` | `90` | Raise for a one-shot deep seed. Job metadata has no 90-day wall, so a single run at e.g. `730` gives the trend panels two years of real outcome history on day one. Instrument lines are capped separately and cannot be seeded past 90 days -- there is nothing to read. |
+| `META_LOOKBACK_DAYS` | `90` | Raise for a one-shot deep seed. Job metadata has no 90-day wall, so a single run at `365` gives the trend panels a year of real outcome history on day one. Do not exceed the retention period -- anything older is accepted and then deleted by the compactor. Instrument lines are capped separately and cannot be seeded past 90 days -- there is nothing to read. |
 | `LINES_LOOKBACK_DAYS` | `90` | Only lower it, to make a catch-up pass cheaper. Raising it buys `410`s. |
 | `MIN_LOOKBACK_DAYS` | `2` | The floor on a healthy suite's re-read window. |
 | `DRY_RUN` | unset | Parses and reports without pushing. |

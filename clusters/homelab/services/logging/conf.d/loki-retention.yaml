@@ -24,8 +24,9 @@ loki:
     # out into ~70k subqueries against a query_timeout of 300s. Most hit an index with no
     # chunks and are cheap, but not free -- which is why the CI dashboard pins its trend
     # panels to 90d rather than defaulting to the whole retention.
-    # 17544h is two years plus an hour, mirroring Loki's own 30d1h idiom.
-    max_query_length: 17544h
+    # 8784h is one year plus an hour, mirroring Loki's own 30d1h idiom -- just past the
+    # longest retention_stream period below, so nothing that is stored is unplottable.
+    max_query_length: 8784h
     # Default 168h. Raised because the ci-diagnostics ingester writes **retro-dated**
     # entries by construction: it stamps each entry with the time the CI line was emitted,
     # not the time it was scraped.
@@ -46,8 +47,9 @@ loki:
     # Accepted cost: a client with a badly wrong clock could write far-past entries. Three
     # push clients exist here, and retention still deletes whatever they write, so the blast
     # radius is bounded. Reduce this if a fourth, less trusted, writer ever appears.
-    # 17520h is two years.
-    reject_old_samples_max_age: 17520h
+    # 8760h is one year, matching the longest retention below: accepting an entry older than
+    # anything we keep would only give the compactor something to delete.
+    reject_old_samples_max_age: 8760h
     retention_stream:
     - selector: '{namespace="media"}'
       priority: 1
@@ -62,19 +64,19 @@ loki:
     # (discover_service_name's default list includes `job`).
     #
     # Sizing: measured at ~44k lines / 4.6 MB raw on a busy day, ~14% of that once
-    # compressed -- so two years is well under a gigabyte. Retention here is bounded by
-    # what is useful, not by what is affordable.
+    # compressed -- so a year is a few hundred megabytes. Retention here is bounded by what is
+    # useful, not by what is affordable.
     #
     # Shortening this is destructive and irreversible: the compactor runs every 10m and
     # deletes on the next pass, and the source it came from is gone after 90 days. Treat
-    # this number as the highest-consequence value in this file. 17520h is two years.
+    # this number as the highest-consequence value in this file. 8760h is one year.
     #
     # NOTE FOR ANYONE EDITING THIS FILE: no value here may carry a trailing `#` comment.
     # loki-query-correctness.py mounts this exact file and parses it with a hand-rolled
-    # line reader whose scalar extractor does not strip inline comments -- `17520h  # 2y`
+    # line reader whose scalar extractor does not strip inline comments -- `8760h  # 1y`
     # reaches its duration regex verbatim and raises `unsupported duration format`,
     # taking that CronJob down on its next hourly run. Comment blocks above a key, like
     # every one in this file, are skipped correctly. Inline ones are not.
     - selector: '{service_name="ci-diagnostics"}'
       priority: 1
-      period: 17520h
+      period: 8760h
