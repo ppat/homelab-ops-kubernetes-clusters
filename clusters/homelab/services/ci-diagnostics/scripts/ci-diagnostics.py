@@ -333,6 +333,24 @@ KNOWN_PREFIXES = {g[0] for g in GRAMMAR}
 # Synthetic instruments this script emits itself. They are not part of the published CI
 # grammar and are named so they cannot be mistaken for it.
 INSTRUMENT_OUTCOME = "outcome"
+INSTRUMENT_MARKER = "marker"
+
+# Curated landing dates, rendered as Grafana annotations on the dashboard.
+#
+# Format: `YYYY-MM-DD=label;YYYY-MM-DD=label`. Supplied from the CronJob manifest, so the
+# dates live in version control beside the panels -- which is the GitOps posture wanted.
+#
+# **Why these are curated rather than derived.** Deriving markers from `sha` changes was the
+# obvious idea and is wrong: `sha` moves on every Renovate merge, so it would mark noise daily
+# and bury the three or four landings anyone actually cares about.
+#
+# **Why they live in Loki rather than in the dashboard JSON.** Grafana annotations defined in
+# a dashboard are *queries against a datasource*, not literal events -- there is no way to put
+# a fixed timestamp in dashboard JSON and have it render. Verified against every dashboard in
+# this repo: each carries only the built-in `-- Grafana --` annotation, which reads Grafana's
+# own database. So the events have to exist somewhere queryable, and Loki is the only
+# version-controllable option that does not require writing to Grafana by hand.
+LANDING_MARKERS = os.environ.get("LANDING_MARKERS", "")
 
 
 def classify(prefix_line: str):
@@ -835,6 +853,43 @@ def instrumentation_verdict(seen, line_count):
     return "partial"
 
 
+def push_markers():
+    """Push the curated landing markers, once each.
+
+    Idempotent by construction rather than by bookkeeping: every pass emits byte-identical
+    entries at identical timestamps, and Loki drops a duplicate whose timestamp, line and
+    structured metadata all match the previous entry in that stream
+    (`increment_duplicate_timestamps` is false). That default is a hazard everywhere else in
+    this file -- it is why instrument lines each carry a distinct nanosecond timestamp -- and
+    here it is exactly the behaviour wanted.
+    """
+    entries = []
+    for item in LANDING_MARKERS.split(";"):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        date_text, _, label = item.partition("=")
+        try:
+            when = datetime.strptime(date_text.strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            log(f"WARNING: unparseable landing marker {item!r}, skipping")
+            continue
+        label = label.strip()
+        entries.append([str(int(when.timestamp()) * 1_000_000_000),
+                        f"MARKER {label}", {"change": label}])
+    if not entries:
+        return
+    entries.sort(key=lambda e: int(e[0]))
+    try:
+        loki_push([{"stream": {"job": STREAM_JOB, "repo": REPO.split("/")[-1],
+                               "suite": "all", "instrument": INSTRUMENT_MARKER},
+                    "values": entries}])
+        log(f"landing markers: {len(entries)} present")
+    except HttpError as exc:
+        # Never fatal. A marker is annotation garnish; the series is the point.
+        log(f"landing markers push failed ({exc}); continuing")
+
+
 def collect_job(suite, run, job, fetch_log, stats):
     """Produce (stream-key -> [(ts_ns, line, metadata)]) for one job."""
     out = {}
@@ -1063,6 +1118,7 @@ def main():
     log(f"{len(suites)} suites: {', '.join(suites)}")
 
     stats = {"logs_read": 0, "logs_gone": 0, "jobs": 0, "pushed": 0, "unparsed": 0}
+    push_markers()
 
     # One Loki round-trip per suite, up front, shared by both passes below. A baseline run and
     # a PR run have different run ids, so they coexist in the same per-suite map without
