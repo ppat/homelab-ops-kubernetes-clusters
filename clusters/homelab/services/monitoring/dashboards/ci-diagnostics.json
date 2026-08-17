@@ -54,8 +54,12 @@
                 "value": null
               },
               {
-                "color": "green",
+                "color": "orange",
                 "value": 1
+              },
+              {
+                "color": "green",
+                "value": 60
               }
             ]
           },
@@ -183,7 +187,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "OUTCOME entries whose `instrumentation` field is not `ok`.\n\nThe verdict is a necessary-consequence test, computed at ingest: a job whose diagnostics worked **must** have left a `CONTENTION start`, a `CONTENTION end` and at least one `READY` behind. Anything less is `partial`; a job that emitted nothing at all is `no-lines`; a job whose log had already expired is `log-unavailable`.\n\nThis is the panel that stops the rest of the page lying by omission. A suite whose instrumentation broke contributes no PULL, MODE or READY samples, so its curves flatten or vanish and every chart above reads as an improvement.\n\n**Three legitimate sources of silence are excluded, or this panel would be noise and therefore ignored.** A job killed at its `timeout-minutes` ceiling emits none of the grammar, because chainsaw buffers a script's stdout until the script exits. A cancelled or superseded job never got far enough to emit any. And a job older than 90 days has no log left to read, which matters during a deep backfill. So this counts only `success` and `failure` outcomes -- runs that reached a verdict, where the grammar is obligatory and its absence really is a broken instrument.\n\n`assertion-semantics` is excluded by name. Verified 2026-08-17 against a real run: it emits **zero** grammar lines, because it pins chainsaw's assertion semantics rather than deploying a module, so it has no pods to report readiness for. Counting it would make this stat non-zero forever, and a stat that is always red is one nobody reads.\n\nThe states counted are `no-lines` and `partial`, enumerated positively rather than as `!= ok`. That is a deliberate coupling to the ingester's vocabulary: a new verdict value would be excluded here until someone adds it, which is the safer direction than having every future value silently counted as a defect.",
+      "description": "OUTCOME entries whose `instrumentation` field is not `ok`.\n\nThe verdict is a necessary-consequence test, computed at ingest: a job whose diagnostics worked **must** have left a `CONTENTION start`, a `CONTENTION end` and at least one `READY` behind. Anything less is `partial`; a job that emitted nothing at all is `no-lines`; a job whose log had already expired is `log-unavailable`.\n\nThis is the panel that stops the rest of the page lying by omission. A suite whose instrumentation broke contributes no PULL, MODE or READY samples, so its curves flatten or vanish and every chart above reads as an improvement.\n\n**Three legitimate sources of silence are excluded, or this panel would be noise and therefore ignored.** A job killed at its `timeout-minutes` ceiling emits none of the grammar, because chainsaw buffers a script's stdout until the script exits. A cancelled or superseded job never got far enough to emit any. And a job older than 90 days has no log left to read, which matters during a deep backfill.\n\n**Successful runs only**, which is narrower than it first looks and deliberately so. The verdict requires a `READY` line, and a run that fails before anything becomes Ready legitimately has none -- so counting failures here would light this panel up on ordinary red runs and make the one indicator the whole page depends on into noise. A green run has no such excuse: the grammar is obligatory, and its absence really is a broken instrument.\n\nThe cost, stated because it is a real blind spot: instrumentation that breaks *only* on failing runs is invisible here. Read `instrumentation` on the raw lines at the bottom of the page when investigating a specific red run.\n\n`assertion-semantics` is excluded by name. Verified 2026-08-17 against a real run: it emits **zero** grammar lines, because it pins chainsaw's assertion semantics rather than deploying a module, so it has no pods to report readiness for. Counting it would make this stat non-zero forever, and a stat that is always red is one nobody reads.\n\nThe states counted are `no-lines` and `partial`, enumerated positively rather than as `!= ok`. That is a deliberate coupling to the ingester's vocabulary: a new verdict value would be excluded here until someone adds it, which is the safer direction than having every future value silently counted as a defect.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -242,7 +246,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite!=\"assertion-semantics\"} | outcome =~ \"success|failure\" | instrumentation =~ \"no-lines|partial\" [24h])) or vector(0)",
+          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite!=\"assertion-semantics\"} | outcome = \"success\" | instrumentation =~ \"no-lines|partial\" [24h])) or vector(0)",
           "instant": true,
           "queryType": "instant",
           "range": false,
@@ -356,7 +360,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome = \"success\" | duration_s != \"\" | unwrap duration_s [1d])",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome = \"success\" | duration_s != \"\" | unwrap duration_s [1d]) by (suite)",
           "legendFormat": "{{suite}}",
           "queryType": "range",
           "range": true,
@@ -771,7 +775,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "Two quantiles over the PULL lines. `pull_s` is the kubelet's own pull duration; `incl_wait_s` additionally includes time spent queued behind **the kubelet's** serial pull queue (`serializeImagePulls: true` in the kind node image -- not containerd's concurrent-download limit, which that setting makes irrelevant).\n\n**The gap between the two lines is the entire multi-node and parallel-pull argument.** Extra kind nodes add no CPU; what they add is a second kubelet pull queue. So a change that helps shows up as the upper line falling toward the lower one, and the lower line barely moving.\n\nRead that asymmetry deliberately, because the obvious reading is wrong: with parallel pulls enabled, individual pulls get *slower* under contention while the set finishes earlier. `pull_s` alone therefore reads like a regression when the change was an improvement. Judge on `incl_wait_s`.\n\np90 rather than mean: pull time is long-tailed and the tail is what expires a budget.\n\nWhat it cannot see: images already on the machine emit PULL-CACHED and no PULL line at all, so a day where more was cached shows fewer, not faster, pulls. A drop in this line with no corresponding change in cache behaviour is the reading that means something.",
+      "description": "Two quantiles over the PULL lines. `pull_s` is the kubelet's own pull duration; `incl_wait_s` additionally includes time spent queued behind **the kubelet's** serial pull queue (`serializeImagePulls: true` in the kind node image -- not containerd's concurrent-download limit, which that setting makes irrelevant).\n\n**The gap between the two lines is the entire multi-node and parallel-pull argument.** Extra kind nodes add no CPU; what they add is a second kubelet pull queue. So a change that helps shows up as the upper line falling toward the lower one, and the lower line barely moving.\n\nRead that asymmetry deliberately, because the obvious reading is wrong: with parallel pulls enabled, individual pulls get *slower* under contention while the set finishes earlier. `pull_s` alone therefore reads like a regression when the change was an improvement. Judge on `incl_wait_s`.\n\np90 rather than mean: pull time is long-tailed and the tail is what expires a budget.\n\n**The `by ()` is load-bearing and is not decoration.** A stream's identity here includes its structured metadata -- `run_id`, `image`, `pod` -- so without an explicit grouping LogQL computes the quantile **per entry**, over a single sample, and returns that sample. An outer `avg()` over those then yields the arithmetic mean while the legend still says p90. Measured on this instance: the two forms differ by 2.9x, and the wrong one looks entirely plausible.\n\nWhat it cannot see: images already on the machine emit PULL-CACHED and no PULL line at all, so a day where more was cached shows fewer, not faster, pulls. A drop in this line with no corresponding change in cache behaviour is the reading that means something.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -887,7 +891,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"pull\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | unwrap incl_wait_s [1d]))",
+          "expr": "quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"pull\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | unwrap incl_wait_s [1d]) by ()",
           "legendFormat": "p90 including kubelet queue wait",
           "queryType": "range",
           "range": true,
@@ -899,7 +903,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"pull\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | unwrap pull_s [1d]))",
+          "expr": "quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"pull\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | unwrap pull_s [1d]) by ()",
           "legendFormat": "p90 kubelet pull alone (the floor)",
           "queryType": "range",
           "range": true,
@@ -928,7 +932,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "`net_mbps` from the two CONTENTION lines each run emits, one at the start of the chainsaw phase and one at the end. **Two samples per run, not a trace** -- drawn stepped with nulls not spanned, because a smooth line here would assert bandwidth figures that were never measured.\n\nBandwidth is the axis that matters. Under a `tbf` qdisc limiting the kind bridge to 150mbit, unmodified suites fail 6 out of 6 at Validate Prometheus; halving cluster CPU left timings unchanged. So of the four contention axes captured, this is the one measurably implicated -- which is why it is titled a proxy: it is a probe of the runner's link, not of the resource any particular assertion was waiting on.\n\nRead the minimum, not the mean. A bad day is one where the floor dropped.\n\nLine this up against the failure count in this row using the shared crosshair. Contention low and failures high on the same day is a contention story; failures high with the floor unmoved is a structural one, and the UNCENSORED panel below says what the step actually needed.\n\n`calib_ms` is deliberately not plotted anywhere on this page. It is a relative index tied to a fixed iteration count, so editing that count silently rebases the entire series -- a step change indistinguishable from a real change in runner speed, which is precisely the defect a months-long trend cannot survive.",
+      "description": "`net_mbps` from the two CONTENTION lines each run emits, one at the start of the chainsaw phase and one at the end. **Two samples per run, not a trace** -- drawn stepped with nulls not spanned, because a smooth line here would assert bandwidth figures that were never measured.\n\nBandwidth is the axis that matters. Under a `tbf` qdisc limiting the kind bridge to 150mbit, unmodified suites fail 6 out of 6 at Validate Prometheus; halving cluster CPU left timings unchanged. So of the four contention axes captured, this is the one measurably implicated -- which is why it is titled a proxy: it is a probe of the runner's link, not of the resource any particular assertion was waiting on.\n\nRead the minimum, not the mean. A bad day is one where the floor dropped.\n\nBoth series carry an explicit `by ()`. Without it a range aggregation over unwrapped values returns one series **per entry**, because structured metadata is part of a series' identity -- min and max happen to survive that (they are associative, so the answer is right by accident), but the query builds thousands of intermediate series to get there, and the moment anyone swaps the reducer for a quantile it silently starts reporting the mean. Uniform `by ()` removes the accident.\n\nLine this up against the failure count in this row using the shared crosshair. Contention low and failures high on the same day is a contention story; failures high with the floor unmoved is a structural one, and the UNCENSORED panel below says what the step actually needed.\n\n`calib_ms` is deliberately not plotted anywhere on this page. It is a relative index tied to a fixed iteration count, so editing that count silently rebases the entire series -- a step change indistinguishable from a real change in runner speed, which is precisely the defect a months-long trend cannot survive.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1014,7 +1018,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "min(min_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | net_mbps =~ \"[0-9].*\" | unwrap net_mbps [1d]))",
+          "expr": "min_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | net_mbps =~ \"[0-9].*\" | unwrap net_mbps [1d]) by ()",
           "legendFormat": "daily floor",
           "queryType": "range",
           "range": true,
@@ -1026,7 +1030,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg(avg_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | net_mbps =~ \"[0-9].*\" | unwrap net_mbps [1d]))",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | net_mbps =~ \"[0-9].*\" | unwrap net_mbps [1d]) by ()",
           "legendFormat": "daily mean",
           "queryType": "range",
           "range": true,
@@ -1128,7 +1132,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "max(max_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | fsync_us =~ \"[0-9].*\" | unwrap fsync_us [1d]))",
+          "expr": "max_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | fsync_us =~ \"[0-9].*\" | unwrap fsync_us [1d]) by ()",
           "legendFormat": "daily peak",
           "queryType": "range",
           "range": true,
@@ -1140,7 +1144,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "avg(avg_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | fsync_us =~ \"[0-9].*\" | unwrap fsync_us [1d]))",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | fsync_us =~ \"[0-9].*\" | unwrap fsync_us [1d]) by ()",
           "legendFormat": "daily mean",
           "queryType": "range",
           "range": true,
@@ -1393,7 +1397,7 @@
           "uid": "$datasource"
         },
         "definition": "label_values({job=\"ci-diagnostics\"}, suite)",
-        "description": "Which chainsaw suites to include. Reaches every panel except the three freshness stats at the top, which deliberately ignore it. Clearing it back to All is always safe -- the filter is anchored, so an empty selection cannot silently match nothing.",
+        "description": "Which chainsaw suites to include. Reaches every panel except the three freshness stats at the top, which deliberately ignore it.\n\nWhat makes All safe is `allValue: .*`, **not** the anchoring -- the two pull opposite ways. Anchoring is what makes a genuinely empty selection match nothing at all, because `^()$` matches only the empty string. That is reachable by hand, via `?var-suite=` in the URL, and it renders as an empty page rather than an error. If every panel is blank, check this variable before concluding the ingester has stopped.",
         "hide": 0,
         "includeAll": true,
         "label": "Suite",

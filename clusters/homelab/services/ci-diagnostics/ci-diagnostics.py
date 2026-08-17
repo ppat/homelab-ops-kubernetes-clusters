@@ -124,6 +124,11 @@ MAX_LOG_FETCHES = int(os.environ.get("MAX_LOG_FETCHES", "1200"))
 # value silently truncates instead of erroring.
 QUERY_LIMIT = int(os.environ.get("LOKI_QUERY_LIMIT", "5000"))
 
+# Loki's max_query_length, in days, minus a day of slack. A range query wider than this returns
+# 400, and every query below is clamped to it. Keep in step with
+# `services/logging/conf.d/loki-retention.yaml`.
+MAX_QUERY_DAYS = int(os.environ.get("LOKI_MAX_QUERY_DAYS", "730"))
+
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
 USER_AGENT = "ci-diagnostics-ingester/1 (+homelab-ops-kubernetes-clusters)"
@@ -139,10 +144,22 @@ USER_AGENT = "ci-diagnostics-ingester/1 (+homelab-ops-kubernetes-clusters)"
 # an empty dict, and must never raise -- see parse_fields().
 # --------------------------------------------------------------------------------------
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# `?` is in the class deliberately: a private-mode sequence such as `\x1b[?25l` immediately
+# before a grammar prefix would otherwise survive, `classify()` would miss the prefix, and the
+# **whole line would be dropped** -- violating this file's own rule that an unparseable line is
+# still stored. Both this and the CR/BOM handling below are `baseline-harvest.sh`'s, verbatim,
+# so the two readers of this grammar cannot disagree about what a line even is.
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+# Observed on a live job log: the first line really does begin with a UTF-8 BOM.
+BOM = "\ufeff"
 # Actions prefixes every log line with an RFC3339 UTC timestamp at 100ns resolution.
 # That is the entry's real time and removes any need to synthesise one.
-TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s?(.*)$")
+# Fractional part and the zone are both optional: Actions has only ever emitted 7 digits and a
+# literal Z, but a line that does not match is *dropped*, and dropping a line to save a regex
+# branch is the wrong trade in a store whose whole purpose is that the source expires.
+TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s?(.*)$"
+)
 KV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)")
 
 
@@ -338,12 +355,27 @@ def _request(url, *, headers=None, data=None, method=None, retries=4):
             # an error; the caller decides. 403 with a rate-limit header is worth waiting
             # out. Everything else 4xx is terminal.
             if exc.code in (403, 429) and attempt < retries - 1:
-                reset = exc.headers.get("X-RateLimit-Reset")
-                remaining = exc.headers.get("X-RateLimit-Remaining")
-                if remaining == "0" and reset:
-                    delay = max(0, int(reset) - int(time.time())) + 5
-                    log(f"rate limited; sleeping {delay}s")
-                    time.sleep(min(delay, 900))
+                # Two different limits arrive here. The primary one sets
+                # X-RateLimit-Remaining: 0 and a reset epoch. The **secondary** one -- which a
+                # backfill is far more likely to trip -- sets Retry-After and leaves Remaining
+                # well above zero, so keying only on Remaining == 0 lets it fall through to a
+                # fatal raise. Honour whichever is present.
+                delay = None
+                retry_after = exc.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = int(retry_after) + 1
+                    except ValueError:
+                        delay = 60
+                elif exc.headers.get("X-RateLimit-Remaining") == "0":
+                    reset = exc.headers.get("X-RateLimit-Reset")
+                    if reset:
+                        delay = max(0, int(reset) - int(time.time())) + 5
+                if delay is not None:
+                    # No 900s clamp: the primary limit resets on a fixed hourly boundary that can
+                    # be up to an hour away, and waking early only burns another retry.
+                    log(f"rate limited ({exc.code}); sleeping {min(delay, 3700)}s")
+                    time.sleep(min(delay, 3700))
                     continue
             if 500 <= exc.code < 600 and attempt < retries - 1:
                 time.sleep(2 ** attempt)
@@ -490,10 +522,18 @@ def rfc3339_to_ns(value: str) -> int:
     dropped with no error. Repeated identical lines are ordinary here (two identical PULL
     lines in one run), so distinct timestamps are what stop silent loss.
     """
-    head, _, frac = value.rstrip("Z").partition(".")
+    text = value.strip()
+    offset_s = 0
+    if text.endswith("Z"):
+        text = text[:-1]
+    elif len(text) > 6 and text[-6] in "+-":
+        sign = -1 if text[-6] == "-" else 1
+        offset_s = sign * (int(text[-5:-3]) * 3600 + int(text[-2:]) * 60)
+        text = text[:-6]
+    head, _, frac = text.partition(".")
     dt = datetime.strptime(head, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
     frac = (frac + "000000000")[:9]
-    return int(dt.timestamp()) * 1_000_000_000 + int(frac)
+    return (int(dt.timestamp()) - offset_s) * 1_000_000_000 + int(frac)
 
 
 def iso_to_ns(value: str) -> int:
@@ -593,15 +633,23 @@ def plan_window(suite: str, now: datetime):
     operation the same code path rather than two modes.
     """
     end_ns = int(now.timestamp() * 1_000_000_000)
-    start_ns = int((now - timedelta(days=META_LOOKBACK_DAYS + 2)).timestamp() * 1_000_000_000)
+    # Clamped, because a window wider than Loki's max_query_length returns 400 -- and with the
+    # deep-seed setting (META_LOOKBACK_DAYS=730) the naive `+ 2` lands two days past the 731-day
+    # limit, so *every* watermark query would fail, on every suite, on every pass.
+    span = min(META_LOOKBACK_DAYS + 2, MAX_QUERY_DAYS)
+    start_ns = int((now - timedelta(days=span)).timestamp() * 1_000_000_000)
     selector = (
         f'{{job="{STREAM_JOB}", suite="{suite}", instrument="{INSTRUMENT_OUTCOME}"}}'
     )
     try:
         results = loki_query(selector, start_ns, end_ns, limit=1)
     except HttpError as exc:
-        log(f"  {suite}: Loki watermark query failed ({exc}); assuming empty")
-        results = []
+        # Deliberately not "assume empty". Assuming empty on a read failure turns a transient
+        # Loki blip into a full re-push of the window -- into streams whose watermark is
+        # already at now, so Loki rejects everything older than an hour and the pass dies.
+        # A read failure means "do not know", and the only safe action is to do nothing.
+        log(f"  {suite}: Loki watermark query failed ({exc}); skipping this suite this pass")
+        return None
     newest = 0
     for stream in results:
         for ts, _ in stream.get("values", []):
@@ -630,7 +678,7 @@ def known_attempts(suite: str, days: int, now: datetime):
     failure. Per suite it is ~360 entries.
     """
     end_ns = int(now.timestamp() * 1_000_000_000)
-    start_ns = int((now - timedelta(days=days + 1)).timestamp() * 1_000_000_000)
+    start_ns = int((now - timedelta(days=min(days + 1, MAX_QUERY_DAYS))).timestamp() * 1_000_000_000)
     selector = (
         f'{{job="{STREAM_JOB}", suite="{suite}", instrument="{INSTRUMENT_OUTCOME}"}}'
     )
@@ -649,7 +697,8 @@ def known_attempts(suite: str, days: int, now: datetime):
                 attempt_n = 1
             seen[run_id] = max(seen.get(run_id, 0), attempt_n)
     except HttpError as exc:
-        log(f"  {suite}: Loki dedupe query failed ({exc}); treating window as empty")
+        log(f"  {suite}: Loki dedupe query failed ({exc}); skipping this suite this pass")
+        return None
     if entries >= QUERY_LIMIT:
         # Loki truncates at max_entries_limit_per_query and says nothing. Truncation drops
         # the *oldest* entries (the query runs backward), so the effect is re-fetching logs
@@ -724,7 +773,8 @@ def collect_job(suite, run, job, fetch_log, stats):
             stats["logs_read"] += 1
             entries = {}
             for raw_line in raw.splitlines():
-                match = TS_RE.match(ANSI_RE.sub("", raw_line))
+                clean = ANSI_RE.sub("", raw_line).replace("\r", "").lstrip(BOM)
+                match = TS_RE.match(clean)
                 if not match:
                     continue
                 ts_text, body = match.group(1), match.group(2).strip()
@@ -829,17 +879,34 @@ def push_in_batches(streams, batch_entries=2000):
 
 
 def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
-    """Route one job into `collected` unless it is already held. Returns log fetches used."""
+    """Route one job into `collected` unless it is already held.
+
+    Returns "fetched" | "deferred" | "known" | "meta-only".
+
+    **The deferred case is the important one.** `known_attempts()` reads the OUTCOME stream to
+    decide what is outstanding, so writing an OUTCOME row for a job whose log this pass chose
+    not to read would mark it done **forever** -- the next pass skips it before making any API
+    call, and its instrument lines are never collected even though the log stays available for
+    up to 90 more days. With a global fetch budget and suites iterated in sorted order, that
+    would silently discard the backfill for every suite after the budget ran out, which on
+    measured volume is most of them.
+
+    So a job whose log is still fetchable but was skipped for budget is left **unrecorded**,
+    and the set difference correctly reports it as outstanding next pass. This is also what
+    keeps the README's claim true: an interrupted pass is safe because nothing it declined to
+    do is recorded as done.
+    """
     attempt = int(job.get("run_attempt", run.get("run_attempt", 1)) or 1)
     if known.get(str(run["id"]), 0) >= attempt:
-        return 0
+        return "known"
     completed = job.get("completed_at")
     fresh = bool(completed) and iso_to_ns(completed) > int(lines_cutoff.timestamp() * 1e9)
-    fetch = fresh and budget > 0
-    for stream_key, values in collect_job(suite, run, job, fetch, stats).items():
+    if fresh and budget <= 0:
+        return "deferred"
+    for stream_key, values in collect_job(suite, run, job, fresh, stats).items():
         collected.setdefault(stream_key, []).extend(values)
     stats["jobs"] += 1
-    return 1 if fetch else 0
+    return "fetched" if fresh else "meta-only"
 
 
 def _completed_runs(workflow, days, now, cap):
@@ -858,10 +925,22 @@ def _completed_runs(workflow, days, now, cap):
     return runs
 
 
-def _flush(collected, stats):
+def _flush(collected, stats, label):
+    """Push one unit of work. A push failure is logged and swallowed, deliberately.
+
+    Loki rejects a whole batch on a 400 -- too far behind, too old, a limit tripped -- and an
+    uncaught raise here would abandon every suite after this one. Since the next pass rebuilds
+    its to-do list by set difference, a dropped batch is retried rather than lost, so
+    continuing is strictly better than dying. It is logged loudly because a batch that fails
+    every pass would otherwise be an invisible standstill.
+    """
     if not collected:
         return 0
-    entries = push_in_batches(build_streams(collected))
+    try:
+        entries = push_in_batches(build_streams(collected))
+    except HttpError as exc:
+        log(f"  {label}: PUSH FAILED ({exc}); leaving it outstanding for the next pass")
+        return 0
     stats["pushed"] += entries
     return entries
 
@@ -886,8 +965,18 @@ def main():
     # One Loki round-trip per suite, up front, shared by both passes below. A baseline run and
     # a PR run have different run ids, so they coexist in the same per-suite map without
     # colliding.
-    windows = {suite: plan_window(suite, now) for suite in suites}
-    known = {suite: known_attempts(suite, windows[suite], now) for suite in suites}
+    windows, known = {}, {}
+    for suite in suites:
+        window = plan_window(suite, now)
+        if window is None:
+            continue
+        attempts = known_attempts(suite, window, now)
+        if attempts is None:
+            continue
+        windows[suite], known[suite] = window, attempts
+    if not windows:
+        log("FATAL: could not read any suite's watermark from Loki; doing nothing")
+        return 1
 
     # -- Pass A: the per-suite `test-*` workflows (PR and dispatch runs). -------------------
     #
@@ -895,8 +984,10 @@ def main():
     # about failure rather than tidiness: it bounds peak memory to one suite's window, and it
     # leaves the suites already done *ingested*, so an interrupted pass resumes by set
     # difference instead of redoing everything.
-    log_fetches = 0
+    log_fetches = deferred = 0
     for suite, workflow_id in suites.items():
+        if suite not in windows:
+            continue
         collected = {}
         runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
         new = 0
@@ -914,10 +1005,15 @@ def main():
                 continue
             for job in jobs.get("jobs", []):
                 budget = MAX_LOG_FETCHES - log_fetches
-                log_fetches += _ingest_job(suite, run, job, known[suite], lines_cutoff,
-                                           budget, collected, stats)
-                new += 1
-        entries = _flush(collected, stats)
+                verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
+                                      budget, collected, stats)
+                if verdict == "fetched":
+                    log_fetches += 1
+                elif verdict == "deferred":
+                    deferred += 1
+                if verdict != "known":
+                    new += 1
+        entries = _flush(collected, stats, suite)
         log(f"  {suite}: window={windows[suite]}d runs={len(runs)} "
             f"known={len(known[suite])} new_jobs={new} entries={entries}")
 
@@ -929,7 +1025,7 @@ def main():
     #
     # Pushed per run rather than per suite: a run spans several suites, and a run is the
     # natural resumable unit here.
-    days = max(windows.values()) if windows else META_LOOKBACK_DAYS
+    days = max(windows.values())
     baseline = _completed_runs(BASELINE_WORKFLOW, days, now, MAX_RUNS_PER_SUITE)
     slot_jobs = skipped = 0
     for run in baseline:
@@ -951,17 +1047,27 @@ def main():
                 # the duplicate-timestamp rule keeps a re-read from doubling anything.
                 known[suite] = {}
             budget = MAX_LOG_FETCHES - log_fetches
-            log_fetches += _ingest_job(suite, run, job, known[suite], lines_cutoff,
-                                       budget, collected, stats)
+            verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
+                                  budget, collected, stats)
+            if verdict == "fetched":
+                log_fetches += 1
+            elif verdict == "deferred":
+                deferred += 1
             slot_jobs += 1
-        _flush(collected, stats)
+        _flush(collected, stats, "baseline")
     log(f"  baseline: window={days}d runs={len(baseline)} suite_jobs={slot_jobs} "
         f"scaffolding_skipped={skipped}")
 
     log(
         f"jobs={stats['jobs']} entries={stats['pushed']} logs_read={stats['logs_read']} "
-        f"logs_gone={stats['logs_gone']}"
+        f"logs_gone={stats['logs_gone']} deferred={deferred} suites_read={len(windows)}/{len(suites)}"
     )
+    if deferred:
+        # Not an error: these jobs were left unrecorded on purpose, so the next pass picks them
+        # up. A first backfill will report a large number here for several passes running, and
+        # a number that never reaches zero means MAX_LOG_FETCHES is below the arrival rate.
+        log(f"{deferred} jobs deferred past the {MAX_LOG_FETCHES}-log budget; "
+            "they remain outstanding and will be collected on later passes")
     if stats["unparsed"]:
         # A recognised prefix whose body did not yield fields. The line is stored either way
         # (that is the point of storing verbatim), but a non-zero count here is the signal

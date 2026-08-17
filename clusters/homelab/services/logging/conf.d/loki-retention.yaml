@@ -24,7 +24,8 @@ loki:
     # out into ~70k subqueries against a query_timeout of 300s. Most hit an index with no
     # chunks and are cheap, but not free -- which is why the CI dashboard pins its trend
     # panels to 90d rather than defaulting to the whole retention.
-    max_query_length: 17544h  # 2y + 1h
+    # 17544h is two years plus an hour, mirroring Loki's own 30d1h idiom.
+    max_query_length: 17544h
     # Default 168h. Raised because the ci-diagnostics ingester writes **retro-dated**
     # entries by construction: it stamps each entry with the time the CI line was emitted,
     # not the time it was scraped.
@@ -45,7 +46,8 @@ loki:
     # Accepted cost: a client with a badly wrong clock could write far-past entries. Three
     # push clients exist here, and retention still deletes whatever they write, so the blast
     # radius is bounded. Reduce this if a fourth, less trusted, writer ever appears.
-    reject_old_samples_max_age: 17520h  # 2y
+    # 17520h is two years.
+    reject_old_samples_max_age: 17520h
     retention_stream:
     - selector: '{namespace="media"}'
       priority: 1
@@ -65,7 +67,14 @@ loki:
     #
     # Shortening this is destructive and irreversible: the compactor runs every 10m and
     # deletes on the next pass, and the source it came from is gone after 90 days. Treat
-    # this number as the highest-consequence value in this file.
+    # this number as the highest-consequence value in this file. 17520h is two years.
+    #
+    # NOTE FOR ANYONE EDITING THIS FILE: no value here may carry a trailing `#` comment.
+    # loki-query-correctness.py mounts this exact file and parses it with a hand-rolled
+    # line reader whose scalar extractor does not strip inline comments -- `17520h  # 2y`
+    # reaches its duration regex verbatim and raises `unsupported duration format`,
+    # taking that CronJob down on its next hourly run. Comment blocks above a key, like
+    # every one in this file, are skipped correctly. Inline ones are not.
     - selector: '{service_name="ci-diagnostics"}'
       priority: 1
-      period: 17520h  # 2y
+      period: 17520h

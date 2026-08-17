@@ -159,7 +159,13 @@ has no pods whose readiness to report.
 | the token expiring | the Job fails; `Jobs ingested` goes to 0 within a day |
 
 An interrupted pass is safe and needs no intervention: work is pushed per suite, and the next
-pass rebuilds its to-do list by set difference against what Loki already holds. That is also
+pass rebuilds its to-do list by set difference against what Loki already holds. The same applies to
+a job the pass declined to read because `MAX_LOG_FETCHES` ran out -- it is left **unrecorded**, not
+recorded as empty, so it stays outstanding. That distinction is the whole reason the set difference
+works: writing an `OUTCOME` row for a job whose log was never read would mark it done forever, and
+on a first backfill that would silently discard most of the fleet's instrument lines while the logs
+were still there. The pass logs a `deferred=` count for exactly this reason; a count that never
+reaches zero across passes means the budget is below the arrival rate. That is also
 why there is no watermark file -- a watermark advances past data a partially-failed push never
 wrote, and that hole would be silent and, after 90 days, permanent.
 

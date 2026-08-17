@@ -13,12 +13,16 @@ configMapGenerator:
   - ci-diagnostics.py
   options:
     annotations:
-      # Mandatory, not defensive. config-services runs Flux post-build substitution over
-      # everything it builds, and envsubst expands bare `$name` as well as `${name}`. The
-      # script contains a `$` today (an end-of-string anchor in a regex) and any future
-      # edit could add `${...}` in an f-string or a character class. The failure mode is a
-      # script that still parses and silently does the wrong thing, so it is not worth
-      # depending on "there happen to be no dollar signs".
+      # Prophylactic rather than presently load-bearing, and worth keeping for that.
+      # config-services runs Flux post-build substitution over everything it builds, and
+      # envsubst expands bare `$name` as well as `${name}`. The `$` characters in this script
+      # today are all regex end-anchors followed by a quote, which envsubst leaves alone -- so
+      # strictly, nothing breaks without this line right now. What it buys is that a future
+      # edit adding `${...}` in an f-string or a `$word` in a character class cannot silently
+      # blank itself, and the failure mode it prevents is a script that still parses and
+      # quietly does the wrong thing. (On the *dashboard* ConfigMap next door the identical
+      # annotation genuinely is mandatory: `$datasource`, `$suite` and `$search` would all be
+      # substituted away.)
       kustomize.toolkit.fluxcd.io/substitute: disabled
     # Deliberately different from loki-query-correctness next door, which lets the name
     # hash so a script edit rolls a new ConfigMap. That is the right call for a workload
