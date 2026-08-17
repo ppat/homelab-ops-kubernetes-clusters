@@ -69,17 +69,37 @@ spec:
                 drop:
                 - ALL
               readOnlyRootFilesystem: true
+            # Measured, not guessed. Three numbers, all from real logs on 2026-08-17:
+            #
+            #   ~9 MiB of Python objects per 1000 buffered entries, ~70 entries per job
+            #   real run, 40 job logs   peak RSS 44.8 MiB, RssAnon 30.7 MiB
+            #   20 MiB job log          +0.0 MiB RssAnon (streamed off disk)
+            #
+            # Two changes got it here, and neither was "ask for more memory":
+            #
+            # - FLUSH_EVERY_ENTRIES bounds the buffer, so peak no longer scales with
+            #   MAX_LOG_FETCHES. Measured flat at ~30 MiB from 6k entries through 77k. It
+            #   was previously unbounded: 1200 logs would have been ~84k entries, ~760 MiB.
+            # - Job logs are spooled to the disk-backed emptyDir below and parsed a line at
+            #   a time, so a pathological log costs **reclaimable page cache** instead of
+            #   anonymous memory. Measured on a synthetic 20 MiB log: RssAnon unchanged at
+            #   9.9 MiB streaming, against a 70 MiB peak reading it whole. That matters more
+            #   than the number, because anonymous memory is unreclaimable without swap --
+            #   the kernel's only response to pressure is an OOM kill, whereas page cache it
+            #   can simply drop.
+            #
+            # An earlier revision asked for 256Mi/512Mi on a guess, which was wrong in both
+            # directions at once: far too much for the normal case, and still too little for
+            # the worst case it claimed to cover.
+            #
             # Declared rather than left to Kyverno's add-default-resources mutation, which
-            # would inject 32Mi. A pass holds one suite's window of parsed entries in
-            # memory before pushing, and a 90-day backfill window for a busy suite is a few
-            # tens of MB of Python objects -- 32Mi would OOM during exactly the first run
-            # that matters most.
+            # would inject 32Mi and OOM on the first real log.
             resources:
               requests:
                 cpu: 50m
-                memory: 256Mi
+                memory: 64Mi
               limits:
-                memory: 512Mi
+                memory: 128Mi
             volumeMounts:
             - mountPath: /scripts
               name: script
@@ -98,7 +118,15 @@ spec:
             configMap:
               name: ci-diagnostics-script
           - name: temp
-            emptyDir: {}
+            # Disk-backed on purpose -- `medium: Memory` would make this tmpfs, whose pages
+            # are unreclaimable and charged like anonymous memory, undoing the whole reason
+            # job logs are spooled here rather than held in the heap.
+            #
+            # sizeLimit is declared because this now holds real files. Only one job log
+            # exists at a time and the largest on record is ~20 MiB; 128Mi leaves room for
+            # an outlier without letting a runaway download fill the node.
+            emptyDir:
+              sizeLimit: 128Mi
       ttlSecondsAfterFinished: 604800  # 1 week
   # Hourly, and cheap because of it. A pass over a fleet with nothing new costs seventeen
   # Loki queries plus seventeen run listings -- runs already ingested are skipped before

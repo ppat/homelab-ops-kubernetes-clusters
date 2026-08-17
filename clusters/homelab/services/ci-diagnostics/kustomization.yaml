@@ -11,7 +11,7 @@ configMapGenerator:
 - name: ci-diagnostics-script
   namespace: ci-diagnostics
   files:
-  - ci-diagnostics.py
+  - scripts/ci-diagnostics.py
   options:
     annotations:
       # Prophylactic rather than presently load-bearing, and worth keeping for that.

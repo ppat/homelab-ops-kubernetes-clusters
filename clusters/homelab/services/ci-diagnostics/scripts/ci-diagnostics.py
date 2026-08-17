@@ -75,6 +75,7 @@ import gzip
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -124,10 +125,27 @@ MAX_LOG_FETCHES = int(os.environ.get("MAX_LOG_FETCHES", "1200"))
 # value silently truncates instead of erroring.
 QUERY_LIMIT = int(os.environ.get("LOKI_QUERY_LIMIT", "5000"))
 
+# Flush once this many entries are buffered, rather than once per suite.
+#
+# This is what bounds the pod's memory, and it is the only thing that does. Measured on real
+# logs: ~9 MiB of Python objects per 1000 buffered entries, and ~70 entries per job. Buffering
+# a whole suite meant peak memory scaled with MAX_LOG_FETCHES -- at 1200 logs that is ~84k
+# entries, roughly 760 MiB, which no sane limit would cover. Flushing on a fixed buffer makes
+# peak memory a constant instead: it no longer depends on the fetch budget, the window, or how
+# busy a suite has been.
+#
+# 2000 matches push_in_batches' own batch size, so a flush is one request.
+FLUSH_EVERY = int(os.environ.get("FLUSH_EVERY_ENTRIES", "2000"))
+
 # Loki's max_query_length, in days, minus a day of slack. A range query wider than this returns
 # 400, and every query below is clamped to it. Keep in step with
 # `services/logging/conf.d/loki-retention.yaml`.
 MAX_QUERY_DAYS = int(os.environ.get("LOKI_MAX_QUERY_DAYS", "365"))
+
+# Where job logs are spooled while being parsed. Must be a **disk-backed** emptyDir, not a
+# tmpfs one: tmpfs pages are unreclaimable and charged like anonymous memory, which would
+# undo the whole point of writing them out.
+SPOOL_DIR = os.environ.get("SPOOL_DIR", "/tmp")
 
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
 
@@ -424,8 +442,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def gh_job_log(job_id):
-    """Fetch a job's log. Returns None when the 90-day window has passed.
+def gh_job_log(job_id, spool):
+    """Stream a job's log to `spool`. Returns True, or False when it is past the 90-day window.
+
+    **Streamed to a file rather than returned as a string, deliberately.** Holding the log in
+    memory meant a 20 MiB log (the harvester's own notes cite one) cost ~49 MiB of *anonymous*
+    memory -- the string plus the ~180k `str` objects `splitlines()` builds. Anonymous memory
+    is unreclaimable without swap, so under a container limit the kernel's only move is an OOM
+    kill.
+
+    Spooled to `/tmp`, which is a disk-backed `emptyDir`, those same bytes are **page cache**:
+    still charged to the cgroup, but *reclaimable*, so memory pressure evicts them instead of
+    killing the pod. The parse then holds one line at a time. This is why the memory limit can
+    be small rather than merely generous.
 
     The Actions API answers with a 302 to a SAS-signed blob URL on
     `*.blob.core.windows.net`, and that URL must be fetched **without** the Authorization
@@ -456,17 +485,30 @@ def gh_job_log(job_id):
     try:
         with opener.open(req, timeout=120) as resp:
             # No redirect (unusual, but harmless): the body is the log itself.
-            return resp.read().decode("utf-8", "replace")
+            _spool(resp, spool)
+            return True
     except urllib.error.HTTPError as exc:
         if exc.code in (410, 404):
-            return None
+            return False
         if exc.code not in (301, 302, 303, 307, 308):
             raise HttpError(exc.code, exc.read().decode("utf-8", "replace")) from exc
         location = exc.headers.get("Location")
         if not location:
             raise HttpError(exc.code, "redirect without Location") from exc
-    _, raw, _ = _request(location)
-    return raw.decode("utf-8", "replace")
+    signed = urllib.request.Request(location)
+    signed.add_header("User-Agent", USER_AGENT)
+    with urllib.request.urlopen(signed, timeout=120) as resp:
+        _spool(resp, spool)
+    return True
+
+
+def _spool(resp, path):
+    """Copy a response body to disk in fixed-size chunks, never whole."""
+    raw = resp
+    if resp.headers.get("Content-Encoding") == "gzip":
+        raw = gzip.GzipFile(fileobj=resp)
+    with open(path, "wb") as fh:
+        shutil.copyfileobj(raw, fh, 65536)
 
 
 # --------------------------------------------------------------------------------------
@@ -772,37 +814,40 @@ def collect_job(suite, run, job, fetch_log, stats):
     seen_instruments = set()
     instr = "not-fetched"
     if fetch_log and completed:
-        raw = gh_job_log(job["id"])
-        if raw is None:
+        spool = os.path.join(SPOOL_DIR, "job.log")
+        if not gh_job_log(job["id"], spool):
             stats["logs_gone"] += 1
             instr = "log-unavailable"
         else:
             stats["logs_read"] += 1
             entries = {}
-            for raw_line in raw.splitlines():
-                clean = ANSI_RE.sub("", raw_line).replace("\r", "").lstrip(BOM)
-                match = TS_RE.match(clean)
-                if not match:
-                    continue
-                ts_text, body = match.group(1), match.group(2).strip()
-                if not body:
-                    continue
-                instrument, parser, rest = classify(body)
-                if instrument is None:
-                    continue
-                fields = parse_fields(parser, rest)
-                if fields:
-                    parsed += 1
-                else:
-                    unparsed += 1
-                meta = dict(base)
-                meta.update(fields)
-                entries.setdefault(instrument, []).append((rfc3339_to_ns(ts_text), body, meta))
-                seen_instruments.add(instrument)
-                if instrument == "contention":
-                    seen_instruments.add("contention_" + fields.get("boundary", "?"))
-            for instrument, values in entries.items():
-                out[(suite, instrument)] = values
+            # Iterated off disk one line at a time. The file's bytes are reclaimable page
+            # cache; only the current line is anonymous.
+            with open(spool, "r", encoding="utf-8", errors="replace") as fh:
+              for raw_line in fh:
+                  clean = ANSI_RE.sub("", raw_line).replace("\r", "").lstrip(BOM)
+                  match = TS_RE.match(clean)
+                  if not match:
+                      continue
+                  ts_text, body = match.group(1), match.group(2).strip()
+                  if not body:
+                      continue
+                  instrument, parser, rest = classify(body)
+                  if instrument is None:
+                      continue
+                  fields = parse_fields(parser, rest)
+                  if fields:
+                      parsed += 1
+                  else:
+                      unparsed += 1
+                  meta = dict(base)
+                  meta.update(fields)
+                  entries.setdefault(instrument, []).append((rfc3339_to_ns(ts_text), body, meta))
+                  seen_instruments.add(instrument)
+                  if instrument == "contention":
+                      seen_instruments.add("contention_" + fields.get("boundary", "?"))
+              for instrument, values in entries.items():
+                  out[(suite, instrument)] = values
             instr = instrumentation_verdict(seen_instruments, parsed + unparsed)
 
     # The synthetic OUTCOME line: the run's verdict, joinable to every line above by
@@ -1029,6 +1074,9 @@ def main():
             elif verdict == "deferred":
                 deferred += 1
             slot_jobs += 1
+            if sum(len(v) for v in collected.values()) >= FLUSH_EVERY:
+                _flush(collected, stats, "baseline")
+                collected = {}
         _flush(collected, stats, "baseline")
     log(f"  baseline: window={days}d runs={len(baseline)} suite_jobs={slot_jobs} "
         f"scaffolding_skipped={skipped}")
@@ -1044,7 +1092,7 @@ def main():
             continue
         collected = {}
         runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
-        new = 0
+        new = entries = 0
         for run in runs:
             if known[suite].get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
                 continue
@@ -1067,7 +1115,10 @@ def main():
                     deferred += 1
                 if verdict != "known":
                     new += 1
-        entries = _flush(collected, stats, suite)
+                if sum(len(v) for v in collected.values()) >= FLUSH_EVERY:
+                    entries += _flush(collected, stats, suite)
+                    collected = {}
+        entries += _flush(collected, stats, suite)
         log(f"  {suite}: window={windows[suite]}d runs={len(runs)} "
             f"known={len(known[suite])} new_jobs={new} entries={entries}")
 

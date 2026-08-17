@@ -207,6 +207,7 @@ The ones worth knowing:
 | `META_LOOKBACK_DAYS` | `90` | Raise for a one-shot deep seed. Job metadata has no 90-day wall, so a single run at `365` gives the trend panels a year of real outcome history on day one. Do not exceed the retention period -- anything older is accepted and then deleted by the compactor. Instrument lines are capped separately and cannot be seeded past 90 days -- there is nothing to read. |
 | `LINES_LOOKBACK_DAYS` | `90` | Only lower it, to make a catch-up pass cheaper. Raising it buys `410`s. |
 | `MIN_LOOKBACK_DAYS` | `2` | The floor on a healthy suite's re-read window. |
+| `FLUSH_EVERY_ENTRIES` | `2000` | How many entries to buffer before pushing. This is what bounds the pod's memory — peak RSS is flat at ~30 MiB from 6k entries to 77k because of it, where buffering a whole suite scaled with `MAX_LOG_FETCHES` and would have reached ~760 MiB. Lower it if you shrink the memory limit. |
 | `DRY_RUN` | unset | Parses and reports without pushing. |
 
 ## Retiring it
