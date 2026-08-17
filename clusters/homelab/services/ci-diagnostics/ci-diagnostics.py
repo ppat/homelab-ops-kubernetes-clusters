@@ -547,17 +547,30 @@ def cancel_reason(job_id):
     apart, and -- usefully here -- they outlive log retention.
 
     Called only for `cancelled` jobs, so it costs nothing on the overwhelming majority.
+
+    Two properties are copied deliberately from `ci/scripts/baseline-census.sh`, which solved
+    this first, and both matter:
+
+    * **The ceiling test comes first.** A job killed at the ceiling while a cancel was also in
+      flight is still a job that reached the ceiling.
+    * **An unrecognised message becomes its own value, not the generic one.** What would make
+      this wrong is GitHub rewording either string, and folding that into `cancelled` would
+      make the wrongness *invisible* -- the sample would quietly look better. `unclassified`
+      degrades to a visibly unread sample instead, which is the failure mode to prefer.
+
+    The match strings are the census's, verbatim, so the two agree by construction rather than
+    by coincidence.
     """
     try:
         notes = gh(f"repos/{REPO}/check-runs/{job_id}/annotations", per_page=50)
     except HttpError:
-        return "cancelled"
+        return "cancel_unclassified"
     text = " ".join(str(n.get("message", "")) for n in notes)
-    if "maximum execution time" in text or "exceeded the maximum" in text:
+    if "exceeded the maximum execution time" in text:
         return "timed_out"
-    if "higher priority waiting request" in text or "Canceling since" in text:
+    if "higher priority waiting request" in text:
         return "superseded"
-    return "cancelled"
+    return "cancel_unclassified"
 
 
 def plan_window(suite: str, now: datetime):
