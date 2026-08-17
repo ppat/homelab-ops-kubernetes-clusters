@@ -61,6 +61,18 @@ spec:
             # expansion. Load-bearing on this image -- Kyverno's add-ndots mutation forces
             # ndots:1, and musl (alpine) does not fall back to the search list once a name
             # has as many dots as ndots. Do not "clean it up".
+            # Curated landing dates, rendered as annotations on the dashboard. Version
+            # controlled here, beside the manifests, rather than derived from `sha` -- `sha`
+            # moves on every Renovate merge and would mark noise daily, burying the handful of
+            # changes anyone actually wants to read a trend against.
+            #
+            # Dates are the PR merge dates. Add a line when something lands that a future
+            # before/after would need to straddle; a handful a year is the expected rate.
+            - name: LANDING_MARKERS
+              value: >-
+                2026-08-15=composable prerequisite fixtures (#3693);
+                2026-08-16=node-count consolidation to single-node (#3713-#3716);
+                2026-08-17=MODE emitter lands (#3738), before this there are no MODE lines
             - name: LOKI_BASE_URL
               value: http://loki.logging.svc.cluster.local.:3100
             securityContext:
