@@ -829,7 +829,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "`prerequisite`, `chainsaw` and `job` are nested in reality -- prerequisite is inside the chainsaw phase, which is inside the job -- and the obvious chart is a stacked one showing where a regression lives.\n\n**That chart cannot be built from this data and this one is deliberately not it.** The prerequisite figure is a `T0+` offset, where `T0` is the earliest Ready transition in that run's own list; the chainsaw figure is `elapsed_s` measured from the suite's actual start; the job figure is GitHub's wall clock. Three different origins. Subtracting or stacking them produces a number that means nothing, and LogQL cannot join streams to reconcile them.\n\nSo read these as **three independent trends on a shared time axis**: if the job line rises and the chainsaw line does not, the regression is in fixed overhead (checkout, `kind create`, `flux install`); if chainsaw rises with prerequisite flat, it is in the validates. That inference is sound. Reading a gap between the lines as a duration is not.\n\nA true decomposition is possible but needs the ingester to compute it: `READY` carries absolute `ready_at` timestamps, so the phase boundaries can be derived at write time. Until then this panel is the honest version.",
+      "description": "A real decomposition: `setup + prerequisite + validates + teardown` sums to the job's wall clock. Stacked, so the height is the job and each band is where the time went.\n\n**This is the panel that answers 'which phase moved'**, and it is computed at ingest rather than in this query, because a query cannot do it. The three obvious figures have three different origins -- `t0_s` is relative to the earliest Ready transition in a run's own list, `elapsed_s` is measured from the suite's start, the job clock is GitHub's -- and they are only reconcilable against absolute timestamps. The ingester does that once per job and records **where each boundary came from** in an `origins` field, so measurement stays distinguishable from inference. `validates_s` in particular is a subtraction, not an observation: nothing emits it.\n\n**Mean, not median, and that is load-bearing for a stacked chart.** Means are additive, so the bands sum to the total; medians are not, and a stack of medians would draw a total no run ever had.\n\n**A phase that could not be derived is absent, never zero.** A run killed at the `timeout-minutes` ceiling emits none of the grammar; a run whose prerequisites never reached `Ready: True` has no prerequisite boundary. Those jobs contribute to `setup`/`chainsaw`/`teardown` and simply do not appear in the prerequisite and validates bands -- so a thinning band can mean 'faster' or 'more often underivable', and the honest reading needs the liveness stats at the top.\n\nThe decomposition self-checks: `setup + chainsaw + teardown - job` is emitted as `residual_s` and is 0 on every job measured so far, which is three independent clocks (GitHub's API, the Actions log, Kubernetes `lastTransitionTime`) agreeing.\n\nWhat it already shows: the prerequisite phase dominates. Measured on real jobs, 181-184s of a 183-205s chainsaw phase, with validates at 2-21s. That is the project's core mechanic made visible -- Flux applies the whole module at once, so whatever asserts first absorbs the convergence and everything after it returns instantly.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -844,7 +844,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 8,
+            "fillOpacity": 25,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -862,7 +862,7 @@
             "spanNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "none"
+              "mode": "normal"
             },
             "thresholdsStyle": {
               "mode": "off"
@@ -870,7 +870,7 @@
           },
           "mappings": [],
           "min": 0,
-          "noValue": "No phase data in range. Check the liveness stats at the top.",
+          "noValue": "No PHASE records in range. These are derived at ingest; check the liveness stats at the top.",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -915,8 +915,8 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.5, {job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | name=\"pre-requisites\" | kind=\"kustomization\" | unwrap t0_s [7d]) by ()",
-          "legendFormat": "prerequisite (T0-relative offset)",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | unwrap setup_s [7d]) by ()",
+          "legendFormat": "setup (checkout, kind, flux)",
           "queryType": "range",
           "range": true,
           "refId": "A"
@@ -927,8 +927,8 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.5, {job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | boundary=\"end\" | unwrap elapsed_s [7d]) by ()",
-          "legendFormat": "chainsaw phase",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | prerequisite_s != \"\" | unwrap prerequisite_s [7d]) by ()",
+          "legendFormat": "prerequisite phase",
           "queryType": "range",
           "range": true,
           "refId": "B"
@@ -939,14 +939,26 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.5, {job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" | duration_s != \"\" | unwrap duration_s [7d]) by ()",
-          "legendFormat": "whole job (GitHub wall clock)",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | validates_s != \"\" | unwrap validates_s [7d]) by ()",
+          "legendFormat": "validates",
           "queryType": "range",
           "range": true,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "editorMode": "code",
+          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | teardown_s != \"\" | unwrap teardown_s [7d]) by ()",
+          "legendFormat": "teardown",
+          "queryType": "range",
+          "range": true,
+          "refId": "D"
         }
       ],
-      "title": "The three phases, weekly median -- NOT a decomposition",
+      "title": "Where a job's time goes, weekly mean",
       "type": "timeseries"
     },
     {
@@ -1113,7 +1125,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 18,
         "x": 0,
         "y": 35
       },
@@ -1153,6 +1165,107 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "loki",
+        "uid": "$datasource"
+      },
+      "description": "The denominator of the panel beside this one: how many job outcomes each 28-day point is actually computed from, per suite.\n\n**It is here because a rate without its sample size is the reason that panel was cut once already.** At four scheduled runs per suite per day a 28-day point is about n=112, and a true 10% rate at n=112 has a 95% interval of roughly 5% to 17%. So a point moving from 8% to 14% is not a signal; a level that holds for months is.\n\nRead the two together: a rate whose denominator is also moving is a rate that changed for reasons of sampling, not of quality. Suites are path-filtered on PR, so their denominators genuinely do move when someone works on them -- which is exactly the case that would otherwise be misread.\n\nFor an exact rate use `ci/scripts/baseline-census.sh`, which reads job metadata that outlives logs and classifies ceiling kills properly.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "No OUTCOME samples in range.",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 35
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "13.1.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "editorMode": "code",
+          "expr": "sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [28d]))",
+          "legendFormat": "{{suite}}",
+          "queryType": "range",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Runs behind each rate point",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1160,7 +1273,7 @@
         "x": 0,
         "y": 43
       },
-      "id": 15,
+      "id": 16,
       "panels": [],
       "title": "3. What is about to break?",
       "type": "row"
@@ -1231,7 +1344,7 @@
         "x": 0,
         "y": 44
       },
-      "id": 16,
+      "id": 17,
       "options": {
         "legend": {
           "calcs": [
@@ -1301,7 +1414,7 @@
         "x": 12,
         "y": 44
       },
-      "id": 17,
+      "id": 18,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -1404,7 +1517,7 @@
         "x": 0,
         "y": 53
       },
-      "id": 18,
+      "id": 19,
       "options": {
         "legend": {
           "calcs": [
@@ -1447,7 +1560,7 @@
         "x": 0,
         "y": 61
       },
-      "id": 19,
+      "id": 20,
       "panels": [],
       "title": "4. Can I trust a comparison across this range?",
       "type": "row"
@@ -1558,7 +1671,7 @@
         "x": 0,
         "y": 62
       },
-      "id": 20,
+      "id": 21,
       "options": {
         "legend": {
           "calcs": [

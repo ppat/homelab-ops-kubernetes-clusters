@@ -334,6 +334,7 @@ KNOWN_PREFIXES = {g[0] for g in GRAMMAR}
 # grammar and are named so they cannot be mistaken for it.
 INSTRUMENT_OUTCOME = "outcome"
 INSTRUMENT_MARKER = "marker"
+INSTRUMENT_PHASE = "phase"
 
 # Curated landing dates, rendered as Grafana annotations on the dashboard.
 #
@@ -827,6 +828,79 @@ def known_attempts(suite: str, days: int, now: datetime):
     return seen
 
 
+def derive_phases(job, marks):
+    """Split a job's wall clock into setup / prerequisite / validates / teardown.
+
+    `prerequisite` is inside `chainsaw` is inside `job`, and that nesting is the core model of
+    this whole workstream -- "which phase moved?" is the question the archive exists to answer.
+    A LogQL query cannot answer it, because the three obvious figures have three different
+    origins: `t0_s` is relative to the earliest Ready transition in a run's own list, `elapsed_s`
+    is measured from the suite's start, and the job clock is GitHub's. **They are only
+    reconcilable against absolute timestamps, and only at write time**, which is here.
+
+    The absolute clocks used:
+
+      job start/end       GitHub's `started_at` / `completed_at`
+      chainsaw start/end  the Actions log timestamp of the CONTENTION start / end lines
+      prerequisite end    `ready_at` on the READY line for the pre-requisites Kustomization,
+                          which is a Kubernetes `lastTransitionTime` from the kind cluster --
+                          same kernel, same host, so the same clock as the runner's
+
+    **Each field records where it came from** (`origins=`), because a future reader has to be
+    able to tell measurement from inference. `validates_s` in particular is a **subtraction**,
+    not an observation: nothing emits it.
+
+    **A phase that cannot be derived is omitted, never zeroed.** A run killed at the
+    `timeout-minutes` ceiling emits none of the grammar; a run that dies early has no
+    `CONTENTION end`. Rendering those as 0 would draw a decomposition that lies -- the stack
+    would still sum to the job clock while attributing the missing time to the wrong phase.
+
+    `residual_s` is a self-check, and it is the reason to trust the rest: setup + chainsaw +
+    teardown must equal the job clock. A non-zero residual means one of the three clocks
+    disagrees, and it is emitted rather than hidden so that disagreement is visible instead of
+    silently absorbed.
+    """
+    out, origins = {}, []
+    started, completed = job.get("started_at"), job.get("completed_at")
+    job_ns = c_start = c_end = prereq_ns = None
+    if started and completed:
+        job_ns = (iso_to_ns(started), iso_to_ns(completed))
+        out["job_s"] = str(round((job_ns[1] - job_ns[0]) / 1e9))
+        origins.append("job:github-api")
+    c_start, c_end = marks.get("contention_start"), marks.get("contention_end")
+    prereq_ns = marks.get("prereq_ready")
+
+    if job_ns and c_start is not None:
+        setup = (c_start - job_ns[0]) / 1e9
+        if setup >= 0:
+            out["setup_s"] = str(round(setup))
+            origins.append("setup:api-to-contention-start")
+    if c_start is not None and c_end is not None:
+        out["chainsaw_s"] = str(round((c_end - c_start) / 1e9))
+        origins.append("chainsaw:contention-timestamps")
+    if job_ns and c_end is not None:
+        teardown = (job_ns[1] - c_end) / 1e9
+        if teardown >= 0:
+            out["teardown_s"] = str(round(teardown))
+            origins.append("teardown:contention-end-to-api")
+    if c_start is not None and prereq_ns is not None:
+        prereq = (prereq_ns - c_start) / 1e9
+        if prereq >= 0:
+            out["prerequisite_s"] = str(round(prereq))
+            origins.append("prerequisite:k8s-readyat-minus-contention-start")
+            if "chainsaw_s" in out:
+                validates = float(out["chainsaw_s"]) - prereq
+                if validates >= 0:
+                    out["validates_s"] = str(round(validates))
+                    origins.append("validates:chainsaw-minus-prerequisite")
+    if "job_s" in out and {"setup_s", "chainsaw_s", "teardown_s"} <= set(out):
+        residual = (float(out["job_s"]) - float(out["setup_s"])
+                    - float(out["chainsaw_s"]) - float(out["teardown_s"]))
+        out["residual_s"] = str(round(residual))
+    out["origins"] = ",".join(origins) if origins else "none"
+    return out
+
+
 def instrumentation_verdict(seen, line_count):
     """Did this job's instrumentation actually work? Tested by necessary consequence.
 
@@ -917,6 +991,8 @@ def collect_job(suite, run, job, fetch_log, stats):
 
     parsed = unparsed = 0
     seen_instruments = set()
+    # Absolute clocks for the phase decomposition, collected as the log is parsed.
+    marks = {}
     instr = "not-fetched"
     if fetch_log and completed:
         spool = os.path.join(SPOOL_DIR, "job.log")
@@ -949,8 +1025,28 @@ def collect_job(suite, run, job, fetch_log, stats):
                   meta.update(fields)
                   entries.setdefault(instrument, []).append((rfc3339_to_ns(ts_text), body, meta))
                   seen_instruments.add(instrument)
+                  entry_ns = rfc3339_to_ns(ts_text)
                   if instrument == "contention":
-                      seen_instruments.add("contention_" + fields.get("boundary", "?"))
+                      boundary = fields.get("boundary", "?")
+                      seen_instruments.add("contention_" + boundary)
+                      # First start, last end: `CONTENTION end` is emitted by both the
+                      # passing step and the shared catch, so a failing run carries two.
+                      if boundary == "start":
+                          marks["contention_start"] = min(
+                              marks.get("contention_start", entry_ns), entry_ns)
+                      elif boundary == "end":
+                          marks["contention_end"] = max(
+                              marks.get("contention_end", entry_ns), entry_ns)
+                  elif (instrument == "ready" and fields.get("kind") == "kustomization"
+                        and fields.get("name") == "pre-requisites"):
+                      # Only a prerequisite phase that actually completed marks a boundary.
+                      # `Ready: Unknown` means it never converged, so there is no end to
+                      # measure and the phase is omitted rather than guessed at.
+                      if fields.get("ready_state") == "True" and fields.get("ready_at"):
+                          try:
+                              marks["prereq_ready"] = rfc3339_to_ns(fields["ready_at"])
+                          except ValueError:
+                              pass
               for instrument, values in entries.items():
                   out[(suite, instrument)] = values
             instr = instrumentation_verdict(seen_instruments, parsed + unparsed)
@@ -979,6 +1075,17 @@ def collect_job(suite, run, job, fetch_log, stats):
     )
     anchor = completed or started or run.get("created_at")
     out.setdefault((suite, INSTRUMENT_OUTCOME), []).append((iso_to_ns(anchor), line, meta))
+
+    phases = derive_phases(job, marks)
+    if len(phases) > 1:  # more than just `origins`
+        pmeta = dict(base); pmeta.update(phases)
+        ordered = ("job_s", "setup_s", "prerequisite_s", "validates_s", "chainsaw_s",
+                   "teardown_s", "residual_s")
+        pline = "PHASE " + " ".join(f"{k}={phases[k]}" for k in ordered if k in phases) \
+            + f" origins={phases['origins']}"
+        out.setdefault((suite, INSTRUMENT_PHASE), []).append(
+            (iso_to_ns(anchor) + 1, pline, pmeta))
+
     stats["unparsed"] += unparsed
     return out
 
