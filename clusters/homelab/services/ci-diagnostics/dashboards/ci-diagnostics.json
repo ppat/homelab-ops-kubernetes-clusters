@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Longitudinal series over the chainsaw suites' published diagnostics grammar in ppat/homelab-ops-kubernetes-apps -- READY, MODE, PULL, CONTENTION, RESTART, UNCENSORED and friends -- kept past the 90 days GitHub retains job logs.\n\nFed by the ci-diagnostics CronJob in its own namespace, which pulls from the GitHub Actions API on the hour, parses the grammar documented in that repo's TESTING.md, and pushes each line to Loki verbatim with its parse in structured metadata. Nothing is pushed from CI; there is no inbound path.\n\nWHAT THIS PAGE IS FOR. Four questions, one per row, in the order a human reaches for them: which suites are degrading and since when; whether the bimodal prerequisite phase is drifting; whether a change moved image-pull cost; and whether a bad day was contention or something structural. A panel that answers none of those does not belong here, however interesting its data.\n\nWHAT IT IS NOT FOR. Reading a single slot -- the scheduled-baseline run page already prints a per-slot table for free, and reproducing it here would be a worse version of something that already exists. This page only earns its place across months.\n\nTHE TWO THINGS MOST LIKELY TO MISLEAD YOU. First, sample size: four scheduled runs per suite per day means a daily rate is almost entirely noise, so rates are drawn over rolling windows with their denominator shown. Second, population: `schedule` is the controlled sample and everything else is contaminated by whatever the branch changed. The population variable defaults to `schedule` for that reason.\n\nDeliberately no alert rules. This estate leaves AlertManager unwired until there is an AI triage path, so the three freshness stats at the top are the detection mechanism, not a backstop to one -- read them first.",
+  "description": "Longitudinal series over the chainsaw suites' published diagnostics grammar in ppat/homelab-ops-kubernetes-apps -- READY, MODE, PULL, CONTENTION, RESTART, UNCENSORED and friends -- kept past the 90 days GitHub retains job logs.\n\nFed by the ci-diagnostics CronJob in its own namespace, which pulls from the GitHub Actions API on the hour, parses the grammar documented in that repo's TESTING.md, and pushes each line to Loki verbatim with its parse in structured metadata. Nothing is pushed from CI; there is no inbound path.\n\nWHAT THIS PAGE IS FOR. **Before/after evaluation around a known date.** You changed something -- parallel pulls, a node count, a fixture -- and you want to know whether it moved image-pull cost, whether the bimodal prerequisite phase drifted, and whether a bad stretch was contention or something structural. Set the time range to straddle the change and read across it. Underneath that, it is an archive: these lines do not exist anywhere else after 90 days.\n\nWHAT IS DELIBERATELY NOT HERE. Pass/fail rates and job durations. Those are recomputable from the GitHub API forever and `ci/scripts/baseline-census.sh` already computes them better and on demand, with the `cancelled`-vs-ceiling-kill distinction handled properly. Panels for them were built and then deleted: at four scheduled runs per suite per day a rate here could not resolve a change anyone would act on, and drawing it anyway would have been precision this page cannot support. The `outcome` data is still **ingested**, because it is the join key -- *were the slow-`MODE` draws the ones that failed?* is unaskable without it -- but joining is what it is for, not trending.\n\nWHAT IT IS NOT FOR. Reading a single slot -- the scheduled-baseline run page already prints a per-slot table for free, and reproducing it here would be a worse version of something that already exists. This page only earns its place across months.\n\nTHE TWO THINGS MOST LIKELY TO MISLEAD YOU. First, **a young series looks broken**: the page opens on 90 days, and a few hours of data drawn on a 90-day axis is a hairline at the right edge, indistinguishable from nothing. Narrow the range. Second, **population**: `schedule` is the controlled sample -- fixed slots, always `main` -- and everything else is contaminated by whatever the branch changed. The population variable defaults to `schedule` for that reason, and deliberately does not reach the two drill-down panels.\n\nDeliberately no alert rules. This estate leaves AlertManager unwired until there is an AI triage path, so the three freshness stats at the top are the detection mechanism, not a backstop to one -- read them first.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -266,290 +266,6 @@
       },
       "id": 5,
       "panels": [],
-      "title": "Which suites are degrading, and since when?",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "A one-day trailing window re-evaluated at every step, so this is a rolling mean and not calendar-day buckets -- a level shift shows up smoothed over a day rather than as a cliff. It is the GitHub **job** duration: checkout, mise, `kind create`, `flux install`, the whole chainsaw run and teardown. Not the chainsaw phase alone; for that, read `elapsed_s` on the CONTENTION end line.\n\nRead left-to-right, not by height. A suite sitting high is usually just a big suite; the finding is a level shift, and where a band *changes* is the reliable reading.\n\nAll suites are plotted, deliberately, with no `topk`. The set is bounded at ~17, so ranking buys nothing and costs the one thing this panel is for: LogQL evaluates `topk` per step, so a series can enter and leave the top-N mid-range and 'since when' stops being answerable. Fifteen flat lines cost a pixel row.\n\nPinned to 90 days regardless of the time picker, because the trend is the capability this store exists for and following a 24h default would surrender it.\n\n**Successful runs only, and that filter is load-bearing rather than tidy.** A failed run stops early, so its wall-clock is censored at whatever point it died. Pooling those in would make a *rise* in the failure rate show up here as a *fall* in duration -- a chart that moves in the opposite direction to the thing that actually happened. Read this beside the failure rate below, never instead of it.\n\nWhat it still cannot tell you: suite *content* changes over months (apps-ai went 13 -> 27 validate steps while #3415 was open), so a step change may be a suite that grew rather than a suite that slowed. Check the commit range before concluding either.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No OUTCOME samples in range. Confirm 'Jobs ingested' at the top of this page is non-zero before reading this as a quiet fleet.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 24,
-        "x": 0,
-        "y": 6
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome = \"success\" | duration_s != \"\" | unwrap duration_s [1d]) by (suite)",
-          "legendFormat": "{{suite}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "timeFrom": "90d",
-      "title": "Job wall-clock by suite, 1-day rolling mean (90d)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "Non-success OUTCOME entries divided by all OUTCOME entries, per suite, over a rolling ${window}.\n\n`outcome` is not the raw GitHub conclusion. GitHub reports a `timeout-minutes` ceiling kill as `cancelled`, identically to a concurrency cancel, which is how a census once returned 'zero ceiling kills in 8508 runs' while two jobs had in fact been killed at the ceiling. The ingester splits them at write time using the job's check-run annotations, into `timed_out` and `superseded`. **`superseded` counts as a failure here**, which overstates the rate slightly on busy PR days -- filter the population to `schedule` to remove that entirely.\n\n**Sample size is the thing to hold in mind.** The scheduled fleet gives four runs per suite per day, so a 7-day window is n=28 per suite and a 28-day window is n=112. At n=28 a true 10% rate has a 95% interval of roughly 0 to 24%: day-to-day movement in this line is mostly noise, and only a shift sustained across weeks means anything. That is what the `window` variable is for, and the panel beside it shows the denominator so the control cannot hide its own size.\n\nAttempts are counted individually and re-runs are included. That is deliberate: the runs API returns only the latest attempt by default, which makes a failure later re-run green invisible -- the exact blindness that once hid 130 failures repo-wide.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "noValue": "No OUTCOME samples in range. Check the freshness stats at the top of this page.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 0,
-        "y": 15
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome != \"success\" [${window}])) / sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [${window}]))",
-          "legendFormat": "{{suite}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "timeFrom": "90d",
-      "title": "Failure rate by suite, rolling ${window}",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "The denominator of the panel beside this one: how many job outcomes the rolling ${window} actually contains, across the selected suites and population.\n\nIt exists because a rate is unreadable without it. Widening `window` steadies the line by pooling more runs, and a control that can make a problem look calmer has to display its own size. Divide by the number of selected suites for the per-suite n.\n\nA rate computed on fewer than ~30 runs per suite should be read as a direction, not a number.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 15
-      },
-      "id": 8,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [${window}])) or vector(0)",
-          "instant": true,
-          "queryType": "instant",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Runs behind that rate (${window})",
-      "type": "stat"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 23
-      },
-      "id": 9,
-      "panels": [],
       "title": "Is the prerequisite phase's fast/slow mode drifting?",
       "type": "row"
     },
@@ -617,9 +333,9 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 6
       },
-      "id": 10,
+      "id": 6,
       "options": {
         "legend": {
           "calcs": [
@@ -651,7 +367,6 @@
           "refId": "A"
         }
       ],
-      "timeFrom": "90d",
       "title": "Prerequisite-phase mode, runs in the trailing day",
       "type": "timeseries"
     },
@@ -719,9 +434,9 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 6
       },
-      "id": 11,
+      "id": 7,
       "options": {
         "legend": {
           "calcs": [
@@ -753,8 +468,7 @@
           "refId": "A"
         }
       ],
-      "timeFrom": "90d",
-      "title": "Controller -> webhook gap, every run (90d)",
+      "title": "Controller -> webhook gap, every run",
       "type": "timeseries"
     },
     {
@@ -763,9 +477,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 15
       },
-      "id": 12,
+      "id": 8,
       "panels": [],
       "title": "Did a change actually move image-pull cost?",
       "type": "row"
@@ -864,9 +578,9 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 16
       },
-      "id": 13,
+      "id": 9,
       "options": {
         "legend": {
           "calcs": [
@@ -910,7 +624,6 @@
           "refId": "B"
         }
       ],
-      "timeFrom": "90d",
       "title": "Image pull time, trailing-day p90: kubelet alone vs including queue wait",
       "type": "timeseries"
     },
@@ -920,9 +633,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 25
       },
-      "id": 14,
+      "id": 10,
       "panels": [],
       "title": "Was a bad day contention, or something structural?",
       "type": "row"
@@ -988,12 +701,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
+        "h": 9,
+        "w": 12,
         "x": 0,
-        "y": 44
+        "y": 26
       },
-      "id": 15,
+      "id": 11,
       "options": {
         "legend": {
           "calcs": [
@@ -1037,7 +750,6 @@
           "refId": "B"
         }
       ],
-      "timeFrom": "90d",
       "title": "Runner network throughput at run boundaries (PROXY)",
       "type": "timeseries"
     },
@@ -1102,12 +814,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 44
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 26
       },
-      "id": 16,
+      "id": 12,
       "options": {
         "legend": {
           "calcs": [
@@ -1151,110 +863,7 @@
           "refId": "B"
         }
       ],
-      "timeFrom": "90d",
       "title": "Runner fsync latency at run boundaries (PROXY)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "Non-success OUTCOME entries per day, broken out by the discriminated `outcome` rather than GitHub's raw conclusion, so a ceiling kill (`timed_out`) is visibly not the same event as a concurrency cancel (`superseded`).\n\nThis panel exists to be read *beside* the two contention panels on the same crosshair. It is the 'bad day' axis those two are trying to explain, and on its own it says only that something happened.\n\nCounts, not a rate -- the rate lives in the degradation row above with its sample size attached. Here the raw count is what lines up against a contention excursion.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 25,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No failures in range -- which on this panel is genuinely good news, provided the freshness stats at the top of this page are non-zero.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 44
-      },
-      "id": 17,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum by (outcome) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome != \"success\" [1d]))",
-          "legendFormat": "{{outcome}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "timeFrom": "90d",
-      "title": "Failed jobs, trailing day",
       "type": "timeseries"
     },
     {
@@ -1263,9 +872,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 35
       },
-      "id": 18,
+      "id": 13,
       "panels": [],
       "title": "What actually happened? (drill-down; the panels above are summaries)",
       "type": "row"
@@ -1280,9 +889,9 @@
         "h": 11,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 36
       },
-      "id": 19,
+      "id": 14,
       "options": {
         "dedupStrategy": "none",
         "enableInfiniteScrolling": true,
@@ -1321,9 +930,9 @@
         "h": 15,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 47
       },
-      "id": 20,
+      "id": 15,
       "options": {
         "dedupStrategy": "none",
         "enableInfiniteScrolling": true,
@@ -1453,37 +1062,6 @@
         "type": "custom"
       },
       {
-        "current": {
-          "text": "28d",
-          "value": "28d"
-        },
-        "description": "Rolling window for the failure rate. Longer pools more runs and steadies the line at the cost of resolution: at four scheduled runs per suite per day, 7d is n=28 per suite and 28d is n=112. The stat beside that panel shows the resulting denominator.",
-        "includeAll": false,
-        "label": "Rate window",
-        "multi": false,
-        "name": "window",
-        "options": [
-          {
-            "selected": false,
-            "text": "7d",
-            "value": "7d"
-          },
-          {
-            "selected": false,
-            "text": "14d",
-            "value": "14d"
-          },
-          {
-            "selected": true,
-            "text": "28d",
-            "value": "28d"
-          }
-        ],
-        "query": "7d,14d,28d",
-        "skipUrlSync": false,
-        "type": "custom"
-      },
-      {
         "allValue": ".*",
         "current": {
           "text": [
@@ -1545,7 +1123,7 @@
     ]
   },
   "time": {
-    "from": "now-24h",
+    "from": "now-90d",
     "to": "now"
   },
   "timepicker": {},
