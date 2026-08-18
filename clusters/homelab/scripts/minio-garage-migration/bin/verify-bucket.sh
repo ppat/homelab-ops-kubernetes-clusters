@@ -20,7 +20,7 @@
 #          Catches: silent corruption, encoding mangling, truncated transfers, wrong
 #          object at a key -- for any object that happens to land in the sample.
 #          Does NOT detect: a defect confined to objects outside the sample -- roughly a
-#          SAMPLE_SIZE/object-count chance of landing in it (5,000/~198,000 =~ 2.5% for
+#          SAMPLE_SIZE/object-count chance of landing in it (5,000/209,406 =~ 2.4% for
 #          a single bad object at the real bucket's scale -- current-version objects
 #          only, since that's what both src and dst list post-copy), a defense against
 #          systematic defects, not a needle-in-a-haystack single corruption.
@@ -28,10 +28,10 @@
 #   tier2  Full-bucket hash comparison (every current-version object, both sides).
 #          Catches: everything tier1 catches, with certainty instead of a sample bound.
 #          Cost: because S3 returns the MD5 as the ETag for any non-multipart PUT (true
-#          for ~100% of these objects -- 95.4% are under 1KB, none near the 200MiB
-#          multipart cutoff), rclone compares the ETag exposed by ListObjectsV2/HEAD on
-#          both sides without downloading object bodies. This is a LIST/HEAD-cost
-#          operation, NOT "read ~0.8-1GB twice" -- verified empirically in
+#          for ~100% of these objects -- 73.6KB mean, three orders of magnitude below
+#          the 200MiB multipart cutoff), rclone compares the ETag exposed by
+#          ListObjectsV2/HEAD on both sides without downloading object bodies. This is a
+#          LIST/HEAD-cost operation, NOT "read 15.4GB twice" -- verified empirically in
 #          test/test-etag-check-cost.sh, which shows check duration scales with object
 #          count, not bucket byte size.
 set -eu

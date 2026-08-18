@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Generate synthetic MinIO fixture data matching the real homelab-loki-chunks shape:
-   - 95.4% of objects under 1KB, remainder large enough to pull the mean to ~3.9KB
+   - 95.4% of objects under 1KB, remainder large enough to pull the mean to ~3.9KB.
+     This size shape came from the bucket's version-inclusive size distribution and is
+     smaller than live objects, whose measured mean is 73.6KB (2026-08-18, 15.42GB over
+     209,406 live keys). It is left as-is deliberately: what these tests establish is
+     copy correctness and that verification cost tracks object count, not byte size --
+     neither of which the per-object size sets. Do not read byte-rates measured here as
+     production estimates.
    - prefix-clustered keyspace (Zipfian-weighted "tables"), not uniform
    - a fraction of keys carrying noncurrent versions (overwrite) and delete markers (delete)
      on a versioned bucket, so the current-versions-only copy behavior is provable.
