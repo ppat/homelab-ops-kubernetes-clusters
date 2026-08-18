@@ -7,8 +7,12 @@
 # fatal on every single request (AuthorizationHeaderMalformed, no client-side retry --
 # apps#3611 comment 5282296514, reproduced live against loki-0 with 278 restarts). That
 # failure is loud, not silent -- but "loud" only helps if something checks for it before
-# the bulk copy starts, rather than 40 minutes into a 3.44M-object pass. This is that
-# check, and it costs about one second.
+# the bulk copy starts, rather than partway into a pass against the real bucket. The real
+# bucket has ~198,000 live (current-version) objects, not the 3.44M once assumed -- but
+# its LIST phase still has to walk ~3.27M accumulated delete markers server-side to filter
+# down to those keys (see verify-bucket.sh), so its wall-clock cost is not the same as a
+# ~198,000-object bucket's and has not been measured. This is that check, and it costs
+# about one second regardless.
 set -eu
 
 BUCKET="${1:?usage: preflight-canary.sh <bucket>}"

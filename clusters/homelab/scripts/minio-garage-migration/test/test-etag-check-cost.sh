@@ -4,7 +4,7 @@
 #
 # Method: run `rclone check` against buckets of different object counts and different
 # total byte sizes, and compare objects/s vs MB/s across them. If check duration tracks
-# object count and not byte size, the "reading 13.5GB twice" objection to full
+# object count and not byte size, the "reading ~0.8-1GB twice" objection to full
 # verification does not apply here. This does NOT claim rclone check never reads bytes
 # in general (multipart objects, or a backend that can't expose a compatible hash, would
 # force a real download-and-hash fallback) -- it claims it for THIS shape of data, and
