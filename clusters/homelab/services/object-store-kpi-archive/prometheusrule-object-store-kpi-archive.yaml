@@ -1,0 +1,34 @@
+---
+# Freshness of the disk-usage KPI archiver (object-store-kpi-archive CronJob in
+# this same directory). kube_cronjob_status_last_successful_time is already
+# exported by kube-state-metrics (observability-core) - no new instrumentation.
+#
+# This is the only signal the archiver has, which is what the CronJob's 6h
+# cadence is sized around: a rising value means the KPI has stopped being
+# copied out of Prometheus, and every hour it keeps rising is an hour closer to
+# data ageing out of the TSDB unarchived. `kubectl logs` on the job tells apart
+# why (a dead detector, no series in scope, an unwritable archive - each has
+# its own exit code, see object-store-kpi-archive.py), which is enough for a
+# homelab with no on-call.
+#
+# No alert rule - this estate leaves AlertManager unwired until there is an AI
+# triage path, and this project follows that convention rather than being the
+# exception (apps#3611, "Scope: what is explicitly NOT being done").
+#
+# Trial-scoped (apps#3611): retire alongside the CronJob - see the retirement
+# note in cronjob-object-store-kpi-archive.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/name: object-store-kpi-archive
+  name: object-store-kpi-archive
+  namespace: monitoring
+spec:
+  groups:
+  - name: object-store-kpi-archive
+    rules:
+    - record: object_store:kpi_archive_seconds_since_success
+      expr: |
+        time() - kube_cronjob_status_last_successful_time{namespace="monitoring", cronjob="object-store-kpi-archive"}

@@ -1,0 +1,143 @@
+---
+# Retention-proof archive of the MinIO->Garage trial's headline disk-usage KPI
+# (apps#3611). Prometheus retention on this cluster is 720h - exactly the
+# length of the trial - so day one ages out of the TSDB as day thirty arrives,
+# and the KPI cannot be backfilled once MinIO is decommissioned. This copies
+# the two-to-three series that matter into a ConfigMap that does not depend on
+# Prometheus retention at all.
+#
+# object-store-kpi-archive.py carries the reasoning: why the first run
+# backfills instead of starting from deployment, why the query selects by
+# namespace rather than by PVC name, why the merge is append-only, and why an
+# empty result is never treated as a negative result. Read it before changing
+# anything here - several values in this file are load-bearing for claims made
+# there.
+#
+# CI cannot exercise any of this. lint/static-analysis/diff-changes prove the
+# YAML is well-formed and prove nothing about whether the archiver works -
+# there is no Prometheus and no apiserver in CI. The executable evidence is
+# tests/falsification-harness.py in this directory, which drives the script
+# into each failure it claims to detect; run it before trusting a change here.
+#
+# Cluster-specific, not a module: it names this cluster's namespaces and this
+# cluster's trial, so it lives in services/ where retiring it is deleting a
+# directory rather than cutting a module release - see
+# clusters/homelab/README.md#cluster-specific-services.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: object-store-kpi-archive
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: object-store-kpi-archive
+spec:
+  # Forbid, not Replace: a run that is killed mid-write could leave the archive
+  # ConfigMap's resourceVersion moving under a second writer. The script
+  # already survives that (conditional update, retry on 409), so this is the
+  # cheap outer guard rather than the only one - see "Append, never overwrite"
+  # in the script.
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 8
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: object-store-kpi-archive
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: object-store-kpi-archive
+        spec:
+          serviceAccountName: object-store-kpi-archive
+          automountServiceAccountToken: true
+          containers:
+          - name: object-store-kpi-archive
+            image: python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc
+            command: ["python3", "/scripts/object-store-kpi-archive.py"]
+            env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            volumeMounts:
+            - mountPath: /scripts
+              name: script
+              readOnly: true
+            - mountPath: /tmp
+              name: temp
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 11111
+            runAsGroup: 11111
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: script
+            configMap:
+              name: object-store-kpi-archive-script
+          - name: temp
+            emptyDir: {}
+      ttlSecondsAfterFinished: 604800  # 1 week
+  # Every 6 hours. Cadence and archive resolution are separate levers here: the
+  # archive's resolution is the query's 1h step regardless of how often this
+  # runs (see STEP_SECONDS in the script), so cadence buys only (a) how much
+  # observed-but-not-yet-archived KPI a Prometheus loss would cost, and (b) how
+  # quickly a silently broken job becomes visible via
+  # kube_cronjob_status_last_successful_time - the only signal it has, since
+  # this estate leaves AlertManager unwired deliberately and nothing pages.
+  #
+  # Daily would be enough for the trend itself; 6h costs one range query over
+  # three series and cuts both windows to a quarter. Full reasoning, including
+  # why the neighbouring loki-query-correctness CronJob's "do not change
+  # cadence mid-trial" constraint does NOT apply to this job, is in the
+  # script's "Why 6 hours" section.
+  #
+  # OVERLAP_SECONDS (48h) is what makes a missed run harmless: this cadence
+  # absorbs seven consecutive failures with no gap in the archive. Lengthening
+  # the schedule without lengthening the overlap reintroduces gaps.
+  schedule: "0 */6 * * *"
+  startingDeadlineSeconds: 43200  # 12 hours
+  successfulJobsHistoryLimit: 8
+  timeZone: Etc/UTC
+#
+# --- Retirement ------------------------------------------------------------
+#
+# This is trial instrumentation, not a service. Retire it once the
+# MinIO->Garage trial has reached its verdict and MinIO is decommissioned
+# (apps#3611; checklist apps#3644).
+#
+# EXPORT THE ARCHIVE FIRST. By then the ConfigMap holds the only surviving copy
+# of the pre-cutover MinIO curve - Prometheus will have aged it out, and it
+# cannot be recreated:
+#
+#   kubectl -n monitoring get configmap object-store-kpi-archive-data \
+#     -o jsonpath='{.data.samples}' > object-store-disk-usage.json
+#
+# Then remove it, in this order:
+#
+#   1. Delete this directory and its entry in services/kustomization.yaml.
+#   2. Delete the live objects by hand. Flux prune is disabled cluster-wide
+#      (clusters/homelab/kustomization.yaml patches every Kustomization to
+#      prune: false), so step 1 alone strands the CronJob, RBAC,
+#      PrometheusRule and generated script ConfigMap as orphans:
+#        kubectl -n monitoring delete cronjob,serviceaccount,role,rolebinding \
+#          object-store-kpi-archive
+#        kubectl -n monitoring delete prometheusrule object-store-kpi-archive
+#        kubectl -n monitoring delete configmap \
+#          -l app.kubernetes.io/name=object-store-kpi-archive,app.kubernetes.io/component=script
+#      The component=script selector matters: the archive ConfigMap carries
+#      component=archive precisely so this command cannot take the data with
+#      the machinery.
+#   3. Delete configmap/object-store-kpi-archive-data only after the export
+#      above is somewhere durable. It is not Flux-managed and never was - it is
+#      accumulated data, not desired state - so nothing else will remove it,
+#      which is deliberate: the data should outlive the job that collected it.
