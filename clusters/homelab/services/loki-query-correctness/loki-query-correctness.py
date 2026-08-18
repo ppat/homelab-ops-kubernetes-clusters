@@ -68,11 +68,17 @@ recapture needed for this PR):
   It also now parses a trailing `# comment` on a selector/priority/period
   value (both quoted and unquoted, and quote-aware so a `#` legitimately
   inside a quoted selector isn't mistaken for one) instead of feeding it
-  verbatim to the duration/int parsers - this is not hypothetical: it took
-  the CronJob down in production for hours (homelab-ops-kubernetes-
-  clusters#936 first added a rule with a trailing comment) before being
-  worked around by hand-editing the comments out of the config rather than
-  fixing the parser. See _yaml_scalar's docstring.
+  verbatim to the duration/int parsers. This defect was real and was
+  demonstrated by reproduction (see _yaml_scalar's docstring), but it was
+  caught in review on homelab-ops-kubernetes-clusters#936 and never merged
+  to main or deployed - #936's own PR body records the reproduction
+  ("main parses two rules, this branch raised") as a pre-merge check, and
+  the live record (kube_cronjob_status_last_successful_time, this
+  CronJob's own logs) shows no gap or error across that window. The fix
+  here is justified on class-removal grounds, not on repairing an
+  incident: a hand-rolled line parser meets a new YAML shape it can't
+  handle sooner or later, and comments were merely the shape #936 tried
+  first.
 - The retention guard's verify-time half now also reasons about streams the
   *baseline* recorded even if the live query returns nothing for them at
   all (a fully-deleted stream), not just streams the current query still
@@ -84,7 +90,12 @@ recapture needed for this PR):
 - A baseline ConfigMap this script can't compare against at all (wrong
   schema_version, or captured for a different QUERIES set) now exits
   EXIT_SCHEMA_INCOMPATIBLE instead of sharing EXIT_MISMATCH with a real
-  hash divergence - see the exit code comments.
+  hash divergence - see the exit code comments. main() also now catches
+  any exception that reaches it uncaught (e.g. a parser defect) and exits
+  EXIT_UNEXPECTED_ERROR instead of Python's default exit 1, which is the
+  same conflation by a different route: an uncaught exception used to be
+  numerically indistinguishable from EXIT_MISMATCH regardless of what
+  raised it.
 - GLOBAL_RETENTION's manually-duplicated pair (see its own comment below)
   is now enforced, not just documented: ci/scripts/check-loki-retention-
   pairing.sh fails CI if kustomizations/config-services.yaml's
@@ -97,6 +108,7 @@ import os
 import re
 import ssl
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -261,6 +273,17 @@ EXIT_BASELINE_EXPIRED = 4
 # its own code, the same way EXIT_RETENTION_GUARD and EXIT_BASELINE_EXPIRED
 # already do for their own not-actually-data-loss failure modes.
 EXIT_SCHEMA_INCOMPATIBLE = 5
+# Anything else: a parser exception (load_retention_rules, parse_duration_seconds),
+# a Loki/k8s-API failure not already wrapped in a RuntimeError, or a bug - any
+# exception that reaches main() uncaught. Without this guard, Python's default
+# uncaught-exception handling prints a traceback and exits 1 - numerically
+# identical to EXIT_MISMATCH, the exact conflation EXIT_SCHEMA_INCOMPATIBLE above
+# exists to prevent, arriving by a different route that isn't gated by any of the
+# checks above it (a retention-parser crash, for instance, happens before
+# verify_baseline ever compares a hash, yet used to exit identically to a real
+# divergence). The traceback still prints either way - main() doesn't swallow it,
+# only relabels the exit code and adds an explicit marker line ahead of it.
+EXIT_UNEXPECTED_ERROR = 6
 
 
 def k8s_request(method, path, body=None):
@@ -449,11 +472,12 @@ def _yaml_scalar(text):
     forbids it), so truncating at the first '#' anywhere would silently
     corrupt a selector - exactly the class of silent-wrong-answer this
     whole script exists to catch elsewhere, just relocated into its own
-    config parser. Learned the hard way: `period: 17520h  # 2y` in
-    loki-retention.yaml (homelab-ops-kubernetes-clusters#936) reached the
-    duration regex verbatim before this existed and took the CronJob down
-    for hours before it was noticed and the config was hand-edited around
-    it - see load_retention_rules's docstring.
+    config parser. Not hypothetical: a `period: 17520h  # 2y` line
+    reached the duration regex verbatim before this existed and raised
+    `unsupported duration format` when exercised - caught in review on
+    homelab-ops-kubernetes-clusters#936 (never merged, never deployed;
+    see load_retention_rules's docstring), but the underlying defect was
+    real and this closes the class it belongs to, not just that one line.
 
     Quoted values: the matching closing quote ends the value; anything
     after it must be empty or a comment, or this raises rather than
@@ -971,10 +995,20 @@ def main():
     import time
 
     now_ns = time.time_ns()
-    baseline = get_baseline()
-    if baseline is None:
-        return capture_baseline(now_ns)
-    return verify_baseline(baseline, now_ns)
+    try:
+        baseline = get_baseline()
+        if baseline is None:
+            return capture_baseline(now_ns)
+        return verify_baseline(baseline, now_ns)
+    except Exception as e:
+        # See EXIT_UNEXPECTED_ERROR: this exists so a crash here is distinguishable
+        # from EXIT_MISMATCH by exit code alone, not just by reading the log. The
+        # full traceback is still printed (nothing here reduces what a human sees
+        # in `kubectl logs`) - only the exit code and this marker line are new.
+        print(f"UNEXPECTED ERROR: {type(e).__name__}: {e} - not one of the checks "
+              "above; see the traceback below.")
+        traceback.print_exc()
+        return EXIT_UNEXPECTED_ERROR
 
 
 if __name__ == "__main__":
