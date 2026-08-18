@@ -28,8 +28,9 @@
 #   tier2  Full-bucket hash comparison (every current-version object, both sides).
 #          Catches: everything tier1 catches, with certainty instead of a sample bound.
 #          Cost: because S3 returns the MD5 as the ETag for any non-multipart PUT (true
-#          for ~100% of these objects -- 73.6KB mean, three orders of magnitude below
-#          the 200MiB multipart cutoff), rclone compares the ETag exposed by
+#          for 100% of these objects -- the largest live object measured 1,483,251
+#          bytes (1.41MiB) on 2026-08-18 and nothing exceeded it, ~140x below the
+#          200MiB multipart cutoff), rclone compares the ETag exposed by
 #          ListObjectsV2/HEAD on both sides without downloading object bodies. This is a
 #          LIST/HEAD-cost operation, NOT "read 15.4GB twice" -- verified empirically in
 #          test/test-etag-check-cost.sh, which shows check duration scales with object
