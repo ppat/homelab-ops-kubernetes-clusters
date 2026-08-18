@@ -57,6 +57,39 @@ loki:
     - selector: '{service_name="coredns"}'
       priority: 1
       period: 24h
+    # These two exist for the loki-query-correctness instrument, not for the logs' own sake.
+    # It hashes exactly these two namespaces over one frozen two-hour window (2026-08-16
+    # 00:10:53Z..02:10:53Z) and re-verifies that hash hourly; that check is what gates the
+    # MinIO -> Garage migration trial. Its expiry ledger is `window_start + retention - 3h`,
+    # so under the cluster-wide 30d the baseline retires 2026-09-14 -- seven days *before*
+    # the 30-day trial it exists to gate is due to end (~22 September), and after expiry it
+    # stops issuing queries entirely rather than reporting a divergence. 1080h is 45 days,
+    # which moves that to 2026-09-29, clear of the trial's end.
+    #
+    # Once the trial is decided and that baseline is retired, these two rules have no
+    # remaining purpose -- drop them then, rather than leaving them as exceptions no one
+    # can account for.
+    #
+    # Cost, measured 2026-08-18: kube-system is 215 MB/day and flux-system 82 MB/day
+    # uncompressed, ~300 MB/day combined, at the same ~14% compressed ratio recorded for
+    # ci-diagnostics below -- so the 15 days beyond the global 30d cost ~630 MB against a
+    # bucket measuring 15.42 GB. Under 5%.
+    #
+    # coredns runs in kube-system and so matches both its own rule above and this one, and
+    # it **keeps its 24h**. Loki resolves an overlap by highest `priority`, and breaks a
+    # priority tie by keeping the *shortest* period (`RetentionPeriodFor`, Loki's
+    # pkg/compactor/retention/expiration.go), so at equal priority 24h wins over 1080h
+    # whatever order the list is in -- no priority bump is needed to protect it. The trap is
+    # the other direction: the priority test is applied before the period test, so giving a
+    # broad namespace rule a *higher* priority would beat coredns despite being longer.
+    # Same tie-break means a broad rule can also shorten a longer one -- neither
+    # ci-diagnostics nor media lives in these two namespaces, so nothing here is shortened.
+    - selector: '{namespace="kube-system"}'
+      priority: 1
+      period: 1080h
+    - selector: '{namespace="flux-system"}'
+      priority: 1
+      period: 1080h
     # The whole point of the ci-diagnostics stream is the trend across months, so the
     # cluster-wide 30d would destroy it. Selected on service_name rather than a bespoke
     # label because retention_stream selectors match **index labels only, never structured
