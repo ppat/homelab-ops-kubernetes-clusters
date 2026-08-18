@@ -101,6 +101,25 @@ recapture needed for this PR):
   pairing.sh fails CI if kustomizations/config-services.yaml's
   global_loki_retention and kustomizations/infra-observability-core.yaml's
   loki_retention_size ever diverge.
+
+--- Expiry ledger: recomputed, not frozen (2026-08-18) ---------------------
+
+capture_baseline's expires_at_ns was computed once, from retention config
+as of capture, and never revisited - correct for retention being
+*shortened* afterward (the live guard already catches that case every
+verify, ratcheting the ledger's implied trust only downward), but wrong
+for retention being *lengthened*: a frozen ledger has no way to notice
+that the window it guards is now safe for longer than it was at capture,
+and retires a baseline whose data Loki would still happily return.
+homelab-ops-kubernetes-clusters#957 made this concrete, not hypothetical:
+it raises kube-system/flux-system - the two namespaces QUERIES measures -
+from the 30d global to 1080h (45d) specifically to keep the baseline alive
+through a trial extending past what 30d covers. Landed alone, #957 does
+nothing for this instrument: the stored expires_at_ns still reflects the
+30d horizon computed at capture, so verify_baseline still retires the
+baseline on the old schedule regardless of what Loki will actually keep.
+#957 and this recomputation are two halves of one fix - neither is
+sufficient alone. See recompute_expiry_ns.
 """
 import hashlib
 import json
@@ -544,12 +563,39 @@ def compute_stream_retentions(labels_by_stream, retention_rules, global_retentio
     call site.
 
     This takes the minimum across *all* matching rules rather than
-    replicating Loki's own highest-priority-wins tie-break: when rules
-    disagree, that can only make this guard trip earlier or more often than
-    Loki's actual behaviour, never later - the safe direction for a guard
-    whose entire job is to refuse before data disappears, not to model the
-    compactor exactly. This estate's current rules don't disagree (distinct
-    selectors, no stream matches two), so the simplification is inert today.
+    replicating Loki's own priority-based tie-break (verified against Loki
+    v3.7.6's actual `RetentionPeriodFor`, pkg/compactor/retention/
+    expiration.go: highest `priority` wins; on a priority tie, the
+    *shortest* period wins; specificity of the selector is never computed;
+    the global retention applies only when nothing matches). That is a
+    deliberate simplification, not an oversight, and it is safe under BOTH
+    of this guard's uses (tripping the live guard early on a shortened
+    retention, AND - since this function's result now also backs
+    verify_baseline's recomputed expiry ledger, see recompute_expiry_ns -
+    extending it on a lengthened one): `min()` ranges over the exact same
+    set of matching rules Loki itself picks its answer from, so
+    `min(matching_periods) <= period_of_whichever_rule_loki_actually_
+    applies`, always, by definition of min over a set containing that
+    element. This function's answer can therefore never OVER-estimate what
+    Loki actually keeps - only under-estimate it, when a lower-priority
+    rule happens to be shorter than the rule Loki's priority ordering would
+    really select. An under-estimate only means: the live guard can trip a
+    little earlier than strictly necessary, and the expiry ledger can
+    retire a little sooner than the data's true horizon - both refusals,
+    never a false claim that data outlives Loki's own retention. As of
+    homelab-ops-kubernetes-clusters#957, this estate's retention_stream
+    rules DO overlap - {service_name="coredns"} (24h) and
+    {namespace="kube-system"} (1080h) both match coredns's own streams, and
+    Loki's real tie-break (see above) correctly keeps coredns at 24h. This
+    guard never sees that disagreement in practice, not because the rules
+    don't overlap, but because QUERIES itself excludes coredns
+    (service_name!="coredns") before any entries ever reach here - a
+    property of QUERIES, not of this function or the retention config. If
+    QUERIES ever stopped excluding coredns, this function's min() would
+    still be safe (24h < 1080h, so min() would happen to agree with Loki's
+    real answer here too) but callers should not rely on that coincidence;
+    the proof above is what guarantees safety regardless of which rule
+    Loki would actually pick.
     """
     retentions = {}
     for labels_json, labels in labels_by_stream.items():
@@ -577,6 +623,74 @@ def retention_guard_ok(window_start_ns, matched_min_retention_seconds, now_ns):
     that may already be gone or is imminently about to be.
     """
     return now_ns / 10**9 < retention_guard_deadline_seconds(window_start_ns, matched_min_retention_seconds)
+
+
+def baseline_stream_labels(query_summary_entry):
+    """The label sets a baseline's per-query query_summary recorded for one
+    query, keyed by the same canonical labels_json used everywhere else.
+    Excludes `_residual` (query_summary folds streams past TOP_N_STREAMS
+    into one combined bucket with no individually-recoverable labels - see
+    its docstring). Needs no Loki query: everything here was already
+    written into the baseline ConfigMap at capture time.
+
+    Two call sites rely on this to see a stream the *live* query can no
+    longer see at all: verify_baseline's live retention guard (a stream
+    fully deleted since capture - see compute_stream_retentions's
+    docstring) and recompute_expiry_ns (the whole point of which is to
+    avoid a live query in the first place).
+    """
+    return {
+        labels_json: json.loads(labels_json)
+        for labels_json in query_summary_entry["streams"]
+        if labels_json != "_residual"
+    }
+
+
+def recompute_expiry_ns(start_ns, hashes, retention_rules, global_retention_seconds):
+    """The baseline's expiry horizon, recomputed from the CURRENT retention
+    config against the streams the baseline itself recorded - not the
+    value frozen into expires_at_ns at capture time.
+
+    Why a frozen value is wrong: retention can change in *either* direction
+    after capture. capture_baseline's original expires_at_ns only ever
+    accounted for shortening (a stream gaining a shorter override after
+    capture, or the ledger's own horizon being reached) - it had no way to
+    account for retention being *lengthened*, because it is computed once
+    and never revisited. A lengthened retention_stream rule (e.g. raising
+    kube-system/flux-system from the 30d global to a longer explicit
+    period, done specifically to keep this baseline alive through a longer
+    trial - see homelab-ops-kubernetes-clusters#957) means the window this
+    baseline guards is safe for *longer* than expires_at_ns claims, and a
+    frozen ledger retires a baseline whose data Loki would still happily
+    return - the opposite failure from the one EXIT_BASELINE_EXPIRED was
+    built to catch, but still a failure: it stops measuring a KPI that is
+    still measurable, for no reason Loki's own state would justify.
+
+    Needs no Loki query: every stream this needs was already recorded in
+    the baseline's own per-query summaries (baseline_stream_labels), the
+    same trick verify_baseline's live retention guard already uses for a
+    fully-vanished stream. Mirrors capture_baseline's own
+    min-per-query-then-min-overall computation (see its docstring) so the
+    two can never structurally disagree about what "the whole query set's
+    worst stream" means - only about which retention config each was
+    evaluated against, which is exactly the point: this recomputes against
+    *today's* config, capture_baseline's version is frozen at capture.
+
+    The whole-query-set-minimum property must survive here exactly as it
+    does in capture_baseline: one short-retention stream in ANY query
+    still retires the whole baseline, because the baseline is only as good
+    as its shortest-lived component - lengthening retention on kube-system
+    does nothing for the ledger if flux-system (or some stream within
+    either) is still short-lived. Extension only ever comes from every
+    query's minimum going up, never from one query's improvement masking
+    another's regression.
+    """
+    query_mins = []
+    for query, summary in hashes.items():
+        labels_by_stream = baseline_stream_labels(summary)
+        retentions = compute_stream_retentions(labels_by_stream, retention_rules, global_retention_seconds)
+        query_mins.append(min(retentions.values()) if retentions else global_retention_seconds)
+    return int(retention_guard_deadline_seconds(start_ns, min(query_mins)) * 10**9)
 
 
 # --- Loki queries ---------------------------------------------------------
@@ -905,27 +1019,45 @@ def verify_baseline(baseline, now_ns):
         )
         return EXIT_SCHEMA_INCOMPATIBLE
 
-    # Expiry ledger: cheap (no Loki query), checked first. Past expiry
-    # there's nothing left to safely re-verify, and querying anyway would
-    # just spend load on a comparison already known to be invalid. This is
-    # the mechanism that retires this baseline gracefully - both the 24h
-    # coredns instance that already fired and the ~2026-09-13 30d-global
-    # instance this would otherwise have hit next - instead of producing a
-    # MISMATCH that reads exactly like the migration lost data.
-    if now_ns >= expires_at_ns:
+    # Loaded here (before the expiry check) rather than down by the live
+    # per-query loop where an earlier version of this function had it,
+    # because the expiry ledger below now needs them too.
+    retention_rules = load_retention_rules()
+    global_retention_seconds = parse_duration_seconds(GLOBAL_RETENTION)
+
+    # Expiry ledger: cheap (no Loki query - see recompute_expiry_ns),
+    # checked first. Past expiry there's nothing left to safely re-verify,
+    # and querying anyway would just spend load on a comparison already
+    # known to be invalid.
+    #
+    # Tests against a RECOMPUTED horizon, not the stored expires_at_ns
+    # verbatim - see recompute_expiry_ns's docstring for why a frozen value
+    # goes wrong (it can only ever get more conservative as originally
+    # written, with no way to notice retention being lengthened after
+    # capture). The stored value is kept in the ConfigMap regardless - it
+    # is useful provenance (what the ledger believed at capture time), and
+    # a mismatch between stored and recomputed is itself informative,
+    # logged below rather than silently overwritten.
+    recomputed_expires_at_ns = recompute_expiry_ns(start_ns, hashes, retention_rules, global_retention_seconds)
+    if recomputed_expires_at_ns != expires_at_ns:
+        print(
+            f"NOTE: recomputed expiry ({recomputed_expires_at_ns}ns) differs from "
+            f"the stored value ({expires_at_ns}ns) - retention config has changed "
+            "since capture. Using the recomputed value as the actual decision; "
+            "the stored value is kept in the ConfigMap as provenance only."
+        )
+    if now_ns >= recomputed_expires_at_ns:
         print(
             f"BASELINE EXPIRED: window [{start_ns}, {end_ns}) passed its "
-            f"computed retention horizon (expires_at_ns={expires_at_ns}). This "
-            "is scheduled, expected retirement, not a data-loss finding. "
+            f"recomputed retention horizon (recomputed_expires_at_ns="
+            f"{recomputed_expires_at_ns}, stored expires_at_ns={expires_at_ns}). "
+            "This is scheduled, expected retirement, not a data-loss finding. "
             f"Recapture: delete the {BASELINE_CONFIGMAP} ConfigMap and let the "
             "next scheduled run capture fresh (this restarts the query-"
             "correctness KPI's pre-cutover clock - see the PR that introduced "
             "this ledger for why that cost is already incurred, not added by it)."
         )
         return EXIT_BASELINE_EXPIRED
-
-    retention_rules = load_retention_rules()
-    global_retention_seconds = parse_duration_seconds(GLOBAL_RETENTION)
 
     mismatches = []
     for query in QUERIES:
@@ -952,9 +1084,9 @@ def verify_baseline(baseline, now_ns):
         # inside _residual still isn't individually guarded - an accepted
         # gap given TOP_N_STREAMS's own bound on baseline ConfigMap size.
         labels_by_stream = stream_labels_from_entries(entries)
-        for labels_json in hashes[query]["streams"]:
-            if labels_json != "_residual" and labels_json not in labels_by_stream:
-                labels_by_stream[labels_json] = json.loads(labels_json)
+        labels_by_stream.update(
+            {k: v for k, v in baseline_stream_labels(hashes[query]).items() if k not in labels_by_stream}
+        )
         retentions = compute_stream_retentions(labels_by_stream, retention_rules, global_retention_seconds)
         if retentions:
             query_min = min(retentions.values())
