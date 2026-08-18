@@ -1,7 +1,11 @@
 ---
 # yamllint disable rule:line-length
-# Static analysis of security invariants — distinct from lint.yaml (which
-# only checks style/formatting via yamllint/markdownlint/commitlint/etc).
+# Static analysis that needs no live cluster — distinct from lint.yaml (which only checks
+# style/formatting via yamllint/markdownlint/commitlint/etc). Most jobs here check security
+# invariants; retention-pairing (below) is a config-consistency check of the same shape
+# (no cluster required, fails loud on a specific known-bad state) but not itself a
+# security check — grouped here rather than in a one-job workflow of its own.
+#
 # rbac-clusterroles statically validates the read-only RBAC ClusterRoles and
 # their ClusterRoleBindings in clusters/*/cluster/rbac/ against the two
 # policies in ci/policy-tests/ (rbac-clusterrole-readonly.yaml and
@@ -23,6 +27,11 @@ on:
     # The policy whose allow-list and exclusion scoping the volume-types job below pins. Same
     # reasoning as above: scoped to the one policy file under test, not policies/** at large.
     - 'policies/pod-security-standard/restricted/restrict-volume-types.yaml'
+    # retention-pairing job below: the two files whose global-retention literals must agree,
+    # the script that checks it, and this workflow file itself.
+    - 'clusters/homelab/kustomizations/config-services.yaml'
+    - 'clusters/homelab/kustomizations/infra-observability-core.yaml'
+    - 'ci/scripts/check-loki-retention-pairing.sh'
   schedule:
   - cron: '0 5 * * 1'
   workflow_dispatch:
@@ -175,3 +184,26 @@ jobs:
           fi
         done
         exit "${status}"
+
+  retention-pairing:
+    # loki-query-correctness (clusters/homelab/services/loki-query-correctness) computes
+    # its retention guard from GLOBAL_RETENTION, sourced from config-services.yaml's
+    # global_loki_retention postBuild variable — a manually-maintained duplicate of
+    # infra-observability-core.yaml's loki_retention_size, the value that actually governs
+    # Loki's compactor, because Flux cannot reference one Kustomization's postBuild
+    # variable from another. Without this check the pair can only drift silently, in the
+    # unsafe direction (a stale, too-long GLOBAL_RETENTION lets the guard trust a window
+    # past when the data is actually gone). See ci/scripts/check-loki-retention-pairing.sh
+    # for the full rationale and loki-query-correctness.py's GLOBAL_RETENTION comment.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Assert homelab's global_loki_retention matches loki_retention_size
+      shell: bash
+      run: ./ci/scripts/check-loki-retention-pairing.sh

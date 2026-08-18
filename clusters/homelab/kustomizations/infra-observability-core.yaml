@@ -54,6 +54,10 @@ spec:
       prometheus_memory_request: 2Gi
       prometheus_memory_limit: 4Gi
       loki_storage_class: sc-longhorn-replicated
+      # MUST match `global_loki_retention` in kustomizations/config-services.yaml - see
+      # that file's comment for why it's a manually-maintained duplicate rather than a
+      # cross-Kustomization reference, and ci/scripts/check-loki-retention-pairing.sh for
+      # the CI check that fails if they drift.
       loki_retention_size: 30d
       # each of the 3 monolithic replicas combines the write/read/backend roles that SimpleScalable
       # split across dedicated nodes - size for the write-path buffer (previously the write node's

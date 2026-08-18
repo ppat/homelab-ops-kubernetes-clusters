@@ -104,12 +104,16 @@ loki:
     # deletes on the next pass, and the source it came from is gone after 90 days. Treat
     # this number as the highest-consequence value in this file. 8760h is one year.
     #
-    # NOTE FOR ANYONE EDITING THIS FILE: no value here may carry a trailing `#` comment.
-    # loki-query-correctness.py mounts this exact file and parses it with a hand-rolled
-    # line reader whose scalar extractor does not strip inline comments -- `8760h  # 1y`
-    # reaches its duration regex verbatim and raises `unsupported duration format`,
-    # taking that CronJob down on its next hourly run. Comment blocks above a key, like
-    # every one in this file, are skipped correctly. Inline ones are not.
+    # NOTE FOR ANYONE EDITING THIS FILE: loki-query-correctness.py (clusters/homelab/
+    # services/loki-query-correctness/) mounts this exact file and parses retention_stream
+    # itself, with a bespoke line reader that is NOT a general YAML parser (see
+    # load_retention_rules there for exactly what shape it accepts). It handles this list's
+    # ordinary forms -- comment blocks above a key, blank lines, and a trailing `# comment`
+    # on a selector/priority/period value are all fine. What it does not handle: block
+    # scalars, flow collections, or a selector using anything other than plain `=` equality
+    # matchers. If an edit needs any of those, update that parser first -- it raises on
+    # anything outside what it recognises rather than silently mis-parsing, but "raises" is
+    # still a broken CronJob until someone notices.
     - selector: '{service_name="ci-diagnostics"}'
       priority: 1
       period: 8760h
