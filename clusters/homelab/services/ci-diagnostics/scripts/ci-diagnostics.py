@@ -274,6 +274,10 @@ def p_esolog(body: str) -> dict:
 
 def p_contention(body: str) -> dict:
     # CONTENTION start|end nproc= loadavg= calib_ms= net_mbps= fsync_us= uptime_s= elapsed_s=
+    #                      cpu_model= cpu_mhz=
+    # The two host fields arrived later (apps#3751) and needed no code here: `_kv` scrapes every
+    # key=value pair, so a field added to the emitter lands in structured metadata on its own.
+    # This comment is the only thing that goes stale, which is why it is worth keeping accurate.
     f = body.split()
     out = _kv(body)
     if f:
