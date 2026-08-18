@@ -30,7 +30,8 @@ spec:
       # GLOBAL_RETENTION env var, see loki-query-correctness.py) to compute
       # when a baselined window's content stops being safely immutable -
       # a stale duplicate here makes that computation wrong silently. Update
-      # both together.
+      # both together - ci/scripts/check-loki-retention-pairing.sh (wired
+      # into .github/workflows/static-analysis.yaml) fails CI if they drift.
       global_loki_retention: 30d
     substituteFrom:
     - kind: Secret

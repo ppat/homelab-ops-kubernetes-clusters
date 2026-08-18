@@ -53,6 +53,35 @@ already owns (RETENTION_CONFIG_PATH, GLOBAL_RETENTION), not duplicated as
 guesses in this file, and are recomputed at both capture and verify time so
 a *new* retention rule added after capture is caught too, not just the ones
 known when QUERIES was last hand-edited.
+
+--- Adversarial review residues (2026-08-18) --------------------------
+
+A round-three review of #929/#930 as new code found five residues, none of
+which changed the baseline ConfigMap's schema (still schema_version 2 - no
+recapture needed for this PR):
+
+- The count cross-check (query_loki_count) had a one-nanosecond boundary
+  asymmetry against fetch_all_entries's own [start_ns, end_ns) window -
+  fixed by evaluating the instant query at end_ns - 1. See its docstring.
+- load_retention_rules now raises on any line inside retention_stream it
+  doesn't recognise, instead of silently skipping it - see its docstring.
+- The retention guard's verify-time half now also reasons about streams the
+  *baseline* recorded even if the live query returns nothing for them at
+  all (a fully-deleted stream), not just streams the current query still
+  returns something for - see the comment at its call site in
+  verify_baseline. Known residual gap: streams folded into query_summary's
+  `_residual` bucket have no per-stream labels to recompute, so this still
+  can't guard a fully-deleted stream that was never in the top
+  TOP_N_STREAMS by volume.
+- A baseline ConfigMap this script can't compare against at all (wrong
+  schema_version, or captured for a different QUERIES set) now exits
+  EXIT_SCHEMA_INCOMPATIBLE instead of sharing EXIT_MISMATCH with a real
+  hash divergence - see the exit code comments.
+- GLOBAL_RETENTION's manually-duplicated pair (see its own comment below)
+  is now enforced, not just documented: ci/scripts/check-loki-retention-
+  pairing.sh fails CI if kustomizations/config-services.yaml's
+  global_loki_retention and kustomizations/infra-observability-core.yaml's
+  loki_retention_size ever diverge.
 """
 import hashlib
 import json
@@ -132,9 +161,14 @@ RETENTION_CONFIG_PATH = "/etc/loki-retention/loki-retention.yaml"
 # postBuild variable from another Kustomization, so this is a manually
 # duplicated value (clusters/homelab/kustomizations/config-services.yaml's
 # global_loki_retention) - if that value changes, this one must change with
-# it, by hand, in the same PR. There is no CI check for this pair; a stale
-# duplicate makes the retention guard compute a wrong (safe-direction-only-
-# by-luck) horizon silently. See GLOBAL_RETENTION.
+# it, by hand, in the same PR. A stale duplicate makes the retention guard
+# compute a wrong (safe-direction-only-by-luck) horizon silently, which is
+# why this pair is no longer only a comment: ci/scripts/check-loki-
+# retention-pairing.sh fails CI if the two literals ever diverge (wired into
+# .github/workflows/static-analysis.yaml, gated on both files changing).
+# It's a string-equality grep, not semantic - it can't catch every future
+# form this drift could take (e.g. a third consumer of the same value with
+# its own copy), only this one pair going out of sync silently.
 GLOBAL_RETENTION = os.environ["GLOBAL_RETENTION"]
 
 # How much margin to keep between "now" and a matched stream's retention
@@ -180,9 +214,11 @@ SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 # needing to read logs) tells apart *why* the check didn't produce a clean
 # OK, instead of every failure reading as the same alarming "MISMATCH".
 EXIT_OK = 0
-# Real divergence (hash mismatch) or a baseline that is structurally
-# incompatible with the current script (schema/query-set mismatch) - both
-# pre-existing meanings, unchanged by this rework.
+# A real divergence: the baseline is schema- and query-set-compatible, Loki
+# was queried, and the hash differs. This is the only code that means "the
+# object-store backend returned different log content for an already-closed
+# window" - see EXIT_SCHEMA_INCOMPATIBLE below for why that claim used to be
+# weaker than it looked.
 EXIT_MISMATCH = 1
 EXIT_CAPTURE_REJECTED_TOO_FEW_LINES = 2
 # Retention guard (see retention_guard_deadline): a matched stream's
@@ -204,6 +240,19 @@ EXIT_RETENTION_GUARD = 3
 # than an honest, self-explanatory failure. See the PR description for this
 # tradeoff.
 EXIT_BASELINE_EXPIRED = 4
+# The baseline ConfigMap itself can't be compared against at all - wrong
+# schema_version, or captured for a different QUERIES set - which is a
+# structural incompatibility between the ConfigMap and this script, never
+# evidence about log content. This used to share EXIT_MISMATCH, on the
+# reasoning that both are "the check didn't produce a clean OK because
+# something about the data isn't right." That reasoning has a real failure
+# mode: a hand-seeded or mis-copied baseline ConfigMap (as opposed to one
+# this script wrote itself) is exactly the scenario where "the schema
+# doesn't match" and "the data doesn't match" need to be distinguishable
+# from the exit code alone, without falling back to log text - so this gets
+# its own code, the same way EXIT_RETENTION_GUARD and EXIT_BASELINE_EXPIRED
+# already do for their own not-actually-data-loss failure modes.
+EXIT_SCHEMA_INCOMPATIBLE = 5
 
 
 def k8s_request(method, path, body=None):
@@ -290,10 +339,21 @@ def load_retention_rules(path=RETENTION_CONFIG_PATH):
     loki-retention.yaml - NOT a general YAML parser. Relies on the file's
     fixed, hand-authored shape: a `retention_stream:` key holding a list of
     `- selector: ... / priority: ... / period: ...` maps, 2-space indent,
-    unquoted or single/double-quoted scalars. If that shape ever changes
-    this raises (via the assert below) rather than silently mis-parsing -
-    a retention guard that silently stops seeing real rules is worse than
-    no guard at all.
+    unquoted or single/double-quoted scalars, blank lines and full-line
+    `#` comments tolerated between/within entries (loki-retention.yaml has
+    both). If that shape is violated - an unrecognised key inside a rule,
+    or a stray selector:/priority:/period: line once a rule already has
+    all three fields - this raises rather than silently ignoring or
+    absorbing it into whatever rule happened to be `current` at the time.
+    An earlier version of this parser fell through silently for any line
+    it didn't recognise, so an unknown key inside a rule was dropped
+    without a trace, and a coincidentally-named stray key later in the
+    file (e.g. a misplaced `period:`) could silently overwrite the last
+    real rule's field instead of raising - a retention guard that
+    silently stops seeing (or misreads) real rules is worse than no guard
+    at all, and "raises rather than silently mis-parsing" needs to
+    actually be true of every line in the list, not just the ones this
+    file happens to contain today.
     """
     with open(path) as f:
         lines = f.read().splitlines()
@@ -308,19 +368,40 @@ def load_retention_rules(path=RETENTION_CONFIG_PATH):
             continue
         if not in_stream_list:
             continue
+        if stripped and not line.startswith((" ", "\t", "-")):
+            # Dedented back to column 0 - retention_stream's list ended.
+            break
+        if not stripped or stripped.startswith("#"):
+            continue  # blank line or a full-line comment - not a rule field
+        # A new "- selector:" item always starts a fresh rule regardless of
+        # whether the previous one is complete - that's the normal end of
+        # one rule and start of the next. current_complete below instead
+        # gates the *non-dash* continuation fields (selector:/priority:/
+        # period: belonging to the item already open), so a stray one of
+        # those appearing after `current` already has all three fields -
+        # which should never happen in a well-formed file - raises instead
+        # of silently overwriting the completed rule's field.
         if stripped.startswith("- selector:"):
             if current is not None:
                 rules.append(current)
             current = {"selector": _yaml_scalar(stripped[len("- selector:") :])}
-        elif current is not None and stripped.startswith("selector:"):
+            continue
+        current_complete = current is not None and set(current) == {"selector", "priority", "period"}
+        if current is not None and not current_complete and stripped.startswith("selector:"):
             current["selector"] = _yaml_scalar(stripped[len("selector:") :])
-        elif current is not None and stripped.startswith("priority:"):
+        elif current is not None and not current_complete and stripped.startswith("priority:"):
             current["priority"] = int(_yaml_scalar(stripped[len("priority:") :]))
-        elif current is not None and stripped.startswith("period:"):
+        elif current is not None and not current_complete and stripped.startswith("period:"):
             current["period"] = _yaml_scalar(stripped[len("period:") :])
-        elif stripped and not line.startswith((" ", "\t", "-")):
-            # Dedented back to column 0 - retention_stream's list ended.
-            break
+        else:
+            raise ValueError(
+                f"unrecognised line inside retention_stream in {path}: {line!r} - "
+                "load_retention_rules's parser is bespoke to this file's known "
+                "shape (a dash-prefixed selector starting each rule, then its "
+                "priority/period fields, blank lines, and full-line comments "
+                "only) and needs updating, not silently skipping or absorbing "
+                "unexpected content"
+            )
     if current is not None:
         rules.append(current)
 
@@ -358,11 +439,38 @@ def stream_matches(stream_labels, matchers):
     return all(stream_labels.get(k) == v for k, v in matchers.items())
 
 
-def compute_stream_retentions(entries, retention_rules, global_retention_seconds):
-    """For each distinct stream (by label set) actually present in `entries`,
-    the effective retention Loki applies to it: the minimum period among all
+def stream_labels_from_entries(entries):
+    """Distinct stream label sets actually present in `entries`, keyed by
+    the same canonical labels_json used everywhere else (query_summary,
+    the baseline ConfigMap). See compute_stream_retentions's docstring for
+    why callers may need to widen this beyond just what a fresh query
+    returned before passing it in.
+    """
+    labels_by_stream = {}
+    for labels_json, _ts_ns, _line in entries:
+        if labels_json not in labels_by_stream:
+            labels_by_stream[labels_json] = json.loads(labels_json)
+    return labels_by_stream
+
+
+def compute_stream_retentions(labels_by_stream, retention_rules, global_retention_seconds):
+    """For each stream (by label set) in `labels_by_stream`, the effective
+    retention Loki applies to it: the minimum period among all
     retention_stream rules whose selector matches, or the global retention
     if none match.
+
+    Deliberately takes a labels-by-stream mapping rather than entries
+    directly (contrast the pre-R3-d version of this function, which derived
+    it internally from a fresh query's own entries): a stream that has been
+    fully deleted between verify runs returns *zero* entries, so deriving
+    labels_by_stream from the current query alone makes that stream
+    invisible to this guard - exactly the gap where a real, retention-caused
+    deletion falls through as an unexplained MISMATCH (reads as "the
+    migration lost data") instead of the distinguishable EXIT_RETENTION_
+    GUARD. verify_baseline covers this by also passing in the label sets
+    the *baseline* recorded (query_summary's per-stream keys), even for
+    streams the live query no longer returns anything for at all - see its
+    call site.
 
     This takes the minimum across *all* matching rules rather than
     replicating Loki's own highest-priority-wins tie-break: when rules
@@ -372,11 +480,6 @@ def compute_stream_retentions(entries, retention_rules, global_retention_seconds
     compactor exactly. This estate's current rules don't disagree (distinct
     selectors, no stream matches two), so the simplification is inert today.
     """
-    labels_by_stream = {}
-    for labels_json, _ts_ns, _line in entries:
-        if labels_json not in labels_by_stream:
-            labels_by_stream[labels_json] = json.loads(labels_json)
-
     retentions = {}
     for labels_json, labels in labels_by_stream.items():
         matched_periods = [rule["period_seconds"] for rule in retention_rules if stream_matches(labels, rule["matchers"])]
@@ -495,12 +598,32 @@ def query_loki_count(query, start_ns, end_ns):
     aggregated selector, one bucket, one scalar - and it's what actually
     agrees with fetch_all_entries's own paginated count (verified against
     production Loki; see the PR that introduced this fix for the numbers).
+
+    Boundary convention, evaluated at `end_ns - 1` rather than `end_ns`:
+    fetch_all_entries's log-query API selects the half-open interval
+    [start_ns, end_ns) - an entry timestamped exactly at end_ns is
+    excluded. A Prometheus-style range vector selector like
+    count_over_time(...[duration_s]) evaluated `at time=T` instead selects
+    the half-open-on-the-other-side interval (T - duration_s, T] - an
+    entry timestamped exactly at T is included. Evaluating naively at
+    time=end_ns therefore counts one boundary differently than
+    fetch_all_entries did: an entry landing on precisely end_ns would be
+    excluded from the log fetch but included in the count, a spurious ±1
+    that fails this cross-check (RuntimeError) on an otherwise-correct
+    result. Evaluating at end_ns - 1 (one nanosecond earlier) instead
+    selects (end_ns - 1 - duration_s, end_ns - 1], which - because all
+    boundaries here are exact integer nanoseconds - is exactly
+    [end_ns - duration_s, end_ns) = [start_ns, end_ns): the same half-open
+    interval fetch_all_entries uses, with no asymmetry left at either end.
+    Nanosecond-exact hits on this boundary are rare (see the PR that
+    introduced this comment for how it was falsified without one), but the
+    failure this closes is loud (RuntimeError -> a failed run), not silent.
     """
     duration_s = (end_ns - start_ns) // 10**9
     params = urllib.parse.urlencode(
         {
             "query": f"sum(count_over_time({query}[{duration_s}s]))",
-            "time": end_ns,
+            "time": end_ns - 1,
         }
     )
     url = f"{LOKI_URL}/loki/api/v1/query?{params}"
@@ -628,7 +751,8 @@ def capture_baseline(now_ns):
     # catches it instead of silently baselining data on a short clock again.
     min_retention_seconds = None
     for query, entries in per_query_entries.items():
-        retentions = compute_stream_retentions(entries, retention_rules, global_retention_seconds)
+        labels_by_stream = stream_labels_from_entries(entries)
+        retentions = compute_stream_retentions(labels_by_stream, retention_rules, global_retention_seconds)
         query_min = min(retentions.values())
         if not retention_guard_ok(start_ns, query_min, now_ns):
             worst_stream, worst_period = min(retentions.items(), key=lambda kv: kv[1])
@@ -684,7 +808,7 @@ def verify_baseline(baseline, now_ns):
             f"{baseline.get('schema_version')!r}, this script expects "
             f"{SCHEMA_VERSION!r}. Delete the ConfigMap to force a fresh capture."
         )
-        return EXIT_MISMATCH
+        return EXIT_SCHEMA_INCOMPATIBLE
 
     start_ns = int(baseline["start_ns"])
     end_ns = int(baseline["end_ns"])
@@ -708,7 +832,7 @@ def verify_baseline(baseline, now_ns):
             f"{BASELINE_CONFIGMAP} ConfigMap to force a fresh capture, or revert "
             "QUERIES to match."
         )
-        return EXIT_MISMATCH
+        return EXIT_SCHEMA_INCOMPATIBLE
 
     # Expiry ledger: cheap (no Loki query), checked first. Past expiry
     # there's nothing left to safely re-verify, and querying anyway would
@@ -738,11 +862,29 @@ def verify_baseline(baseline, now_ns):
 
         # Live half of the retention guard: recompute from the *current*
         # retention config against the streams this query *currently*
-        # returns. The expiry ledger above is a snapshot of retention config
-        # as of capture time; it can't see a retention_stream rule added
-        # afterwards that shrinks a previously-safe stream's horizon below
-        # what expires_at_ns assumed. This is what catches that drift.
-        retentions = compute_stream_retentions(entries, retention_rules, global_retention_seconds)
+        # returns, PLUS every stream the baseline itself recorded (its
+        # per-stream query_summary keys) - not just the ones still present
+        # in this run's live results. A stream that has been fully deleted
+        # (zero lines returned, not merely fewer) is otherwise invisible to
+        # this guard: compute_stream_retentions can only reason about
+        # streams it's given, and a query with no lines for that stream
+        # gives it none. That's the gap this closes - without it, a stream
+        # that goes fully quiet between two verify runs (e.g. the CronJob
+        # was down across the whole 2h retention_delete_delay transition, so
+        # no run ever observed it "still there but about to expire") skips
+        # the guard entirely and falls straight through to a plain hash
+        # MISMATCH below - indistinguishable from real data loss, which is
+        # exactly the false alarm this instrument exists to not produce.
+        # _residual is excluded: query_summary folds streams past
+        # TOP_N_STREAMS into one combined bucket with no per-stream labels
+        # to recompute a retention for, so a fully-deleted low-volume stream
+        # inside _residual still isn't individually guarded - an accepted
+        # gap given TOP_N_STREAMS's own bound on baseline ConfigMap size.
+        labels_by_stream = stream_labels_from_entries(entries)
+        for labels_json in hashes[query]["streams"]:
+            if labels_json != "_residual" and labels_json not in labels_by_stream:
+                labels_by_stream[labels_json] = json.loads(labels_json)
+        retentions = compute_stream_retentions(labels_by_stream, retention_rules, global_retention_seconds)
         if retentions:
             query_min = min(retentions.values())
             if not retention_guard_ok(start_ns, query_min, now_ns):
