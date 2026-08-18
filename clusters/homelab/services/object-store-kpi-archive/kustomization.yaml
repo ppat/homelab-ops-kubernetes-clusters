@@ -1,0 +1,24 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- rbac-object-store-kpi-archive.yaml
+- cronjob-object-store-kpi-archive.yaml
+- prometheusrule-object-store-kpi-archive.yaml
+
+configMapGenerator:
+- name: object-store-kpi-archive-script
+  namespace: monitoring
+  files:
+  - object-store-kpi-archive.py
+  options:
+    # Labelled so retirement can delete the generated ConfigMap by selector:
+    # it carries a kustomize hash suffix, so it cannot be deleted by name, and
+    # component=script keeps that selector from also matching the archive
+    # ConfigMap (component=archive), which holds data that must be exported
+    # first and is never Flux-managed. See the retirement note in
+    # cronjob-object-store-kpi-archive.yaml.
+    labels:
+      app.kubernetes.io/name: object-store-kpi-archive
+      app.kubernetes.io/component: script

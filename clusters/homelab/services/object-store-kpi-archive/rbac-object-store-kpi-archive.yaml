@@ -1,0 +1,48 @@
+---
+# Scoped to exactly the one ConfigMap this CronJob owns - the disk-usage KPI
+# archive for the MinIO->Garage trial (apps#3611). `create` cannot be
+# restricted by resourceName (the object does not exist yet on the first run),
+# so it is split from the get/update rule, which is. Mirrors the same split in
+# services/loki-query-correctness/rbac-loki-query-correctness.yaml.
+#
+# No `delete`, deliberately: nothing this script does should ever remove the
+# archive, and the whole design refuses writes rather than replacing data (see
+# object-store-kpi-archive.py, "Append, never overwrite"). Retiring the archive
+# is a human deleting it on purpose after exporting it, not a verb this
+# ServiceAccount needs.
+#
+# Trial-scoped: retire alongside the CronJob by deleting this directory - see
+# the retirement note in cronjob-object-store-kpi-archive.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: object-store-kpi-archive
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: object-store-kpi-archive
+  namespace: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["object-store-kpi-archive-data"]
+  verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: object-store-kpi-archive
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: object-store-kpi-archive
+subjects:
+- kind: ServiceAccount
+  name: object-store-kpi-archive
+  namespace: monitoring

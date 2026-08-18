@@ -10,4 +10,5 @@ resources:
 - loki-query-correctness/
 - longhorn-system/
 - monitoring/
+- object-store-kpi-archive/
 - tailscale/
