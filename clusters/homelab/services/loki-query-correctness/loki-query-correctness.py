@@ -65,6 +65,14 @@ recapture needed for this PR):
   fixed by evaluating the instant query at end_ns - 1. See its docstring.
 - load_retention_rules now raises on any line inside retention_stream it
   doesn't recognise, instead of silently skipping it - see its docstring.
+  It also now parses a trailing `# comment` on a selector/priority/period
+  value (both quoted and unquoted, and quote-aware so a `#` legitimately
+  inside a quoted selector isn't mistaken for one) instead of feeding it
+  verbatim to the duration/int parsers - this is not hypothetical: it took
+  the CronJob down in production for hours (homelab-ops-kubernetes-
+  clusters#936 first added a rule with a trailing comment) before being
+  worked around by hand-editing the comments out of the config rather than
+  fixing the parser. See _yaml_scalar's docstring.
 - The retention guard's verify-time half now also reasons about streams the
   *baseline* recorded even if the live query returns nothing for them at
   all (a fully-deleted stream), not just streams the current query still
@@ -339,11 +347,12 @@ def load_retention_rules(path=RETENTION_CONFIG_PATH):
     loki-retention.yaml - NOT a general YAML parser. Relies on the file's
     fixed, hand-authored shape: a `retention_stream:` key holding a list of
     `- selector: ... / priority: ... / period: ...` maps, 2-space indent,
-    unquoted or single/double-quoted scalars, blank lines and full-line
-    `#` comments tolerated between/within entries (loki-retention.yaml has
-    both). If that shape is violated - an unrecognised key inside a rule,
-    or a stray selector:/priority:/period: line once a rule already has
-    all three fields - this raises rather than silently ignoring or
+    unquoted or single/double-quoted scalars, each optionally followed by a
+    trailing `# comment` (see _yaml_scalar), plus blank lines and full-line
+    `#` comments tolerated between/within entries - loki-retention.yaml has
+    all of these. If that shape is violated - an unrecognised key inside a
+    rule, or a stray selector:/priority:/period: line once a rule already
+    has all three fields - this raises rather than silently ignoring or
     absorbing it into whatever rule happened to be `current` at the time.
     An earlier version of this parser fell through silently for any line
     it didn't recognise, so an unknown key inside a rule was dropped
@@ -353,7 +362,10 @@ def load_retention_rules(path=RETENTION_CONFIG_PATH):
     silently stops seeing (or misreads) real rules is worse than no guard
     at all, and "raises rather than silently mis-parsing" needs to
     actually be true of every line in the list, not just the ones this
-    file happens to contain today.
+    file happens to contain today. A still-earlier version also couldn't
+    parse a trailing inline `# comment` on a value line at all (it reached
+    the raw regex/duration parser verbatim) - see _yaml_scalar and the
+    incident referenced there.
     """
     with open(path) as f:
         lines = f.read().splitlines()
@@ -426,13 +438,48 @@ def load_retention_rules(path=RETENTION_CONFIG_PATH):
 def _yaml_scalar(text):
     """Strip a single trailing YAML scalar value down to its bare text -
     handles the plain and single/double-quoted forms loki-retention.yaml
-    actually uses. Not general YAML scalar parsing (no block scalars, no
-    flow collections); see load_retention_rules.
+    actually uses, INCLUDING a trailing `# comment` after the value (both
+    quoted and unquoted). Not general YAML scalar parsing (no block
+    scalars, no flow collections, no backslash/doubled-quote escapes
+    inside quoted strings); see load_retention_rules.
+
+    Comment-aware AND quote-aware, deliberately, not a naive
+    `text.split('#')[0]`: a LogQL selector is itself a quoted string that
+    can legitimately contain a '#' inside its quotes (nothing in LogQL
+    forbids it), so truncating at the first '#' anywhere would silently
+    corrupt a selector - exactly the class of silent-wrong-answer this
+    whole script exists to catch elsewhere, just relocated into its own
+    config parser. Learned the hard way: `period: 17520h  # 2y` in
+    loki-retention.yaml (homelab-ops-kubernetes-clusters#936) reached the
+    duration regex verbatim before this existed and took the CronJob down
+    for hours before it was noticed and the config was hand-edited around
+    it - see load_retention_rules's docstring.
+
+    Quoted values: the matching closing quote ends the value; anything
+    after it must be empty or a comment, or this raises rather than
+    guessing what a value like `'{a="b"}' garbage` was supposed to mean.
+
+    Unquoted values: a '#' only starts a comment when preceded by
+    whitespace, mirroring YAML's own rule for plain scalars - a bare '#'
+    with no preceding space is part of the value, not a comment marker
+    (this matters if a duration or selector ever legitimately contained
+    one, however unlikely for this file's known fields today).
     """
     text = text.strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
-        return text[1:-1]
-    return text
+    if text and text[0] in "'\"":
+        quote = text[0]
+        end = text.find(quote, 1)
+        if end == -1:
+            raise ValueError(f"unterminated {quote!r}-quoted scalar: {text!r}")
+        value = text[1:end]
+        rest = text[end + 1 :].strip()
+        if rest and not rest.startswith("#"):
+            raise ValueError(f"unexpected trailing content after quoted scalar {text[: end + 1]!r}: {rest!r}")
+        return value
+    hash_at = next((i for i in range(1, len(text)) if text[i] == "#" and text[i - 1] in " \t"), None)
+    if hash_at is not None:
+        text = text[:hash_at]
+    return text.strip()
 
 
 def stream_matches(stream_labels, matchers):
