@@ -116,6 +116,17 @@ proxy it replaced — `nproc` — was not merely weak, it was **blind**: measure
 `nproc` was uniformly 4, reporting one comparable configuration, while the actual CPUs were
 five distinct models mixing AMD EPYC 7763, EPYC 9V74 and three Intel Xeon generations.
 
+The heterogeneity is not only across hours. One scheduled slot fired **five suites at the same
+instant onto three different CPU models** (`AMD_EPYC_9V74` ×3, `AMD_EPYC_7763` ×1,
+`INTEL_XEON_PLATINUM_8573C` ×1). Dispatching arms simultaneously controls for *time*; it does
+not buy comparable *hardware*.
+
+`cpu_mhz` is the third tempting CPU proxy and it is disqualified for a different reason than
+`calib_ms`: it is a **spot reading taken under frequency scaling**, not an identity. In that
+same slot two jobs on the *identical* model reported **2872** and **3693** MHz — 29% apart on
+hardware that is by definition comparable. It is a weak instantaneous condition signal at best;
+group by `cpu_model`, never by `cpu_mhz`.
+
 ## Deliberately not built
 
 - **Alert rules.** Standing policy: no alerting until there is an AI triage path, because for a
@@ -197,5 +208,13 @@ could read the page regardless.
   `Intel_Xeon_Platinum_8370C_2.80GHz`. Fine for identity, since distinct is still distinct, but
   not groupable by family. A small share of runs record `?`, where `/proc/cpuinfo` carried no
   `model name`.
-- **PHASE and `cpu_model` only exist going forward.** Neither can be backfilled, because they
-  are derived from data the source no longer has.
+- **PHASE, `cpu_model` and `cpu_mhz` only exist going forward.** None can be backfilled, because
+  they are derived from data the source no longer has.
+
+  **The consequence is sharper than it sounds, and it applies to any panel reading a new field.**
+  For a window that mostly predates the field, the panel is not wrong — it is *near-empty while
+  looking authoritative*. Measured 2026-08-18, days after the host fields shipped: of the six
+  scheduled slots in the previous seven days, **one** carried `cpu_model` and five returned it
+  empty, so "Distinct host CPUs in the last 30d" was computing over a single slot. Read a
+  newly-added field's panel against **how many samples actually carry the field**, not against
+  the panel's own time range.
