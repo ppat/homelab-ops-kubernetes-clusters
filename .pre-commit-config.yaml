@@ -4,6 +4,12 @@ repos:
   rev: v6.0.0
   hooks:
   - id: check-added-large-files
+  # The five Python files here are CronJob payloads embedded via configMapGenerator, so a syntax
+  # error is *valid YAML inside a valid ConfigMap* and `validate-k8s` cannot see it. It would
+  # deploy, crash on every run, and -- with no alerting in this estate -- go unnoticed until
+  # someone missed the data. For ci-diagnostics that data is unrecoverable: it ingests GitHub
+  # Actions logs, which expire at 90 days.
+  - id: check-ast
   - id: check-executables-have-shebangs
   - id: check-json
     # openclaw.json is JS-style JSON5 (comments) fed straight into a ConfigMap
