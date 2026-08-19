@@ -16,7 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   detect-changes:
@@ -66,6 +65,9 @@ jobs:
     timeout-minutes: 5
     needs: [affected-clusters]
     if: ${{ needs.affected-clusters.outputs.affected_clusters != '[]' }}
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
