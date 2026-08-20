@@ -75,6 +75,32 @@ columns.
 **A share introduces the opposite trap**: a week with two runs reads 50%. Small denominators
 are why the rate panel carries its denominator beside it.
 
+**Grouping by an object's `name` groups by a per-run identity.** A generated pod name carries a
+ReplicaSet hash and a random suffix, so `name` identifies a *run*, not a component — over the
+series' full extent `infra-networking` alone produced **1288 distinct `name` values** on `READY`.
+A `topk` by magnitude over that key scatters a chronically slow component into one row per run,
+each individually unremarkable, and the rows crowd every other suite out of the table without the
+component ever rising in it. On the `UNCENSORED` table it hid a three-deep `infra-networking`
+startup chain as **14 one-off rows out of 20**, while 13 other objects fell off the bottom. The
+fix is a `label_format` stage that strips the generated suffix before grouping.
+
+**The alphabet in that regex is load-bearing.** Kubernetes generates those suffixes from a
+vowel-free set — `bcdfghjklmnpqrstvwxz2456789` — and the obvious `[a-z0-9]{5}$` instead eats real
+names: measured on this instance it turns `kube-proxy` into `kube`, `etcd-dev-control-plane` into
+`etcd-dev`, and merges `infra-networking-extra`, `infra-security-extra` and
+`infra-kubernetes-extra` into one row called `infra`. Restricting the character class to the
+alphabet Kubernetes actually draws from leaves all of those alone.
+
+Grouping by `namespace` instead of by object was the other candidate and is **too coarse**: it
+merges `helm-controller`, `notification-controller` and `source-controller` into one `flux-system`
+row, and the table's stated action is to raise a named object's assertion timeout. A key that is
+too coarse hides the object as surely as one that is too fine scatters it.
+
+The mistake is a class, not an instance, so the sibling keys were checked against the same data:
+`container` on the restart timeline is 21 recurring authored names, and `(kind, namespace)` on the
+time-to-ready panel is 58 groups drawn from those same 1288 names. Both are stable; `name` was the
+only per-run key on the page.
+
 ## Why the phase decomposition is computed at ingest
 
 `prerequisite ⊂ chainsaw ⊂ job` is the core model, and a LogQL query cannot express it, because
