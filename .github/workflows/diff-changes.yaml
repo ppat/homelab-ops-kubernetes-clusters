@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   detect-changes:
-    uses: ppat/github-workflows/.github/workflows/detect-changed-files.yaml@1e8ca1b00b6e69bdf5aef8b33111c594c051ff65 # v4.4.0
+    uses: ppat/github-workflows/.github/workflows/detect-changed-files.yaml@667d20d10c8756b11feeab1ee691825ccea8f991 # v5.0.1
     with:
       # yamllint disable-line rule:indentation
       files: |
@@ -46,7 +46,7 @@ jobs:
       run: |
         if [[ '${{ fromJSON(needs.detect-changes.outputs.results).all_changed_files }}' == '[".github/workflows"]' ]]; then
           echo "Testing all clusters for flux-local version upgrade..."
-          echo 'clusters=["homelab","nas"]' >> $GITHUB_OUTPUT
+          echo 'clusters=["homelab","nas"]' >> "$GITHUB_OUTPUT"
         else
           echo "Testing changed clusters..."
           # Extract cluster names from directory paths like "clusters/homelab" -> "homelab"
@@ -54,9 +54,9 @@ jobs:
           # Convert arrays to JSON using printf and jq
           printf '%s\n' "${clusters[@]}" | jq -R . | jq -s -c . > /tmp/clusters.json
           if [[ "$(cat /tmp/clusters.json)" != '[""]' ]]; then
-            echo "clusters=$(cat /tmp/clusters.json)" >> $GITHUB_OUTPUT
+            echo "clusters=$(cat /tmp/clusters.json)" >> "$GITHUB_OUTPUT"
           else
-            echo "clusters=[]" >> $GITHUB_OUTPUT
+            echo "clusters=[]" >> "$GITHUB_OUTPUT"
           fi
         fi
 
@@ -130,8 +130,8 @@ jobs:
         echo "${AFTER_SOURCES}" | tr ',' '\n' > /tmp/combined_sources
         echo "${BEFORE_SOURCES}" | tr ',' '\n' >> /tmp/combined_sources
         combined_sources=$(cat /tmp/combined_sources | sort | uniq | paste -sd ',' -)
-        echo "combined_sources=${combined_sources}" >> $GITHUB_OUTPUT
-        echo ${combined_sources} | pr -t -o 4
+        echo "combined_sources=${combined_sources}" >> "$GITHUB_OUTPUT"
+        echo "${combined_sources}" | pr -t -o 4
 
     - name: Flux Diff
       id: flux-diff
