@@ -1380,7 +1380,7 @@
         "type": "loki",
         "uid": "$datasource"
       },
-      "description": "When a suite fails on a timeout, the failure tells you nothing about what the wait needed -- it was cut off at its own limit. So after the failure, a watcher keeps observing and records **how many more seconds each object took to become Ready.** This table ranks that, worst first. Values are seconds.\n\n**A value means that check's timeout was too short by roughly that much. It does not mean the component is broken.** Something genuinely broken leaves different evidence: `CrashLoopBackOff`, restarts, `Helm install failed`. If none of that is present, the timeout is the fault.\n\n**Act** by finding the assertion for that object in the suite's `ci/test/<suite>/validate-*.yaml` and raising its timeout by the observed figure. This is the only evidence-based way to size one; everything else is guesswork with a safety multiplier.\n\nObjects that *never* became Ready are not in this table -- they carry no number to rank. Use the Explore link for those.",
+      "description": "When a suite fails on a timeout, the failure tells you nothing about what the wait needed -- it was cut off at its own limit. So after the failure, a watcher keeps observing and records **how many more seconds each object took to become Ready.** This table ranks that, worst first. Values are seconds.\n\n**A value means that check's timeout was too short by roughly that much. It does not mean the component is broken.** Something genuinely broken leaves different evidence: `CrashLoopBackOff`, restarts, `Helm install failed`. If none of that is present, the timeout is the fault.\n\n**Act** by finding the assertion for that object in the suite's `ci/test/<suite>/validate-*.yaml` and raising its timeout by the observed figure. This is the only evidence-based way to size one; everything else is guesswork with a safety multiplier.\n\nObjects that *never* became Ready are not in this table -- they carry no number to rank. Use the Explore link for those.\n\nRows are one per **object across the whole range**, not one per run. A generated pod name carries a per-run suffix, which is normalised away before grouping -- `pihole-6dc956c49d-7hbhl` and `pihole-6dc956c49d-2c2q7` are the single row `pihole`, carrying the worst figure either of them recorded. So a component that is late on every run is one row worth acting on, rather than a run's worth of individually unremarkable ones.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -1454,7 +1454,7 @@
             "uid": "$datasource"
           },
           "editorMode": "code",
-          "expr": "topk(20, max by (suite, kind, namespace, name) (max_over_time({job=\"ci-diagnostics\", instrument=\"uncensored\", suite=~\"^(${suite:regex})$\"} | extra_s != \"\" | unwrap extra_s [$__range])))",
+          "expr": "topk(20, max by (suite, kind, namespace, name) (max_over_time({job=\"ci-diagnostics\", instrument=\"uncensored\", suite=~\"^(${suite:regex})$\"} | extra_s != \"\" | label_format name=`{{ regexReplaceAll \"(-[bcdfghjklmnpqrstvwxz2456789]{5,10})?-[bcdfghjklmnpqrstvwxz2456789]{5}$\" .name \"\" }}` | unwrap extra_s [$__range])))",
           "instant": true,
           "queryType": "instant",
           "range": false,
