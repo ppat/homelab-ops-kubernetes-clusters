@@ -6,12 +6,13 @@
 #   converge (default): run repeated copy passes until a pass transfers fewer than
 #                        MIN_DELTA_OBJECTS objects or takes less than MIN_DELTA_SECONDS,
 #                        i.e. until the remaining delta is small enough to close with one
-#                        final pass during the cutover window. Use for a bucket that is
-#                        still being written (homelab-loki-chunks).
-#   once:                a single pass. Use for buckets nothing is actively writing
-#                        (homelab-loki-ruler, homelab-authentik-media,
-#                        homelab-terraform-state) and for the final post-cutover
-#                        catch-up pass.
+#                        final pass during a live cutover window, against a bucket still
+#                        being written.
+#   once:                a single pass. Use for a bucket nothing is actively writing --
+#                        including homelab-loki-chunks under this migration's
+#                        stop-then-copy operating model, where Loki is fully stopped for
+#                        the whole copy (see clusters#910's PR description, "The
+#                        operating model").
 #
 # Requires rclone remotes "src" and "dst" already configured (see render-rclone-conf.sh)
 # and RCLONE_CONFIG pointing at that config.

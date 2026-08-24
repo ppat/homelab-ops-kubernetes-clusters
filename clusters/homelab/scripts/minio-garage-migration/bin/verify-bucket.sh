@@ -20,10 +20,14 @@
 #          Catches: silent corruption, encoding mangling, truncated transfers, wrong
 #          object at a key -- for any object that happens to land in the sample.
 #          Does NOT detect: a defect confined to objects outside the sample -- roughly a
-#          SAMPLE_SIZE/object-count chance of landing in it (5,000/209,406 =~ 2.4% for
-#          a single bad object at the real bucket's scale -- current-version objects
-#          only, since that's what both src and dst list post-copy), a defense against
-#          systematic defects, not a needle-in-a-haystack single corruption.
+#          SAMPLE_SIZE/object-count chance of landing in it for a single bad object --
+#          current-version objects only, since that's what both src and dst list
+#          post-copy. That ratio is a moving target, not a constant: homelab-loki-chunks
+#          measured 209,406 live objects on 2026-08-18 (~2.4% at SAMPLE_SIZE=5000) and
+#          was re-checked 2026-08-24 at an inferred ~228,000-243,000 (~2.1-2.2%), growing
+#          ~3,095 objects/day -- read the live count at run time (`rclone size`) rather
+#          than trust either figure. A defense against systematic defects, not a
+#          needle-in-a-haystack single corruption.
 #
 #   tier2  Full-bucket hash comparison (every current-version object, both sides).
 #          Catches: everything tier1 catches, with certainty instead of a sample bound.

@@ -6,7 +6,7 @@
 #   MINIO_ENDPOINT=... MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=... \
 #   GARAGE_ENDPOINT=... GARAGE_ACCESS_KEY=... GARAGE_SECRET_KEY=... GARAGE_S3_REGION=... \
 #   NAMESPACE=... RUN_ID=$(date +%s) CPU_REQUEST=200m MEM_REQUEST=256Mi CPU_LIMIT=1 MEM_LIMIT=768Mi \
-#   BUCKET=homelab-loki-ruler PHASE=preflight MODE=once \
+#   BUCKET=homelab-loki-chunks PHASE=preflight MODE=once \
 #     envsubst < job-migrate-bucket.yaml.template | kubectl apply -f -
 #
 # See ../bin/entrypoint.sh for what PHASE values exist, and clusters#910 for the full

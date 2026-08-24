@@ -3,10 +3,12 @@
    - 95.4% of objects under 1KB, remainder large enough to pull the mean to ~3.9KB.
      This size shape came from the bucket's version-inclusive size distribution and is
      smaller than live objects, whose measured mean is 73.6KB (2026-08-18, 15.42GB over
-     209,406 live keys). It is left as-is deliberately: what these tests establish is
-     copy correctness and that verification cost tracks object count, not byte size --
-     neither of which the per-object size sets. Do not read byte-rates measured here as
-     production estimates.
+     209,406 live keys -- both figures grow with the bucket; re-checked 2026-08-24 at an
+     inferred ~228,000-243,000 objects / ~16.1GB. See clusters#910's PR description for
+     current numbers; none of them are read at run time by this generator). It is left
+     as-is deliberately: what these tests establish is copy correctness and that
+     verification cost tracks object count, not byte size -- neither of which the
+     per-object size sets. Do not read byte-rates measured here as production estimates.
    - prefix-clustered keyspace (Zipfian-weighted "tables"), not uniform
    - a fraction of keys carrying noncurrent versions (overwrite) and delete markers (delete)
      on a versioned bucket, so the current-versions-only copy behavior is provable.
