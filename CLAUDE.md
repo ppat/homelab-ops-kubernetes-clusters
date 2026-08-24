@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [README.md](./README.md) — what this repo is, how it relates to the sibling apps repo, per-cluster catalog links
 - [DESIGN.md](./DESIGN.md) — directory anatomy, how a module gets wired into a cluster (sources/kustomizations/dependsOn/components/postBuild/patches), the `services/` pattern, secrets/RBAC/storage model, CI, versioning
 - [clusters/homelab/README.md](./clusters/homelab/README.md) / [clusters/nas/README.md](./clusters/nas/README.md) — what's actually deployed on each cluster, with links to each module's own README in the apps repo
-- [policies/README.md](./policies/README.md) — Kyverno policy groups and what's enforced where
+- [homelab-ops-policies](https://github.com/ppat/homelab-ops-policies) (sibling repo) — Kyverno policy groups and what's enforced where; see [DESIGN.md#policy-enforcement](./DESIGN.md#policy-enforcement) for how it's wired into this repo
 - [OPERATIONS.md](./OPERATIONS.md) — manual, occasional runbooks for procedures that happen outside Flux (node prep, image builds, sandbox policy verification/access)
 
 This is a GitOps repo (FluxCD) of Kustomize manifests — there is no application
@@ -23,7 +23,6 @@ configures, modules that live in the sibling apps repo (see below).
 - `clusters/<name>/storage/` — `PersistentVolume`/`PersistentVolumeClaim`/`StorageClass` split `infra/`/`apps/`, pre-provisioned ahead of the module that claims them
 - `clusters/<name>/services/` — cluster-specific extras that aren't modules: either config/secrets a module looks up by name, or standalone CRs with no module awareness. See [DESIGN.md#the-services-directory](./DESIGN.md#the-services-directory)
 - `clusters/nas/outpost/` — nas-specific top-level directory authored directly in this repo (not sourced from the apps repo); nas has no `services/` directory of its own
-- `policies/` — shared, cluster-agnostic Kyverno `ClusterPolicy`/`ClusterCleanupPolicy` definitions, applied to both clusters
 - `ci/validation/` — base kustomization + `.env` of dummy post-build substitution variables used by kubeconform validation
 
 ## How this repo consumes the apps repo (cross-repo)
@@ -57,9 +56,8 @@ Kubernetes manifest validation (kubeconform via the `validate-kubernetes-manifes
 pre-commit hook) uses `ci/validation/kustomization.yaml` as the base
 kustomization and `ci/validation/.env` for dummy post-build substitution
 values, restricted to `clusters/*` (excludes `components/*` and `.archive/*`).
-This is narrower than CI's `lint.yaml` `kubernetes-manifests` job, which also
-covers `policies/*` — a `policies/` edit only gets kubeconform coverage in CI,
-not locally.
+CI's `lint.yaml` `kubernetes-manifests` job runs the same tool against the
+same scope.
 
 ### CI enforcement
 
@@ -70,7 +68,7 @@ each gated on whether matching files changed. Separately,
 `.github/workflows/diff-changes.yaml` checks out the apps repo alongside
 before/after versions of this repo and comments a rendered `flux-diff` of
 affected `HelmRelease`/`Kustomization` resources on any PR touching
-`clusters/**` or `policies/**`. Full breakdown in
+`clusters/**`. Full breakdown in
 [DESIGN.md#ci-and-validation](./DESIGN.md#ci-and-validation).
 
 ## Commit conventions

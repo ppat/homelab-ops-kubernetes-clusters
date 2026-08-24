@@ -6,11 +6,11 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./policies/pod-security-standard/restricted
+  path: ./pod-security-standard/restricted
   prune: true
   sourceRef:
     kind: GitRepository
-    name: root
+    name: policies
     namespace: flux-system
   timeout: 5m
   wait: false

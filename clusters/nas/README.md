@@ -3,7 +3,7 @@
 Secondary cluster co-located with the NAS, backed by NFS storage. Runs
 Bitwarden, the Harbor container registry, and an Authentik SSO outpost for
 cross-cluster authentication. Runs the **Baseline** Pod Security Standard (see
-[policies/README.md](../../policies/README.md)).
+the [homelab-ops-policies](https://github.com/ppat/homelab-ops-policies) repo).
 
 For how modules get wired in (sources/kustomizations/dependsOn/patches), see
 [DESIGN.md](../../DESIGN.md). For what each module itself provides, follow the

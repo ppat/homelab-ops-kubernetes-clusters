@@ -33,7 +33,6 @@ jobs:
         kubernetes:
         - 'clusters/**/*.yaml'
         - 'ci/**/*.yaml'
-        - 'policies/**/*.yaml'
         markdown:
         - '**.md'
         - '!**/CHANGELOG.md'
@@ -135,7 +134,7 @@ jobs:
       uses: ppat/validate-kubernetes-manifests@8d0eab3c27c0170576d933dc3da164f9fc56fd72 # v0.1.12
       with:
         files: ${{ steps.format-files.outputs.files_json }}
-        pkg-include: '["clusters/*","policies/*"]'
+        pkg-include: '["clusters/*"]'
         pkg-exclude: '["components/*",".archive/*"]'
         kubeconform-flags: '-skip=Secret,IPAddressPool'
         env-file: 'ci/validation/.env'
