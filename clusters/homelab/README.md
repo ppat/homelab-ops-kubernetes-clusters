@@ -3,7 +3,7 @@
 The primary cluster: full observability/networking/security/storage/database
 core stack, plus end-user applications (media, downloaders, home automation,
 AI, remote dev environments). Runs the **Restricted** Pod Security Standard
-(see [policies/README.md](../../policies/README.md)).
+(see the [homelab-ops-policies](https://github.com/ppat/homelab-ops-policies) repo).
 
 For how modules get wired in (sources/kustomizations/dependsOn/patches), see
 [DESIGN.md](../../DESIGN.md). For what each module itself provides, follow the

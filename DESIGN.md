@@ -337,18 +337,23 @@ property itself isn't something CI can check.
 
 ## Policy enforcement
 
-Kyverno `ClusterPolicy`/`ClusterCleanupPolicy` objects live in the shared,
-cluster-agnostic `policies/` directory at the repo root (not under
-`clusters/`) and are applied to both clusters via their own
-`policy-*` Kustomizations. See [policies/README.md](./policies/README.md) for
-what's enforced and in what mode.
+Kyverno `ClusterPolicy`/`ClusterCleanupPolicy` objects are not defined in
+this repo. They live in the standalone, cluster-agnostic
+[`homelab-ops-policies`](https://github.com/ppat/homelab-ops-policies) repo —
+released independently, the same way the apps repo's modules are — and are
+pulled in via a `GitRepository` per cluster (`clusters/<name>/sources/policies.yaml`,
+pinned to a released tag) and applied to both clusters via their own
+`policy-*` Kustomizations, whose `spec.path` points at whichever group
+(`best-practices`, `pod-security-standard/baseline`,
+`pod-security-standard/restricted`) that cluster enforces. See that repo's
+own README for what's enforced and in what mode.
 
 ## CI and validation
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `lint.yaml` | every PR + weekly | yamllint, markdownlint, shellcheck, commitlint, Renovate config check, and `kubeconform`-based Kubernetes manifest validation (via `ci/validation/kustomization.yaml` + `ci/validation/.env` dummy `postBuild` values) restricted to `clusters/*` and `policies/*` |
-| `diff-changes.yaml` | PRs touching `clusters/**` or `policies/**` | Checks out the apps repo (`main`) alongside before/after versions of this repo, resolves each `Kustomization`'s `sourceRef` tag via `.github/scripts/prepare-sources.sh`, then runs `flux-diff` to comment a rendered HelmRelease/Kustomization diff on the PR — so a reviewer sees the actual resource-level effect of a version bump or config change before merging |
+| `lint.yaml` | every PR + weekly | yamllint, markdownlint, shellcheck, commitlint, Renovate config check, and `kubeconform`-based Kubernetes manifest validation (via `ci/validation/kustomization.yaml` + `ci/validation/.env` dummy `postBuild` values) restricted to `clusters/*` |
+| `diff-changes.yaml` | PRs touching `clusters/**` | Checks out the apps repo (`main`) alongside before/after versions of this repo, resolves each `Kustomization`'s `sourceRef` tag via `.github/scripts/prepare-sources.sh`, then runs `flux-diff` to comment a rendered HelmRelease/Kustomization diff on the PR — so a reviewer sees the actual resource-level effect of a version bump or config change before merging |
 | `static-analysis.yaml` | PRs touching whatever each job below analyses (see the workflow's own `paths:`) + weekly | Kyverno-CLI checks of security invariants, run with no cluster — the class of check `lint.yaml`'s style/formatting jobs don't cover. Each job is separately triggered and separately scoped; the workflow is the source of truth for the current set. Today: `rbac-clusterroles`, which applies the test-only policies in `ci/policy-tests/` to every cluster's read-only RBAC `ClusterRole`s/`ClusterRoleBinding`s to statically confirm they stay read-only |
 | `renovate.yaml` | schedule/dispatch | Runs Renovate to open dependency-update PRs |
 

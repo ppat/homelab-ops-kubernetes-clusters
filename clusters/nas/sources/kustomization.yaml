@@ -12,3 +12,4 @@ resources:
 - infra-database-core.yaml
 - apps-bitwarden.yaml
 - apps-harbor.yaml
+- policies.yaml

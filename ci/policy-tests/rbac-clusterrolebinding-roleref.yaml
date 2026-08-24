@@ -1,10 +1,12 @@
 ---
-# TEST-ONLY Kyverno policy. This is NOT one of the policy groups in
-# policies/ (see policies/README.md) and is never applied to a cluster:
+# TEST-ONLY Kyverno policy. This is NOT one of the policy groups enforced on
+# a cluster and is never applied to one:
 # - It lives under ci/, which no Flux Kustomization in clusters/*/kustomization.yaml
 #   or clusters/*/kustomizations/*.yaml ever points `spec.path` at.
-# - Only policies/** is wired up via the policy-* Kustomizations
-#   (clusters/*/kustomizations/policy-*.yaml); ci/** has no equivalent.
+# - The actual enforced policy groups live in the standalone homelab-ops-policies
+#   repo (see DESIGN.md#policy-enforcement) and are wired up via the policy-*
+#   Kustomizations (clusters/*/kustomizations/policy-*.yaml); ci/** has no
+#   equivalent.
 # It exists solely to be run offline with `kyverno apply` (no cluster
 # required) in CI — see the `rbac-clusterroles` job in
 # .github/workflows/static-analysis.yaml — against clusters/*/cluster/rbac/*.yaml,
@@ -23,7 +25,8 @@
 # defeated by a binding that points a subject at a different role instead.
 #
 # Written with CEL (`validate.cel.expressions`), not the JMESPath
-# `deny.conditions`/`pattern` style used elsewhere in policies/: Kyverno's
+# `deny.conditions`/`pattern` style used elsewhere in the homelab-ops-policies
+# repo's policies: Kyverno's
 # JMESPath condition operators (In/AnyIn/AllIn/Equals/...) wildcard-match
 # any operand containing "*" against every string on the other side. This
 # rule's own comparisons (roleRef.kind, roleRef.name, subjects[].name) never

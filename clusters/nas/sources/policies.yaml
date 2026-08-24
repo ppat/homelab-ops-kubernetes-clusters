@@ -1,0 +1,18 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: policies
+  namespace: flux-system
+spec:
+  ignore: |
+    # exclude all
+    /*
+    # include best-practices policies
+    !/best-practices
+    # include pod-security-standard baseline (restricted not needed here)
+    !/pod-security-standard/baseline
+  interval: 1m0s
+  ref:
+    tag: v0.0.1
+  url: https://github.com/ppat/homelab-ops-policies.git

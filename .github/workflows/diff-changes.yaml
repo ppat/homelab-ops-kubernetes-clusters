@@ -8,7 +8,6 @@ on:
     paths:
     - '.github/workflows/diff-changes.yaml'
     - 'clusters/**/*.yaml'
-    - 'policies/**/*.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -25,7 +24,6 @@ jobs:
       files: |
         .github/workflows/diff-changes.yaml
         clusters/**/*.yaml
-        policies/**/*.yaml
       dir_names: true
       dir_names_max_depth: 2
       dir_names_exclude_current_dir: true
@@ -75,6 +73,11 @@ jobs:
         resource: [helmrelease, kustomization]
 
     steps:
+    # Warm clone reused by prepare-sources.sh for every source whose `spec.url`
+    # matches MODULES_URL below (today: all module/apps/infra sources), and
+    # unconditionally for the shared `components/` directory. Sources pointing
+    # at a different repo (e.g. the standalone policies repo) are cloned by
+    # the script itself, keyed by their own `spec.url`.
     - name: Checkout modules repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -102,6 +105,7 @@ jobs:
         KUSTOMIZATION_DIR: "${{ github.workspace }}/after/clusters/${{ matrix.cluster }}/kustomizations"
         SOURCES_DIR: "${{ github.workspace }}/after/clusters/${{ matrix.cluster }}/sources"
         MODULES_DIR: "${{ github.workspace }}/modules"
+        MODULES_URL: "https://github.com/ppat/homelab-ops-kubernetes-apps.git"
         DESTINATION_DIR: "${{ github.workspace }}/after"
         OUTPUT_NAME: "after_sources"
       shell: bash
@@ -113,6 +117,7 @@ jobs:
         KUSTOMIZATION_DIR: "${{ github.workspace }}/before/clusters/${{ matrix.cluster }}/kustomizations"
         SOURCES_DIR: "${{ github.workspace }}/before/clusters/${{ matrix.cluster }}/sources"
         MODULES_DIR: "${{ github.workspace }}/modules"
+        MODULES_URL: "https://github.com/ppat/homelab-ops-kubernetes-apps.git"
         DESTINATION_DIR: "${{ github.workspace }}/before"
         OUTPUT_NAME: "before_sources"
       shell: bash

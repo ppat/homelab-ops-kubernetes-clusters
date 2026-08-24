@@ -6,11 +6,11 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./policies/best-practices
+  path: ./best-practices
   prune: true
   sourceRef:
     kind: GitRepository
-    name: root
+    name: policies
     namespace: flux-system
   timeout: 5m
   wait: false

@@ -10,7 +10,6 @@ spec:
     /*
     # include flux-root directory for this cluster
     !/clusters/nas
-    !/policies
   interval: 1m0s
   ref:
     branch: main

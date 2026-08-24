@@ -33,7 +33,7 @@ flowchart LR
 | See what's deployed on a specific cluster | [clusters/homelab/README.md](./clusters/homelab/README.md) / [clusters/nas/README.md](./clusters/nas/README.md) |
 | Understand the directory layout and how modules get wired in | [DESIGN.md](./DESIGN.md) |
 | Understand a module's own capabilities, prerequisites, dependencies | The module's README in the [apps repo](https://github.com/ppat/homelab-ops-kubernetes-apps) (linked from each cluster's catalog) |
-| See what cluster-wide Kyverno policy is enforced | [policies/README.md](./policies/README.md) |
+| See what cluster-wide Kyverno policy is enforced | [homelab-ops-policies](https://github.com/ppat/homelab-ops-policies) (sibling repo) |
 | Run lint/validation locally | [DESIGN.md#ci-and-validation](./DESIGN.md#ci-and-validation) |
 | Understand release/versioning conventions | [DESIGN.md#versioning-and-updates](./DESIGN.md#versioning-and-updates) |
 | Run a manual, occasional procedure outside Flux (node prep, image builds, sandbox policy verification/access) | [OPERATIONS.md](./OPERATIONS.md) |
