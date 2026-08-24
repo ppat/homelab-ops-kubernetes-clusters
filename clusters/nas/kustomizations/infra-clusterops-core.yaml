@@ -23,8 +23,6 @@ spec:
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
         value: 50m
-      - op: remove
-        path: /spec/template/spec/containers/0/resources/limits/cpu
     target:
       kind: Deployment
       namespace: flux-system
