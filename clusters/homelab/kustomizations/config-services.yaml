@@ -17,13 +17,6 @@ spec:
     kind: GitRepository
     name: root
     namespace: flux-system
-  # Git-declared, not imperative: root reconciles this Kustomization every 1m and re-applies
-  # whatever git says, so an imperative `flux suspend` does not reliably hold (see prod-plan
-  # OPEN-DECISIONS.md #13, Route B). Suspends loki-query-correctness delivery for the
-  # MinIO->Garage cutover window (ppat/homelab-ops-kubernetes-apps#3611) -- QC fired hourly
-  # into the downtime would both be noise and risk re-warming caches between a restart and a
-  # cold run that must mean something. Reverted by the suspend-revert PR at close-out.
-  suspend: true
   timeout: 2m0s
   wait: true
   postBuild:
