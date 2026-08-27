@@ -22,6 +22,12 @@ spec:
     kind: GitRepository
     name: infra-observability-core
     namespace: flux-system
+  # Git-declared, not imperative: root reconciles this Kustomization's parent every 1m and
+  # re-applies whatever git says, so an imperative `flux suspend` does not reliably hold
+  # (see prod-plan OPEN-DECISIONS.md #13, Route B). Suspends Loki's module for the
+  # MinIO->Garage cutover window (ppat/homelab-ops-kubernetes-apps#3611). The flip PR clears
+  # this back to false as part of its own change -- the resume rides the flip merge.
+  suspend: true
   timeout: 2m0s
   wait: true
   postBuild:
