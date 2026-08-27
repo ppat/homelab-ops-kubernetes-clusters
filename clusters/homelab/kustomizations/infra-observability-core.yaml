@@ -27,7 +27,7 @@ spec:
   # (see prod-plan OPEN-DECISIONS.md #13, Route B). Suspends Loki's module for the
   # MinIO->Garage cutover window (ppat/homelab-ops-kubernetes-apps#3611). The flip PR clears
   # this back to false as part of its own change -- the resume rides the flip merge.
-  suspend: true
+  suspend: false
   timeout: 2m0s
   wait: true
   postBuild:
@@ -75,9 +75,9 @@ spec:
       # Bitwarden key names, so every consumer must supply them explicitly. These three
       # preserve today's behaviour exactly (Loki stays on MinIO); they only change when
       # Loki cuts over to Garage (apps#3611).
-      loki_s3_endpoint_key: cluster_homelab_minio_loki_endpoint
-      loki_s3_accesskeyid_key: cluster_homelab_minio_loki_accesskeyid
-      loki_s3_secretkey_key: cluster_homelab_minio_loki_secretkey
+      loki_s3_endpoint_key: cluster_homelab_garage_loki_endpoint
+      loki_s3_accesskeyid_key: garage_key_loki_accesskey
+      loki_s3_secretkey_key: garage_key_loki_secretkey
       # us-east-1 is the estate-wide S3 signing region (owner decision): boto3's hardcoded
       # default, already what barman-cloud/CNPG backups sign with, and a value both MinIO and
       # Garage accept -- one region for every S3 consumer on this cluster instead of three.
