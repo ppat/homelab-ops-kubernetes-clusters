@@ -167,7 +167,7 @@ spec:
           # NOT check whether the probe suite's findings are correct -- that's what
           # SUMMARY/violations in this container's own logs are for -- only whether the
           # loop producing them is still moving. `exec: ["true"]` would satisfy Kyverno's
-          # require-pod-probes policy too, and would detect nothing; this is deliberately
+          # require-probes policy too, and would detect nothing; this is deliberately
           # not that.
           #
           # A restart here is desirable, not just tolerated: it re-runs the warm-up gate
@@ -197,7 +197,7 @@ spec:
           failureThreshold: 3
         # No readinessProbe: this pod fronts no Service and receives no traffic, so there
         # is nothing for "ready to receive traffic" to mean here. Adding one anyway would
-        # only be to placate Kyverno's require-pod-probes policy, which livenessProbe
+        # only be to placate Kyverno's require-probes policy, which livenessProbe
         # above already satisfies -- the same always-passing-probe trap this fix exists to
         # avoid. No startupProbe either: the warm-up gate already self-bounds startup and
         # exits non-zero on its own timeout, and initialDelaySeconds above already covers
