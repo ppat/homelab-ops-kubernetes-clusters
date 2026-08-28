@@ -14,11 +14,19 @@ spec:
     namespace: flux-system
   timeout: 5m
   wait: false
+  # Enforcement mode is asserted here rather than inherited: without this the
+  # cluster silently adopts whatever the policy repo ships next -- including
+  # [Deny], estate-wide, with no diff in this repo to review.
+  #
+  # group/version are load-bearing. A Kustomize target matching nothing is a
+  # silent no-op, and only ValidatingPolicy carries validationActions.
   patches:
   # yamllint disable-line rule:indentation
   - patch: |-
       - op: replace
-        path: /spec/validationFailureAction
-        value: Audit
+        path: /spec/validationActions
+        value: [Audit]
     target:
-      kind: ClusterPolicy
+      group: policies.kyverno.io
+      version: v1
+      kind: ValidatingPolicy
