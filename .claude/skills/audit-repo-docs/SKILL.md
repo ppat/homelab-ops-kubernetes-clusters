@@ -1,11 +1,11 @@
 ---
 name: audit-repo-docs
-description: This skill should be used when the user asks to "audit the docs", "check the docs for drift", "are the docs up to date", "verify the documentation", "doc health check", or before a release/handoff when nobody's certain the docs kept pace with recent merges. Read-only — walks all six repo docs (README.md, DESIGN.md, CLAUDE.md, policies/README.md, clusters/homelab/README.md, clusters/nas/README.md) and cross-checks their specific factual claims against the current manifests, reporting drift without editing anything. Use this instead of update-repo-docs when the goal is diagnosis, not repair.
+description: This skill should be used when the user asks to "audit the docs", "check the docs for drift", "are the docs up to date", "verify the documentation", "doc health check", or before a release/handoff when nobody's certain the docs kept pace with recent merges. Read-only — walks all five repo docs (README.md, DESIGN.md, CLAUDE.md, clusters/homelab/README.md, clusters/nas/README.md) and cross-checks their specific factual claims against the current manifests, reporting drift without editing anything. Use this instead of update-repo-docs when the goal is diagnosis, not repair.
 ---
 
 # Audit Repo Docs
 
-Reads all six documentation files and verifies each factual claim against
+Reads all five documentation files and verifies each factual claim against
 the manifests it's supposed to describe. Reports drift; does not fix it —
 that's `update-repo-docs`'s job, once the user decides which findings to act
 on. Doc drift accumulates silently: a Renovate PR bumps a `dependsOn`, a
@@ -35,8 +35,7 @@ verifies against the rules those skills already encode:
 | Doc | Check each row/claim against |
 | --- | --- |
 | `clusters/homelab/README.md`, `clusters/nas/README.md` | `clusters/<name>/kustomizations/*.yaml` (does every listed module have a matching `Kustomization`? does every `Kustomization` appear in the doc? do `dependsOn` edges in the doc's Mermaid diagram match `spec.dependsOn` exactly?), `clusters/<name>/services/**` or outpost-equivalent (does every file have a table row? does every table row have a file?) |
-| `policies/README.md` | `policies/*/kustomization.yaml` (every policy in every group's resource list has a row?), `clusters/*/kustomizations/policy-*.yaml` (does the doc's stated enforcement mode match the current `validationFailureAction` patch?) |
-| `DESIGN.md` | Directory anatomy table against `find clusters -maxdepth 2 -type d`; CI table against current `.github/workflows/*.yaml` job names; "Versioning and updates" against current `.github/renovate*/**` |
+| `DESIGN.md` | Directory anatomy table against `find clusters -maxdepth 2 -type d`; CI table against current `.github/workflows/*.yaml` job names; "Versioning and updates" against current `.github/renovate*/**`; "Policy enforcement" against `clusters/*/{sources/policies.yaml,kustomizations/policy-*.yaml}` |
 | `CLAUDE.md` | Repository-layout bullets against the same directory listing; commit-scope list against `commitlint.config.js`'s `scope-enum` |
 | `README.md` | Cluster table against `clusters/*/` directories that actually exist |
 
@@ -58,7 +57,7 @@ verifies against the rules those skills already encode:
 ## Also check: convention violations that aren't classic "drift"
 
 Two categories worth checking even though neither is a fact going stale
-against a source file — both were found and fixed across all six docs once
+against a source file — both were found and fixed across all five docs once
 already, so treat them as recurring risks, not one-time cleanup:
 
 - **Restating instead of elevating.** Flag any passage that only restates
@@ -75,7 +74,7 @@ already, so treat them as recurring risks, not one-time cleanup:
   list transcribed, a patch's exact JSON6902 operations narrated line by
   line).
 - **Mermaid diagrams that don't actually render correctly.** Check every
-  diagram in all six docs against `verify-mermaid-diagrams`' rules
+  diagram in all five docs against `verify-mermaid-diagrams`' rules
   (`direction` inside a `subgraph` that also has a boundary-crossing edge;
   unescaped `<`/`>` in a label) using its render-and-check harness — don't
   rely on reading the Mermaid source, since both failure modes are
@@ -83,7 +82,7 @@ already, so treat them as recurring risks, not one-time cleanup:
 
 ## Procedure
 
-1. Read all six docs in full.
+1. Read all five docs in full.
 2. For each doc, build the list of checkable claims per the table above, then
    read the corresponding source files and check each one individually — do
    this systematically (e.g. build a checklist first) rather than
