@@ -56,7 +56,7 @@ fi
 # something with no bound of its own, e.g. the plain `nslookup api.github.com`
 # call below has no explicit timeout and can wedge forever against a
 # broken/unreachable DNS server. A liveness probe that just execs `true` would
-# satisfy Kyverno's require-pod-probes policy too, without detecting anything --
+# satisfy Kyverno's require-probes policy too, without detecting anything --
 # this is deliberately not that.
 date +%s > "$HEARTBEAT_FILE"
 
