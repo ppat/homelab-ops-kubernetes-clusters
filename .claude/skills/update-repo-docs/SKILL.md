@@ -1,11 +1,11 @@
 ---
 name: update-repo-docs
-description: This skill should be used when the user asks to "update the docs", "update the README", "sync the docs", "fix the documentation", "the docs are out of date", "update CLAUDE.md", or after making any change to clusters/**, policies/**, or the repo's directory structure that could make README.md, DESIGN.md, CLAUDE.md, policies/README.md, clusters/homelab/README.md, or clusters/nas/README.md inaccurate. Always consult this skill before hand-editing any of those six files directly — it routes to the specific skill that owns each one and carries the shared rules for what belongs in documentation versus what doesn't.
+description: This skill should be used when the user asks to "update the docs", "update the README", "sync the docs", "fix the documentation", "the docs are out of date", "update CLAUDE.md", or after making any change to clusters/** or the repo's directory structure that could make README.md, DESIGN.md, CLAUDE.md, clusters/homelab/README.md, or clusters/nas/README.md inaccurate. Always consult this skill before hand-editing any of those five files directly — it routes to the specific skill that owns each one and carries the shared rules for what belongs in documentation versus what doesn't.
 ---
 
 # Update Repo Docs
 
-This repo's documentation is split across six files, each owned by a
+This repo's documentation is split across five files, each owned by a
 narrower skill. This skill's only job is figuring out which of those apply to
 a given change and dispatching to them — it does not edit any file itself.
 
@@ -18,13 +18,12 @@ each part changes for different reasons and at different rates:
 | --- | --- | --- |
 | `clusters/homelab/README.md` | `update-cluster-docs` | `clusters/homelab/{kustomizations,sources,services,storage,cluster}/**` |
 | `clusters/nas/README.md` | `update-cluster-docs` | `clusters/nas/{kustomizations,sources,outpost,storage,cluster}/**` |
-| `policies/README.md` | `update-policy-docs` | `policies/**` |
 | `DESIGN.md` | `update-design-docs` | Cross-cluster patterns: new top-level directory, new mechanism (e.g. a new component type), CI/Renovate config changes, new cluster |
 | `CLAUDE.md` | `update-design-docs` | Same triggers as DESIGN.md, plus anything that changes a command or convention it documents |
 | `README.md` | `update-design-docs` | New/removed cluster, changed repo purpose |
 
-A module version bump alone (Renovate bumping `sources/*.yaml`'s `ref.tag`)
-does **not** require a doc update — none of the six docs mention module
+A policy or module version bump alone (Renovate bumping `sources/*.yaml`'s `ref.tag`)
+does **not** require a doc update — none of the five docs mention module
 versions, on purpose (see "What never changes" below). Don't let that pattern
 tempt you into skipping real changes, though: a bump that also adds
 `dependsOn`, a new `components:` entry, or a new `postBuild.substitute` key
@@ -97,7 +96,7 @@ so sub-skills can stay short and just link back:
   docs' scopes, one owns it and the other links there. Before adding a new
   paragraph, check whether the fact already has a home.
 - **Run `pre-commit run --files <changed-docs>` before considering the update
-  done.** All six docs must pass markdownlint (and yamllint/kubeconform if a
+  done.** All five docs must pass markdownlint (and yamllint/kubeconform if a
   manifest changed alongside).
 - **Any Mermaid diagram you write or edit must be verified with
   `verify-mermaid-diagrams`, not just eyeballed.** That skill owns the

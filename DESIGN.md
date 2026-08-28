@@ -337,8 +337,9 @@ property itself isn't something CI can check.
 
 ## Policy enforcement
 
-Kyverno `ClusterPolicy`/`ClusterCleanupPolicy` objects are not defined in
-this repo. They live in the standalone, cluster-agnostic
+Kyverno policies are not defined in this repo. The `ValidatingPolicy`,
+`MutatingPolicy` and `DeletingPolicy` objects live in the standalone,
+cluster-agnostic
 [`homelab-ops-policies`](https://github.com/ppat/homelab-ops-policies) repo —
 released independently, the same way the apps repo's modules are — and are
 pulled in via a `GitRepository` per cluster (`clusters/<name>/sources/policies.yaml`,
@@ -346,7 +347,16 @@ pinned to a released tag) and applied to both clusters via their own
 `policy-*` Kustomizations, whose `spec.path` points at whichever group
 (`best-practices`, `pod-security-standard/baseline`,
 `pod-security-standard/restricted`) that cluster enforces. See that repo's
-own README for what's enforced and in what mode.
+own README for what each group covers.
+
+Enforcement mode is the consumer's decision, and this is the point of use.
+The policy repo ships every policy in audit; a cluster wanting one to block
+admission overrides `spec.validationActions` from its own `policy-*`
+Kustomization. Neither cluster does, so neither carries a `patches:` block —
+that absence is the design, not an omission. Any such override must pin
+`group:` as well as `kind:` in its patch target: a Kustomize target matching
+nothing is a silent no-op, so a mis-aimed enforcement patch presents as a
+green build with nothing enforced rather than as an error.
 
 ## CI and validation
 

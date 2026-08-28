@@ -135,7 +135,7 @@ spec:
           # Service is absent, though `nslookup` failing fast on NXDOMAIN is the expected
           # case there, not a hang). Every `nc` call is `-w`-bounded, so a hung `nc`
           # can't happen here either. `exec: ["true"]` would satisfy Kyverno's
-          # require-pod-probes policy too, and would detect nothing; this is deliberately
+          # require-probes policy too, and would detect nothing; this is deliberately
           # not that.
           #
           # This exec probe's own stdout goes to kubelet's probe result, not this
