@@ -9,6 +9,10 @@
       ],
       "automerge": false,
       "commitMessageAction": "deploy",
+      "description": [
+        "Source repos tag either per-module (`<module>-vX.Y.Z`, one repo releasing many modules independently) or whole-repo (`vX.Y.Z`); the module prefix is optional here so both shapes reduce to a bare semver.",
+        "The compatibility capture is load-bearing, not cosmetic: a tag lookup returns every tag in the repo, and Renovate keeps only those releases whose compatibility group equals the pinned one — that is what stops one module's source being offered another module's tags. A tag shape this regex fails to match yields zero candidate releases, so the source silently stops being bumped rather than erroring."
+      ],
       "groupName": "{{ lookup (split packageFileDir '/') 1 }}-{{newValue}}",
       "matchDatasources": [
         "github-releases",
@@ -25,7 +29,7 @@
       "minimumReleaseAge": "",
       "semanticCommitType": "chore",
       "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}",
-      "versionCompatibility": "^(?<compatibility>.*)-(?<version>.*)$",
+      "versionCompatibility": "^(?:(?<compatibility>.+)-)?(?<version>v?\\d+\\.\\d+\\.\\d+.*)$",
       "versioning": "semver"
     },
     {
@@ -37,6 +41,9 @@
       "automerge": false,
       "commitMessageAction": "deploy",
       "commitMessageTopic": "{{newValue}}",
+      "description": [
+        "Remote kustomize bases are pinned to the same repos as the Flux sources above and carry the same tag shapes, so the version handling is identical."
+      ],
       "groupName": "{{ lookup (split packageFileDir '/') 1 }}-{{newValue}}",
       "matchDatasources": [
         "github-tags",
@@ -51,7 +58,7 @@
       "minimumReleaseAge": "",
       "semanticCommitType": "chore",
       "semanticCommitScope": "cluster-{{ lookup (split packageFileDir '/') 1 }}",
-      "versionCompatibility": "^(?<compatibility>.*)-(?<version>.*)$",
+      "versionCompatibility": "^(?:(?<compatibility>.+)-)?(?<version>v?\\d+\\.\\d+\\.\\d+.*)$",
       "versioning": "semver"
     }
   ]
