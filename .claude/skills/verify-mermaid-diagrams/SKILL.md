@@ -1,6 +1,6 @@
 ---
 name: verify-mermaid-diagrams
-description: This skill should be used whenever writing, editing, or reviewing a Mermaid diagram in this repo's docs (README.md, DESIGN.md, policies/README.md, clusters/homelab/README.md, clusters/nas/README.md) — including when the user asks "does this diagram render correctly", "fix the mermaid diagram", or "why doesn't this diagram show up on GitHub". Every other doc-maintenance skill that touches a Mermaid diagram invokes this one rather than re-deriving diagram-correctness rules itself. Covers two real, silent failure classes (dead `direction` inside a subgraph causing node overlap, unescaped angle brackets breaking under GitHub's sanitizer) plus a runnable verification harness — `mermaid.parse` alone does not catch either failure.
+description: This skill should be used whenever writing, editing, or reviewing a Mermaid diagram in this repo's docs (README.md, DESIGN.md, clusters/homelab/README.md, clusters/nas/README.md) — including when the user asks "does this diagram render correctly", "fix the mermaid diagram", or "why doesn't this diagram show up on GitHub". Every other doc-maintenance skill that touches a Mermaid diagram invokes this one rather than re-deriving diagram-correctness rules itself. Covers two real, silent failure classes (dead `direction` inside a subgraph causing node overlap, unescaped angle brackets breaking under GitHub's sanitizer) plus a runnable verification harness — `mermaid.parse` alone does not catch either failure.
 ---
 
 # Verify Mermaid Diagrams
@@ -111,6 +111,6 @@ plain read-through for the node-ID guideline above.
 
 This skill doesn't decide *what* a diagram should show — that's the job of
 whichever doc-maintenance skill invoked it (`update-cluster-docs`,
-`update-design-docs`, `update-policy-docs`) or `audit-repo-docs` when
+`update-design-docs`) or `audit-repo-docs` when
 checking one for drift. It only verifies that a diagram, once written, will
 actually render the way it's supposed to.

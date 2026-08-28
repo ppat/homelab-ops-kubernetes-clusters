@@ -1,6 +1,6 @@
 ---
 name: update-design-docs
-description: This skill should be used when the user asks to "update DESIGN.md", "update CLAUDE.md", "update the root README", "document this new pattern", "a new cluster was added", or after a change that introduces a new top-level directory, a new wiring mechanism (a new Kustomize component category, a new services/ sub-pattern), a CI/pre-commit/Renovate config change, or a new/removed cluster. Keeps DESIGN.md (architecture), CLAUDE.md (thin pointer + commands/conventions), and README.md (entry point) matching the repo's actual current structure and mechanics — never module versions or per-cluster catalog details, which belong to update-cluster-docs and update-policy-docs instead.
+description: This skill should be used when the user asks to "update DESIGN.md", "update CLAUDE.md", "update the root README", "document this new pattern", "a new cluster was added", or after a change that introduces a new top-level directory, a new wiring mechanism (a new Kustomize component category, a new services/ sub-pattern), a CI/pre-commit/Renovate config change, or a new/removed cluster. Keeps DESIGN.md (architecture), CLAUDE.md (thin pointer + commands/conventions), and README.md (entry point) matching the repo's actual current structure and mechanics — never module versions or per-cluster catalog details, which belong to update-cluster-docs instead.
 ---
 
 # Update Design Docs
@@ -77,15 +77,16 @@ DESIGN.md and add at most one pointer line to CLAUDE.md.
 ## What never belongs here (same rule as everywhere else)
 
 No module versions, no cluster-specific catalog details (which modules a
-given cluster runs — that's `update-cluster-docs`), no per-policy detail
-(that's `update-policy-docs`). This skill documents the *shape* of the
-system; the other two document its *current contents*.
+given cluster runs — that's `update-cluster-docs`), and no per-policy
+detail — the policies live in the sibling `homelab-ops-policies` repo and
+are documented there. This skill documents the *shape* of the system;
+`update-cluster-docs` documents its *current contents*.
 
 ## Procedure
 
 1. Confirm the change is genuinely architectural (see the altitude check
-   above) — if not, redirect to `update-cluster-docs` or
-   `update-policy-docs` instead of editing here.
+   above) — if not, redirect to `update-cluster-docs` instead of editing
+   here.
 2. Read the actual source (directory tree, workflow file, config file) in
    full before writing anything — don't extrapolate a whole new pattern from
    a single file's diff.

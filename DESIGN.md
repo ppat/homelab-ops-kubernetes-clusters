@@ -337,8 +337,9 @@ property itself isn't something CI can check.
 
 ## Policy enforcement
 
-Kyverno `ClusterPolicy`/`ClusterCleanupPolicy` objects are not defined in
-this repo. They live in the standalone, cluster-agnostic
+Kyverno policies are not defined in this repo. The `ValidatingPolicy`,
+`MutatingPolicy` and `DeletingPolicy` objects live in the standalone,
+cluster-agnostic
 [`homelab-ops-policies`](https://github.com/ppat/homelab-ops-policies) repo —
 released independently, the same way the apps repo's modules are — and are
 pulled in via a `GitRepository` per cluster (`clusters/<name>/sources/policies.yaml`,
@@ -346,7 +347,22 @@ pinned to a released tag) and applied to both clusters via their own
 `policy-*` Kustomizations, whose `spec.path` points at whichever group
 (`best-practices`, `pod-security-standard/baseline`,
 `pod-security-standard/restricted`) that cluster enforces. See that repo's
-own README for what's enforced and in what mode.
+own README for what each group covers.
+
+Enforcement mode is a point-of-use decision, and this is the point of use.
+Every `policy-*` Kustomization patches `spec.validationActions` to `[Audit]`
+on `ValidatingPolicy`, which is where a cluster wanting a policy to block
+admission would change it. The patch agrees with what the policy repo
+currently ships and is kept anyway: without it a cluster inherits that repo's
+choice, so a release shipping `[Deny]` would turn enforcement on estate-wide
+with no diff here to review. `MutatingPolicy` and `DeletingPolicy` have no
+such field and are outside the target.
+
+That target pins `group:` and `version:` as well as `kind:` because a
+Kustomize target matching nothing is a silent no-op — a mis-aimed enforcement
+patch presents as a green build with the mode quietly unasserted, which is
+indistinguishable from a working one for as long as upstream's default
+happens to agree.
 
 ## CI and validation
 
