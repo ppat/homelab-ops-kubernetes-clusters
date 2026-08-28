@@ -14,5 +14,5 @@ spec:
     !/pod-security-standard
   interval: 1m0s
   ref:
-    tag: v0.0.1
+    tag: v1.0.0
   url: https://github.com/ppat/homelab-ops-policies.git
