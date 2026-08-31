@@ -228,13 +228,26 @@ def p_mode(body: str) -> dict:
 
 def p_restart(body: str) -> dict:
     # RESTART 4  pod/external-dns/external-dns-pihole-8d9cb7b68-xttqk [external-dns]
+    #            reason=Error exit_code=137
+    #
+    # Three positional tokens, then key=value to the end of the line, lifted wholesale.
+    # The tail is deliberately NOT parsed positionally: the emitter lives in the apps
+    # repository, so a field added there would otherwise reach Loki inside the log body
+    # but never become structured metadata -- greppable, not aggregatable, and invisible
+    # as a defect from both sides. `reason`/`exit_code` arrived that way in
+    # ppat/homelab-ops-kubernetes-apps#3789.
+    #
+    # The container guard is `=`-based rather than positional because the container token
+    # is optional: without it, f[2] is the first key=value pair and must not be recorded
+    # as a container name.
     f = body.split()
     if len(f) < 2:
         return {}
     out = {"restarts": f[0]}
     out.update(_obj(f[1]))
-    if len(f) > 2:
+    if len(f) > 2 and "=" not in f[2]:
         out["container"] = f[2].strip("[]")
+    out.update(_kv(body))
     return out
 
 
