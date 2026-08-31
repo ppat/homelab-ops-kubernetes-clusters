@@ -100,6 +100,9 @@ needed. That number is how much to add to the budget. Something genuinely broken
 different evidence behind (`CrashLoopBackOff`, restarts, `Helm install failed`); if that evidence
 is absent, the fix is the budget. This is the only data that can size a budget from evidence,
 because a check that dies at 60.0s of a 60s budget tells you nothing about what it needed.
+Each row is one object over the whole range, not one per run — a generated pod's per-run name
+suffix is normalised away, so `pihole-6dc956c49d-7hbhl` reads as `pihole` and something late on
+every run is a single row rather than a table full of one-offs.
 
 **Rates are coarse.** The scheduled fleet runs each suite four times a day, so a 28-day point is
 about 112 runs — where a true 10% failure rate has a 95% interval of roughly 5% to 17%. **A
