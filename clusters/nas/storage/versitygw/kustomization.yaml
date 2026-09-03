@@ -1,0 +1,39 @@
+---
+# Deliberately absent from ../kustomization.yaml's `resources:`: MinIO's Kustomization
+# waits on the shared `config-storage`, so a failure here would stop MinIO reconciling
+# while its data is still the only copy of every backup. Being outside that umbrella also
+# means its prune/ssa patches do not reach here, hence the restatement below.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- namespace.yaml
+- static-iscsi-lun-nas-versitygw.yaml
+- versitygw-data.yaml
+- cronjob-prepare-store.yaml
+
+configMapGenerator:
+- name: versitygw-prepare-store-script
+  namespace: versitygw
+  files:
+  - scripts/prepare-store.py
+  options:
+    annotations:
+      # Flux post-build substitution expands bare `$name` as well as `${name}`, so an
+      # edit introducing either into this script would silently blank it.
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    # No content hash: a hashed name would strand an orphaned ConfigMap on every edit,
+    # because Flux pruning is disabled cluster-wide.
+    disableNameSuffixHash: true
+
+patches:
+# yamllint disable-line rule:indentation
+- patch: |-
+    kind: irrelevant
+    metadata:
+      name: irrelevant
+      annotations:
+        kustomize.toolkit.fluxcd.io/prune: disabled
+        kustomize.toolkit.fluxcd.io/ssa: merge
+  target:
+    kind: "(PersistentVolume|PersistentVolumeClaim)"

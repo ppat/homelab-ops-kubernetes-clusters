@@ -14,7 +14,7 @@ links below into the [apps repo](https://github.com/ppat/homelab-ops-kubernetes-
 | Module | Kustomization(s) | Provides |
 | --- | --- | --- |
 | [security-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/security-core/README.md) | `infra-security-core` | cert-manager, external-secrets, trust-manager, Kyverno, Policy Reporter |
-| [storage-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/storage-core/README.md) | `infra-storage-csi-driver-nfs`, `infra-storage-minio` | NFS CSI driver, MinIO — deployed as two separate `Kustomization`s pointing at submodule paths (`storage-core/csi-driver-nfs`, `storage-core/minio`) instead of one, since this cluster has no Longhorn |
+| [storage-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/storage-core/README.md) | `infra-storage-csi-driver-nfs`, `infra-storage-minio` | NFS CSI driver, MinIO — deployed as two separate `Kustomization`s pointing at submodule paths (`storage-core/csi-driver-nfs`, `storage-core/minio`) instead of one, since this cluster has no Longhorn and since the module root is what `homelab` consumes |
 | [networking-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/networking-core/README.md) | `infra-networking-core` | MetalLB, external-dns, Traefik (patched to run as a 2-replica `Deployment` instead of a `DaemonSet` for redundancy) |
 | [kubernetes-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/kubernetes-core/README.md) | `infra-kubernetes-core` | CoreDNS, Node Feature Discovery, Vertical Pod Autoscaler |
 | [database-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/database-core/README.md) | `infra-database-core` | CloudNativePG, Dragonfly operator (Redis-compatible cache instances) |
@@ -58,6 +58,21 @@ objects this cluster's other charts already ship, and the CRDs those objects dep
 embedded in `kustomizations/infra-observability-alloy.yaml`) the same way every other
 `ServiceMonitor` on this cluster is — no per-chart wiring needed.
 
+`storage/versitygw/` departs from the shared pattern in a third way: a subtree that sits
+*inside* `storage/` but is deliberately left out of `storage/kustomization.yaml`, reconciled
+by its own `config-storage-versitygw` Kustomization. It carries the object store's iSCSI
+`PersistentVolume` and claim, the `versitygw` namespace the claim needs, and the suspended
+one-shot `CronJob` that prepares a freshly formatted LUN. It sits outside `config-storage`
+so that a failure there cannot stop the Kustomization MinIO depends on, while MinIO still
+holds the only copy of every backup.
+
+This is the estate's first in-tree (non-CSI) volume, and `nas`'s first non-NFS one. The
+in-tree `iscsi` plugin shells out to `iscsiadm` on the node, so the node itself must have
+`open-iscsi` installed with `iscsid` running, and the initiator IQN in
+`/etc/iscsi/initiatorname.iscsi` must be in the LUN's allowed-initiator list on the
+Synology — a host-level prerequisite no manifest can express, and one a VM rebuild
+silently breaks by regenerating that file.
+
 The `docker.io` pull-through mirror (`Ingress` + rewrite `Middleware` pair
 fronting `harbor-core` on its own hostname, `dockerio-harbor.${domain_name}`)
 that used to live here as `harbor-dockerio-mirror/` has been upstreamed into
@@ -92,6 +107,7 @@ flowchart TB
 
     out[Authentik outpost]:::outpost
     svc[services/ config-services]:::outpost
+    vol[config-storage-versitygw]:::outpost
 
     k8s --> sec
     net --> sec & nfs
@@ -104,13 +120,16 @@ flowchart TB
 ```
 
 `ops` (clusterops-core) has no module dependencies — it bootstraps Flux itself.
-`out` (Authentik outpost) and `svc` (`services/`, the `config-services`
-Kustomization) aren't apps-repo modules — they're the top-level, repo-authored
-Kustomizations described in
+`out` (Authentik outpost), `svc` (`services/`, the `config-services`
+Kustomization) and `vol` (`config-storage-versitygw`) aren't apps-repo
+modules — they're the repo-authored Kustomizations described in
 [Cluster-specific resources](#cluster-specific-resources) above, included here
-because they carry real `dependsOn` edges of their own: `alloy` depends on
-`svc` for the `monitoring`/`logging` namespaces and CRDs its ServiceMonitor/
-PrometheusRule need. Exact per-module `dependsOn` lists are in each
+because they are top-level Kustomizations of this cluster in their own right.
+Two of them carry real `dependsOn` edges: `alloy` depends on `svc` for the
+`monitoring`/`logging` namespaces and CRDs its ServiceMonitor/PrometheusRule
+need. `vol` is drawn with none, which is accurate rather than an omission — it
+waits on nothing, because the in-tree `iscsi` plugin ships with kubelet and
+there is no driver to come up first. Exact per-module `dependsOn` lists are in each
 `kustomizations/*.yaml`. The `docker.io` mirror's routing dependency on
 `harbor`/`networking-core` is now internal to the `apps-harbor` module (see
 above) and isn't a separate cluster-level edge.
