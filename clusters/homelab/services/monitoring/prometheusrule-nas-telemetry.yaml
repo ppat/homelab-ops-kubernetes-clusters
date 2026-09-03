@@ -1,0 +1,100 @@
+---
+# Recording rules for the `nas` -> homelab telemetry path. No alert rules: AlertManager is
+# unwired estate-wide.
+#
+# Every selector names `k8s_cluster="nas"` literally, and that is load-bearing rather than a
+# generalisation nobody got around to. Replacing the literals with `by (k8s_cluster)` so one rule
+# set serves every remote cluster would destroy the sentinel every rule here depends on: an
+# aggregation over no series returns empty, and `or vector(...)` then yields a series carrying no
+# `k8s_cluster` label to group on. A sentinel has to be about a named cluster to exist at all.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/name: nas-telemetry
+  name: nas-telemetry
+  namespace: monitoring
+spec:
+  groups:
+  - name: nas-telemetry
+    rules:
+    # `or vector(1e9)`: without it the expression returns EMPTY when nothing matches, which reads
+    # as "nothing over threshold" and passes. Any sentinel must be on the failing side.
+    #
+    # Healthy is 0 - ~65s against the collector's 60s `scrape_interval`; the gate's 120s threshold
+    # is two of them, so raising one without the other makes this permanently red.
+    - record: nas:telemetry_metrics_staleness_seconds
+      expr: |
+        (time() - max(timestamp(up{k8s_cluster="nas"}))) or vector(1e9)
+
+    # What is covered when staleness says the path is alive. A drop here with staleness still
+    # low means the collector is fine and something it scrapes is not.
+    - record: nas:telemetry_scrape_targets_up
+      expr: |
+        (count(up{k8s_cluster="nas"} == 1)) or vector(0)
+
+    # Discovery rests on prometheus-operator CRDs. If they go, every ServiceMonitor/PodMonitor
+    # target vanishes while the two static kubelet scrapes keep producing `up` -- those use
+    # `discovery.kubernetes` role=node and need no CRD -- so staleness stays green over a cluster
+    # nothing is observing.
+    #
+    # Selects the ABSENCE of `collector_scrape="static"`. Excluding the static scrapes by job NAME
+    # instead is wrong: a discovered kubelet ServiceMonitor also produces `job="kubelet"`.
+    - record: nas:telemetry_discovered_targets_up
+      expr: |
+        (count(up{k8s_cluster="nas", collector_scrape=""} == 1)) or vector(0)
+
+    # The collector's own scrapes -- expect 2. A target whose gather exceeds its scrape timeout
+    # reports `up = 0`, which is a fresh sample, so staleness cannot see it.
+    #
+    # The constant and the label are a contract with the other repo: nas's Alloy fragment
+    # (`clusters/nas/kustomizations/infra-observability-alloy.yaml`) stamps
+    # `collector_scrape="static"` in the two kubelet `discovery.relabel` components, and nothing
+    # else on that cluster carries the label -- everything else arrives through ServiceMonitor or
+    # PodMonitor discovery. Two therefore only changes when a scrape is hand-added there. If the
+    # marker ever stops being stamped, this rule reads 0, which is its failure value, and the rule
+    # above silently degrades into a duplicate of `scrape_targets_up`; neither fails loudly.
+    - record: nas:telemetry_static_targets_up
+      expr: |
+        (count(up{k8s_cluster="nas", collector_scrape="static"} == 1)) or vector(0)
+
+    # Moves in ~60s where the target-count rules wait out Prometheus's 5-minute lookback, but a
+    # component can report healthy while producing nothing. Early warning, never the verdict.
+    - record: nas:telemetry_unhealthy_components
+      expr: |
+        (sum(alloy_component_controller_running_components{k8s_cluster="nas", health_type!="healthy"})) or vector(0)
+
+    # ------------------------------------------------------------------------------------
+    # The log path, reported over the metrics path.
+    # ------------------------------------------------------------------------------------
+    - record: nas:telemetry_log_entries_sent_per_second
+      expr: |
+        (sum(rate(loki_write_sent_entries_total{k8s_cluster="nas"}[5m]))) or vector(0)
+
+    # LAGGING: entries are declared lost only once retries are exhausted. `loki.write` has no WAL,
+    # so dropped is lost rather than delayed.
+    - record: nas:telemetry_log_entries_dropped_per_second
+      expr: |
+        (sum(rate(loki_write_dropped_entries_total{k8s_cluster="nas"}[5m]))) or vector(0)
+
+    # The timely log-path signal. Zero here with a zero sent-rate is indistinguishable from idle.
+    - record: nas:telemetry_log_batch_retries_per_second
+      expr: |
+        (sum(rate(loki_write_batch_retries_total{k8s_cluster="nas"}[5m]))) or vector(0)
+
+    # LAGGING, as above.
+    - record: nas:telemetry_remote_write_samples_failed_per_second
+      expr: |
+        (sum(rate(prometheus_remote_storage_samples_failed_total{k8s_cluster="nas"}[5m]))) or vector(0)
+
+    # The timely metrics-path signal.
+    - record: nas:telemetry_remote_write_samples_retried_per_second
+      expr: |
+        (sum(rate(prometheus_remote_storage_samples_retried_total{k8s_cluster="nas"}[5m]))) or vector(0)
+
+    # Rises identically for a rejected payload and an unreachable endpoint, so it cannot tell them
+    # apart on its own.
+    - record: nas:telemetry_remote_write_pending_samples
+      expr: |
+        (sum(prometheus_remote_storage_samples_pending{k8s_cluster="nas"})) or vector(0)
