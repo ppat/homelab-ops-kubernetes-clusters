@@ -226,6 +226,51 @@ spec:
       kind: HelmRelease
       name: alloy-release
       namespace: logging
+  # Labels this cluster's own Loki streams so they're distinguishable from nas's once
+  # both write into the same Loki (nas remote-writes here as of clusters#1039).
+  # K8S_CLUSTER_LABEL is the module's one sanctioned opt-in label
+  # addition (see the module README) - setting it re-mints every stream's identity, but
+  # every retention_stream selector in this repo subset-matches on existing labels
+  # rather than asserting an exact set, so it keeps matching. No LOKI_WRITE_URL: this
+  # collector keeps writing to the in-cluster Loki it already targets by default.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: alloy-release
+        namespace: logging
+      spec:
+        values:
+          alloy:
+            extraEnv:
+            - name: K8S_CLUSTER_LABEL
+              value: homelab
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-release
+      namespace: logging
+  # Same label, independent seam - the event singleton reads K8S_CLUSTER_LABEL through
+  # its own loki.write block and is not affected by any patch on alloy-release.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: alloy-events-release
+        namespace: logging
+      spec:
+        values:
+          alloy:
+            extraEnv:
+            - name: K8S_CLUSTER_LABEL
+              value: homelab
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-events-release
+      namespace: logging
   # The three PVC-tailing log jobs this cluster owns, added as an extra key in the
   # module's alloy-config ConfigMap - the extension seam its README documents. Alloy
   # loads /etc/alloy as a directory, so this file joins the module's own *.alloy files
