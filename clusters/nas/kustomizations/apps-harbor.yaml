@@ -28,6 +28,8 @@ spec:
   wait: true
   postBuild:
     substitute:
+      backup_s3_host: s3.nas
+      backup_s3_region: us-east-1
       db_name: harbor-db
       db_suffix_current: "v20251215"
       db_suffix_restore: "legacybackup"

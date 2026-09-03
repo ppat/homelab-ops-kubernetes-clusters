@@ -27,6 +27,8 @@ spec:
   postBuild:
     substitute:
       cert_issuer: letsencrypt-production-issuer
+      backup_s3_host: s3.nas
+      backup_s3_region: us-east-1
       db_name: authentik-db
       db_suffix_current: "v20251017"
       db_suffix_restore: "2025.10.06"
