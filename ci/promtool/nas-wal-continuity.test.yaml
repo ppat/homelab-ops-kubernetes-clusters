@@ -1,0 +1,137 @@
+---
+# Unit tests for clusters/homelab/services/monitoring/prometheusrule-nas-wal-continuity.yaml.
+#
+# What they guard: that every fault-facing rule in that file substitutes a sentinel WORSE than
+# any real reading when its input series are absent. The rule file's whole design rests on that
+# property and nothing else checks it -- an earlier draft used `or vector(-1)` for the fault
+# counts, and a test of exactly this shape is what showed that -1 satisfies no `> 0` comparison
+# and therefore reproduced the very defect the sentinels were written to prevent. The sentinel
+# values below are the assertion: change one to 0 or -1 and these tests fail.
+#
+# No CI job runs this yet -- this repo has no promtool harness, and adding one is a larger piece
+# of work than the rule fix it would gate (the PrometheusRule custom resources have to have their
+# .spec extracted before promtool can read them at all). Run it by hand:
+#
+#   tmp=$(mktemp -d)
+#   yq '.spec' clusters/homelab/services/monitoring/prometheusrule-nas-wal-continuity.yaml \
+#     > "${tmp}/rules.yaml"
+#   cp ci/promtool/nas-wal-continuity.test.yaml "${tmp}/"
+#   (cd "${tmp}" && promtool test rules nas-wal-continuity.test.yaml)
+#
+# `rule_files` is resolved relative to the working directory promtool runs in, which is why the
+# recipe above copies the test next to the extracted rules rather than referencing a path here.
+rule_files:
+- rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+# Nothing reporting: the producer is not deployed, or is deployed and dead. Every fault count
+# must read its 1e9 sentinel and the server count its -1, because for that one low is the bad
+# direction. `{}` with only __name__ is what `or vector(...)` produces -- a series with no
+# labels, since there is no group for an aggregation over no input to name.
+- name: no series at all - every rule reads its sentinel
+  interval: 1m
+  input_series: []
+  promql_expr_test:
+  - expr: nas:wal_archive_staleness_seconds
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_staleness_seconds"}'
+      value: 1e9
+  - expr: nas:wal_archive_servers
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_servers"}'
+      value: -1
+  - expr: nas:wal_archive_missing_segments
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_missing_segments"}'
+      value: 1e9
+  - expr: nas:wal_archive_zero_byte_segments
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_zero_byte_segments"}'
+      value: 1e9
+  - expr: nas:wal_archive_missing_history_files
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_missing_history_files"}'
+      value: 1e9
+  - expr: nas:wal_archive_freshest_segment_age_seconds
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_freshest_segment_age_seconds"}'
+      value: 1e9
+
+# The property the sentinels exist for, stated as the comparison an operator would actually
+# write. A rule that returned EMPTY here -- the bare form, without `or vector(...)` -- yields no
+# samples, and no samples read as "nothing over threshold": the outage passes the check.
+- name: no series at all - the fault rules still fail a > 0 check
+  interval: 1m
+  input_series: []
+  promql_expr_test:
+  - expr: nas:wal_archive_missing_segments > 0
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_missing_segments"}'
+      value: 1e9
+  - expr: nas:wal_archive_freshest_segment_age_seconds > 0
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_freshest_segment_age_seconds"}'
+      value: 1e9
+  - expr: nas:wal_archive_servers < 0
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_servers"}'
+      value: -1
+
+# Real input: the sentinels must not fire, and the per-server rule must keep its identifying
+# labels rather than collapsing to one row.
+#
+# The per-server assertion is also what pins the reason `nas:wal_archive_newest_segment_age_seconds`
+# carries no sentinel of its own. `exp_samples` is exhaustive, so writing `or vector(1e9)` onto that
+# grouped rule fails here: `or` adds the right-hand series whenever its label set matches nothing on
+# the left, and a `vector()` series has no labels, so the sentinel would appear as a THIRD row
+# permanently beside the two real ones -- making any `> 0` check on it eternally true. The
+# label-less freshest-age rule below it is where the sentinel can live.
+- name: two servers reporting - real readings pass through, per server, no stray sentinel row
+  interval: 1m
+  input_series:
+  - series: 'versitygw_wal_archive_servers{k8s_cluster="nas",instance="wal:9102"}'
+    values: '2x10'
+  - series: 'versitygw_wal_archive_missing_segments{k8s_cluster="nas",bucket="wal",prefix="a",server="g1",timeline="1"}'
+    values: '0x10'
+  - series: 'versitygw_wal_archive_missing_segments{k8s_cluster="nas",bucket="wal",prefix="b",server="g1",timeline="1"}'
+    values: '3x10'
+  - series: 'versitygw_wal_archive_newest_segment_timestamp_seconds{k8s_cluster="nas",bucket="wal",prefix="a",server="g1"}'
+    values: '60x10'
+  - series: 'versitygw_wal_archive_newest_segment_timestamp_seconds{k8s_cluster="nas",bucket="wal",prefix="b",server="g1"}'
+    values: '120x10'
+  promql_expr_test:
+  - expr: nas:wal_archive_servers
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_servers"}'
+      value: 2
+  - expr: nas:wal_archive_missing_segments
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_missing_segments"}'
+      value: 3
+  - expr: nas:wal_archive_newest_segment_age_seconds
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_newest_segment_age_seconds", bucket="wal", prefix="a", server="g1"}'
+      value: 240
+    - labels: '{__name__="nas:wal_archive_newest_segment_age_seconds", bucket="wal", prefix="b", server="g1"}'
+      value: 180
+  # The freshest archive, not the stalest: a retired generation stops advancing by design, so a
+  # max over servers would be pinned high by exactly the archives that are supposed to be idle.
+  - expr: nas:wal_archive_freshest_segment_age_seconds
+    eval_time: 5m
+    exp_samples:
+    - labels: '{__name__="nas:wal_archive_freshest_segment_age_seconds"}'
+      value: 180

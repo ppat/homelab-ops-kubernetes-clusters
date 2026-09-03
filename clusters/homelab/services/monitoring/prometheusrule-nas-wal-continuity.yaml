@@ -1,0 +1,135 @@
+---
+# Derived series for the WAL-chain continuity reader on the `nas` object store,
+# evaluated here because this is where the Prometheus holding them runs -- `nas`
+# ships metrics by remote-write and runs no Prometheus of its own.
+#
+# Recording rules only; AlertManager is deliberately unwired estate wide.
+#
+# **Every rule that records a single number substitutes a sentinel for a missing
+# series, and the sentinel is always the value WORSE than any real reading,
+# never better than all of them.** The inventory rules beside these use
+# `or vector(0)` because a low object count is the alarming one. Most of the
+# numbers here are fault counts, where high is alarming, so 0 would make
+# "nothing is reporting" pass for "checked and intact" -- and `-1` would be
+# worse still, since it satisfies no `> 0` comparison at all.
+#
+# The two rules grouped `by (...)` are the exceptions, for two different
+# reasons, both written at the rules themselves: a `vector()` sentinel is
+# label-less and so is emitted permanently BESIDE a grouped rule's real rows
+# rather than in place of them, and `nas:wal_archive_last_segment_ordinal` has
+# no worse-than-everything value to substitute in the first place, being bad in
+# both directions. Their absence is covered by the staleness rule -- the first
+# one below, for that reason -- and by
+# `nas:wal_archive_freshest_segment_age_seconds`.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nas-wal-continuity
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nas-wal-continuity
+spec:
+  groups:
+  - name: nas-wal-continuity
+    rules:
+    # Freshness first: no fault count below means anything without it. The
+    # reader passes hourly, so 1e9 means no pass result has ever arrived.
+    - record: nas:wal_archive_staleness_seconds
+      expr: |
+        (time() - max(versitygw_wal_archive_last_scan_timestamp_seconds{k8s_cluster="nas"})) or vector(1e9)
+
+    # The anchor: every other series here vanishes with its server's directory.
+    # Three states, and the middle one is easy to misread --
+    #   -1  nothing is reporting; the sentinel runs the other way because for
+    #       this number low is the bad direction
+    #    0  a pass completed and found no WAL archive at all, which after CNPG
+    #       is repointed here is itself a fault rather than a quiet day
+    #   >0  archives found, and the counts below are about them
+    - record: nas:wal_archive_servers
+      expr: |
+        (max(versitygw_wal_archive_servers{k8s_cluster="nas"})) or vector(-1)
+
+    # Segments absent between the first and last each timeline holds. Non-zero
+    # means point-in-time recovery through that hole is gone. Not a number to
+    # act on by repairing -- the segment is unrecoverable the moment it is lost
+    # -- but by taking a base backup, which puts the hole behind the
+    # recoverability point.
+    - record: nas:wal_archive_missing_segments
+      expr: |
+        (sum(versitygw_wal_archive_missing_segments{k8s_cluster="nas"})) or vector(1e9)
+
+    # Present, listable, correct ETag, zero bytes. Separate from the missing
+    # count because a segment emptied in place leaves the chain contiguous by
+    # presence, so folding them would let one mask the other's arithmetic.
+    - record: nas:wal_archive_zero_byte_segments
+      expr: |
+        (sum(versitygw_wal_archive_zero_byte_segments{k8s_cluster="nas"})) or vector(1e9)
+
+    # A history file is what lets a restore FOLLOW a promotion, so its absence
+    # breaks recovery past that switch with every segment on both timelines
+    # present -- which no segment count shows.
+    - record: nas:wal_archive_missing_history_files
+      expr: |
+        (sum(versitygw_wal_archive_missing_history_files{k8s_cluster="nas"})) or vector(1e9)
+
+    # Per-server and deliberately not aggregated: an archive stops advancing
+    # both when archiving breaks and when a generation is retired, and only the
+    # operator knows which serverName is current.
+    #
+    # No sentinel, and it cannot have one -- see the rule below, which carries
+    # it on this rule's behalf.
+    - record: nas:wal_archive_newest_segment_age_seconds
+      expr: |
+        time() - max by (bucket, prefix, server) (
+        versitygw_wal_archive_newest_segment_timestamp_seconds{k8s_cluster="nas"}
+        )
+
+    # How long since ANY archive advanced, which is the reading the per-server
+    # rule above cannot give: with every timestamp gone it returns empty, and an
+    # empty result compared against a threshold is empty too -- the total loss
+    # of every WAL archive would move nothing at all.
+    #
+    # It has to be a separate rule rather than `or vector(1e9)` on the rule
+    # above, and the reason is a trap worth knowing before "simplifying" this
+    # back into one expression: `or` adds the right-hand series only when its
+    # label set matches nothing on the left, and `vector()` produces a series
+    # with NO labels, which never matches a `by (...)` grouping. On a grouped
+    # rule the sentinel is therefore emitted permanently ALONGSIDE the real
+    # per-server rows instead of in place of them, leaving any `> 0` check
+    # eternally true. The committed test (ci/promtool/, third case) proves it,
+    # but no CI job runs that file — re-run it by hand per its header recipe
+    # before trusting any edit here.
+    #
+    # `min`, not `max`: a retired generation stops advancing by design and its
+    # age climbs forever, so a max over servers is pinned high by the archives
+    # that are supposed to be idle. The freshest is the one that answers "is
+    # anything still archiving at all".
+    #
+    # Neither this nor the rule above sees ONE server's archive disappearing
+    # while others keep reporting -- the left side stays non-empty and that
+    # server's row is simply gone. Only the producer can close that, by emitting
+    # a presence series for a server it finds with no chain; nothing here can
+    # miss what was never a series.
+    - record: nas:wal_archive_freshest_segment_age_seconds
+      expr: |
+        (min(time() - max by (bucket, prefix, server) (
+        versitygw_wal_archive_newest_segment_timestamp_seconds{k8s_cluster="nas"}
+        ))) or vector(1e9)
+
+    # A gap test is blind to a lost TAIL -- nothing brackets the hole -- so a
+    # green missing-segment count does not by itself clear a cutover. This
+    # ordinal is `LSN >> 24` at a 16 MiB segment size, so it is directly
+    # comparable with the LSN CloudNativePG derives from `pg_stat_archiver`, and
+    # that comparison is the only thing that sees a truncated chain.
+    #
+    # The comparison is not written here because the two sides share no label:
+    # this side carries the destination prefix and serverName read off the store
+    # path, CloudNativePG's carries namespace, pod and cluster. Joining them
+    # needs a per-database label rewrite maintained alongside every generation
+    # rotation, and belongs with the CNPG repoint, when there is a live archive
+    # on both sides to check it against.
+    - record: nas:wal_archive_last_segment_ordinal
+      expr: |
+        max by (bucket, prefix, server, timeline) (
+        versitygw_wal_archive_last_segment_ordinal{k8s_cluster="nas"}
+        )
