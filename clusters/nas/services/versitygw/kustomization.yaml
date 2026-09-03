@@ -1,0 +1,20 @@
+---
+# Deliberately absent from ../kustomization.yaml's `resources:`: reconciled by its own Flux
+# Kustomization, as storage/versitygw/ is, so that a red status on the volume never means
+# "a scrape declaration is wrong" and vice versa.
+#
+# Cluster-side rather than in the storage-core module because the module ships the Services
+# with no ServiceMonitor: a cluster with no collector should not receive scrape declarations
+# for one.
+#
+# Each ServiceMonitor lands with the module tag that ships the Service it selects -- a
+# selector matching nothing yields no target, no series and no error, which reads downstream
+# as a value rather than as an absence.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- servicemonitor-versitygw-metrics.yaml
+
+commonAnnotations:
+  kustomize.toolkit.fluxcd.io/prune: disabled

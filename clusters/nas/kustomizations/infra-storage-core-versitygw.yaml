@@ -1,0 +1,45 @@
+---
+# A submodule path because the versitygw component is deliberately absent from the
+# storage-core module root, which homelab consumes and must not receive this.
+#
+# The bucket names are the ones MinIO serves today, so each consumer's cutover moves its
+# endpoint and credentials and nothing else.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-storage-versitygw
+  namespace: flux-system
+spec:
+  components:
+  - ../../../../components/sso
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: config-storage-versitygw
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/storage-core/versitygw
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-storage-core
+    namespace: flux-system
+  # Longer than the 2m the other modules use: attaching runs an iSCSI discovery and login
+  # against the Synology before the pod can start, on top of a chart install.
+  timeout: 5m0s
+  wait: true
+  postBuild:
+    substitute:
+      secret_store: bitwarden-secret-manager-store
+      versitygw_data_claim: versitygw-data
+      # Must equal the region every client signs with -- Longhorn carries it in its backup
+      # target URL, CNPG sends it as AWS_REGION -- or SigV4 scopes disagree and are rejected.
+      versitygw_s3_region: us-east-1
+      # Root only. The consumer and WebUI-admin accounts, and the buckets they own, are
+      # created by the versitygw-nas Terraform workspace, which also writes their
+      # credentials to Bitwarden -- so no key name for them belongs here.
+      versitygw_root_accesskey_key: cluster_nas_versitygw_root_accesskeyid
+      versitygw_root_secretkey_key: cluster_nas_versitygw_root_secretkey
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
