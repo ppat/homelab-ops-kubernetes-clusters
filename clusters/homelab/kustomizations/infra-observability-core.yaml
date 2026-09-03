@@ -57,8 +57,11 @@ spec:
       # previously-hardcoded 2Gi limit (max_over_time(container_memory_working_set_bytes{
       # container="prometheus"}[14d]) = 1.9975GiB), and a 30-day range query over ~349k head
       # series risks an OOMKill at that margin.
+      #
+      # This ceiling is reached by TSDB compaction rather than by query load, so it scales with
+      # series count and tightens on its own as the estate grows.
       prometheus_memory_request: 2Gi
-      prometheus_memory_limit: 4Gi
+      prometheus_memory_limit: 8Gi
       loki_storage_class: sc-longhorn-replicated
       # MUST match `global_loki_retention` in kustomizations/config-services.yaml - see
       # that file's comment for why it's a manually-maintained duplicate rather than a
