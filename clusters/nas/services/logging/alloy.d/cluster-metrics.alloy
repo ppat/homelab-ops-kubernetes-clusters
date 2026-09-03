@@ -1,0 +1,22 @@
+// SINGLE-NODE ASSUMPTION: these components discover cluster-wide targets but run in a
+// DaemonSet, so a second node would double every discovered series.
+
+prometheus.operator.servicemonitors "cluster_default" {
+	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+	scrape {
+		default_scrape_interval = "60s"
+	}
+
+	// Without this, a ServiceMonitor using bearerTokenFile is dropped with no target and no
+	// complaint. Three on this cluster do.
+	allow_arbitrary_file_access = true
+}
+
+prometheus.operator.probes "cluster_default" {
+	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+	scrape {
+		default_scrape_interval = "60s"
+	}
+}

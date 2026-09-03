@@ -1,0 +1,95 @@
+// Both endpoints below are allow-lists: a metric not named in them does not arrive.
+
+prometheus.scrape "cluster_kubelet" {
+	targets = [{
+		__address__ = sys.env("K8S_NODE_IP") + ":10250",
+		instance    = sys.env("K8S_NODE_NAME"),
+		node        = sys.env("K8S_NODE_NAME"),
+		job         = "kubelet",
+
+		// Read by nas:telemetry_discovered_targets_up, which selects the ABSENCE of this label. A
+		// static scrape added here without it stops that rule ever reaching zero.
+		collector_scrape = "static",
+	}]
+	forward_to = [prometheus.relabel.cluster_kubelet_keep.receiver]
+	scheme     = "https"
+	// Port 10250 directly needs only `nodes/metrics`; via the apiserver proxy it would need
+	// `nodes/proxy`, which also grants exec and logs.
+	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	honor_labels      = true
+
+	scrape_interval = "60s"
+	scrape_timeout  = "30s"
+
+	tls_config {
+		// The kubelet serves a self-signed cert unless serverTLSBootstrap is on, which k3s is not.
+		insecure_skip_verify = true
+	}
+}
+
+prometheus.relabel "cluster_kubelet_keep" {
+	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+
+		// `up` and `scrape_*` must stay: prometheus.scrape emits them through this component, unlike
+		// Prometheus's metric_relabel_configs, so dropping them drops the series the gate queries.
+		regex = "up|scrape_.+|kubelet_volume_stats_.+|kubelet_volume_metric_collection_duration_seconds_count|" + "kubelet_running_(pods|containers)|kubelet_node_name|kubelet_pleg_relist_duration_seconds_count|" + "kubelet_runtime_operations(_errors)?_total|kubelet_started_(pods|containers)_errors_total|" + "kubelet_certificate_manager_(client|server)_expiration_renew_errors|" + "kubelet_certificate_manager_client_ttl_seconds|kubelet_server_expiration_renew_errors|" + "kubelet_evictions|rest_client_requests_total|storage_operation_duration_seconds_count|" + "storage_operation_errors_total|kubernetes_build_info"
+	}
+
+	rule {
+		action = "labeldrop"
+		regex  = "uid"
+	}
+}
+
+prometheus.scrape "cluster_kubelet_cadvisor" {
+	targets = [{
+		__address__      = sys.env("K8S_NODE_IP") + ":10250",
+		instance         = sys.env("K8S_NODE_NAME"),
+		node             = sys.env("K8S_NODE_NAME"),
+		job              = "kubelet-cadvisor",
+		collector_scrape = "static",
+	}]
+	forward_to        = [prometheus.relabel.cluster_cadvisor_trim.receiver]
+	scheme            = "https"
+	metrics_path      = "/metrics/cadvisor"
+	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	honor_labels      = true
+	scrape_interval   = "60s"
+	// Alloy's 10s default is reachable: one hung mount takes a gather past it, and the resulting
+	// `up = 0` is a fresh sample, so staleness stays green while the target reports nothing.
+	scrape_timeout = "30s"
+
+	tls_config {
+		insecure_skip_verify = true
+	}
+}
+
+prometheus.relabel "cluster_cadvisor_trim" {
+	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+
+		regex = "up|scrape_.+|container_cpu_usage_seconds_total|container_cpu_cfs_(periods|" + "throttled_periods)_total|container_memory_(working_set_bytes|usage_bytes|rss|cache|failcnt)|" + "container_fs_(usage_bytes|limit_bytes|reads_bytes_total|writes_bytes_total)|" + "container_network_(receive|transmit)_(bytes|errors|packets_dropped)_total|container_(last_seen|" + "start_time_seconds|processes)|container_oom_events_total|machine_(cpu_cores|memory_bytes)"
+	}
+
+	rule {
+		action        = "drop"
+		source_labels = ["__name__", "image"]
+		separator     = ";"
+		// Scoped to cpu|memory: cAdvisor attaches no `image` label to filesystem stats, so an
+		// unscoped `container_([a-z_]+);` deletes every container_fs_* series the keep-list above
+		// retains.
+		regex = "container_(cpu|memory)_[a-z_]+;"
+	}
+
+	rule {
+		action = "labeldrop"
+		regex  = "uid"
+	}
+}

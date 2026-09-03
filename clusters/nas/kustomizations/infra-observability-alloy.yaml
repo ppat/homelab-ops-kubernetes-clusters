@@ -1,0 +1,419 @@
+---
+# yamllint disable rule:line-length
+# The embedded .alloy fragments below carry metric allow-lists whose regexes are single long
+# string literals; `alloy fmt` rejoins any attempt to wrap them, and CI runs `alloy fmt --test`.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-observability-alloy
+  namespace: flux-system
+spec:
+  dependsOn:
+  # Ordering only. The prometheus-operator CRDs discovery needs are unmanaged residue of a
+  # HelmRelease deleted in 2024 -- nothing reconciles or recreates them, and no dependsOn can
+  # supply them. If they go, discovery fails while static scrapes keep reporting up, which is
+  # what nas:telemetry_discovered_targets_up exists to catch. Owning them means stepping this
+  # cluster from prometheus-operator 0.82.2 to 0.93.0, so it is a separate change.
+  - name: infra-kubernetes-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  interval: 15m0s
+  # The module's alloy subdirectory only: the rest of observability-core is a Prometheus, Loki,
+  # Grafana and Goldilocks this cluster has no use for.
+  path: ./infrastructure/subsystems/observability-core/alloy
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-core
+    namespace: flux-system
+  timeout: 5m0s
+  wait: true
+  postBuild:
+    substitute:
+      # `getent group systemd-journal` on the node. A wrong value fails silently: the journal
+      # tailer reports healthy and collects nothing. Verify with
+      # `sum(count_over_time({k8s_cluster="nas", job="systemd-journal"}[10m]))`.
+      systemd_journal_gid: "999"
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+  patches:
+  # The node collector: where it writes, what it may read, and what it mounts to read it.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/alloy/extraEnv
+        value:
+        - name: LOKI_WRITE_URL
+          value: https://loki.homelab.${dns_zone}/loki/api/v1/push
+        - name: K8S_CLUSTER_LABEL
+          value: nas
+        - name: HOMELAB_PROMETHEUS_WRITE_URL
+          value: https://prometheus.homelab.${dns_zone}/api/v1/write
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+      - op: add
+        path: /spec/values/alloy/mounts/extra/-
+        value:
+          name: host-root
+          mountPath: /host/root
+          readOnly: true
+          # Without this the collector only ever sees mounts that existed when its own bind
+          # mount was created, and silently misses everything mounted later.
+          mountPropagation: HostToContainer
+      - op: add
+        path: /spec/values/alloy/mounts/extra/-
+        value:
+          name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+      - op: add
+        path: /spec/values/alloy/mounts/extra/-
+        value:
+          name: host-sys
+          mountPath: /host/sys
+          readOnly: true
+      - op: add
+        path: /spec/values/controller/volumes/extra/-
+        value:
+          name: host-root
+          hostPath:
+            path: /
+      - op: add
+        path: /spec/values/controller/volumes/extra/-
+        value:
+          name: host-proc
+          hostPath:
+            path: /proc
+      - op: add
+        path: /spec/values/controller/volumes/extra/-
+        value:
+          name: host-sys
+          hostPath:
+            path: /sys
+      - op: add
+        path: /spec/values/rbac/rules/-
+        value:
+          apiGroups: [""]
+          resources: ["services", "endpoints", "namespaces"]
+          verbs: ["get", "list", "watch"]
+      - op: add
+        path: /spec/values/rbac/rules/-
+        value:
+          apiGroups: ["discovery.k8s.io"]
+          resources: ["endpointslices"]
+          verbs: ["get", "list", "watch"]
+      - op: add
+        path: /spec/values/rbac/clusterRules/-
+        value:
+          apiGroups: ["monitoring.coreos.com"]
+          resources: ["servicemonitors", "podmonitors", "probes"]
+          verbs: ["get", "list", "watch"]
+      - op: add
+        path: /spec/values/rbac/clusterRules/-
+        value:
+          apiGroups: [""]
+          # `nodes/metrics`, not `nodes/proxy`: the proxy grant also carries exec and logs.
+          resources: ["nodes/metrics"]
+          verbs: ["get"]
+      - op: replace
+        path: /spec/values/alloy/resources/requests/cpu
+        value: 100m
+      - op: replace
+        path: /spec/values/alloy/resources/requests/memory
+        value: 320Mi
+      - op: replace
+        path: /spec/values/alloy/resources/limits/memory
+        value: 768Mi
+      # False so cluster-self.alloy is the only producer of these series; true would also
+      # double them via prometheus.operator.servicemonitors discovering this release.
+      - op: replace
+        path: /spec/values/serviceMonitor/enabled
+        value: false
+      # Container-level seccompProfile, which the module sets only at pod level. Kyverno's
+      # restrict-seccomp-strict is not satisfied by the pod-level field alone (apps#3605).
+      - op: add
+        path: /spec/values/alloy/securityContext/seccompProfile
+        value:
+          type: RuntimeDefault
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-release
+      namespace: logging
+  # The event singleton needs the same destination, and nothing else.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/alloy/extraEnv
+        value:
+        - name: LOKI_WRITE_URL
+          value: https://loki.homelab.${dns_zone}/loki/api/v1/push
+        - name: K8S_CLUSTER_LABEL
+          value: nas
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-events-release
+      namespace: logging
+  # The metrics half, added as extra keys in the module's alloy-config. Additive only: the
+  # module's own write.alloy is repointed by LOKI_WRITE_URL above rather than replaced.
+  #
+  # These are verbatim copies of clusters/nas/services/logging/conf.d/*.alloy -- a Flux patch
+  # is inline-only and cannot reference a file. Edit those, not this copy;
+  # ci/scripts/alloy-lint.sh check-embedded fails when they drift.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: alloy-config
+        namespace: logging
+      data:
+        cluster-kubelet.alloy: |
+          // Both endpoints below are allow-lists: a metric not named in them does not arrive.
+
+          prometheus.scrape "cluster_kubelet" {
+          	targets = [{
+          		__address__ = sys.env("K8S_NODE_IP") + ":10250",
+          		instance    = sys.env("K8S_NODE_NAME"),
+          		node        = sys.env("K8S_NODE_NAME"),
+          		job         = "kubelet",
+
+          		// Read by nas:telemetry_discovered_targets_up, which selects the ABSENCE of this label. A
+          		// static scrape added here without it stops that rule ever reaching zero.
+          		collector_scrape = "static",
+          	}]
+          	forward_to = [prometheus.relabel.cluster_kubelet_keep.receiver]
+          	scheme     = "https"
+          	// Port 10250 directly needs only `nodes/metrics`; via the apiserver proxy it would need
+          	// `nodes/proxy`, which also grants exec and logs.
+          	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+          	honor_labels      = true
+
+          	scrape_interval = "60s"
+          	scrape_timeout  = "30s"
+
+          	tls_config {
+          		// The kubelet serves a self-signed cert unless serverTLSBootstrap is on, which k3s is not.
+          		insecure_skip_verify = true
+          	}
+          }
+
+          prometheus.relabel "cluster_kubelet_keep" {
+          	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__name__"]
+
+          		// `up` and `scrape_*` must stay: prometheus.scrape emits them through this component, unlike
+          		// Prometheus's metric_relabel_configs, so dropping them drops the series the gate queries.
+          		regex = "up|scrape_.+|kubelet_volume_stats_.+|kubelet_volume_metric_collection_duration_seconds_count|" + "kubelet_running_(pods|containers)|kubelet_node_name|kubelet_pleg_relist_duration_seconds_count|" + "kubelet_runtime_operations(_errors)?_total|kubelet_started_(pods|containers)_errors_total|" + "kubelet_certificate_manager_(client|server)_expiration_renew_errors|" + "kubelet_certificate_manager_client_ttl_seconds|kubelet_server_expiration_renew_errors|" + "kubelet_evictions|rest_client_requests_total|storage_operation_duration_seconds_count|" + "storage_operation_errors_total|kubernetes_build_info"
+          	}
+
+          	rule {
+          		action = "labeldrop"
+          		regex  = "uid"
+          	}
+          }
+
+          prometheus.scrape "cluster_kubelet_cadvisor" {
+          	targets = [{
+          		__address__      = sys.env("K8S_NODE_IP") + ":10250",
+          		instance         = sys.env("K8S_NODE_NAME"),
+          		node             = sys.env("K8S_NODE_NAME"),
+          		job              = "kubelet-cadvisor",
+          		collector_scrape = "static",
+          	}]
+          	forward_to        = [prometheus.relabel.cluster_cadvisor_trim.receiver]
+          	scheme            = "https"
+          	metrics_path      = "/metrics/cadvisor"
+          	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+          	honor_labels      = true
+          	scrape_interval   = "60s"
+          	// Alloy's 10s default is reachable: one hung mount takes a gather past it, and the resulting
+          	// `up = 0` is a fresh sample, so staleness stays green while the target reports nothing.
+          	scrape_timeout = "30s"
+
+          	tls_config {
+          		insecure_skip_verify = true
+          	}
+          }
+
+          prometheus.relabel "cluster_cadvisor_trim" {
+          	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__name__"]
+
+          		regex = "up|scrape_.+|container_cpu_usage_seconds_total|container_cpu_cfs_(periods|" + "throttled_periods)_total|container_memory_(working_set_bytes|usage_bytes|rss|cache|failcnt)|" + "container_fs_(usage_bytes|limit_bytes|reads_bytes_total|writes_bytes_total)|" + "container_network_(receive|transmit)_(bytes|errors|packets_dropped)_total|container_(last_seen|" + "start_time_seconds|processes)|container_oom_events_total|machine_(cpu_cores|memory_bytes)"
+          	}
+
+          	rule {
+          		action        = "drop"
+          		source_labels = ["__name__", "image"]
+          		separator     = ";"
+          		// Scoped to cpu|memory: cAdvisor attaches no `image` label to filesystem stats, so an
+          		// unscoped `container_([a-z_]+);` deletes every container_fs_* series the keep-list above
+          		// retains.
+          		regex = "container_(cpu|memory)_[a-z_]+;"
+          	}
+
+          	rule {
+          		action = "labeldrop"
+          		regex  = "uid"
+          	}
+          }
+        cluster-metrics.alloy: |
+          // SINGLE-NODE ASSUMPTION: these components discover cluster-wide targets but run in a
+          // DaemonSet, so a second node would double every discovered series.
+
+          prometheus.operator.servicemonitors "cluster_default" {
+          	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+          	scrape {
+          		default_scrape_interval = "60s"
+          	}
+
+          	// Without this, a ServiceMonitor using bearerTokenFile is dropped with no target and no
+          	// complaint. Three on this cluster do.
+          	allow_arbitrary_file_access = true
+          }
+
+          prometheus.operator.probes "cluster_default" {
+          	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+          	scrape {
+          		default_scrape_interval = "60s"
+          	}
+          }
+        cluster-node.alloy: |
+          prometheus.exporter.unix "cluster_node" {
+          	// Host paths: without them the exporter silently reports the container's own filesystem.
+          	rootfs_path = "/host/root"
+          	procfs_path = "/host/proc"
+          	sysfs_path  = "/host/sys"
+
+          	set_collectors = [
+          		"cpu",
+          		"diskstats",
+          		"filefd",
+          		"filesystem",
+          		"loadavg",
+          		"meminfo",
+          		"netdev",
+          		"pressure",
+          		"stat",
+          		"time",
+          		"uname",
+          		"vmstat",
+          	]
+
+          	filesystem {
+          		// statfs on a hung network mount blocks. This cluster has 18 NFS PVs whose global mounts sit
+          		// under /var/lib/kubelet/plugins and cannot be excluded, because the store's iSCSI mount will
+          		// live beside them. Without this bound one dead mount takes the whole exporter past its
+          		// scrape timeout and every node metric disappears.
+          		mount_timeout = "5s"
+
+          		fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|" + "mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+          		mount_points_exclude = "^/(dev|proc|sys|run/credentials/.+|var/lib/docker/.+|var/lib/kubelet/pods/.+|" + "var/lib/containers/storage/.+)(/.*)?$"
+          	}
+          }
+
+          prometheus.scrape "cluster_node" {
+          	targets    = prometheus.exporter.unix.cluster_node.targets
+          	forward_to = [prometheus.relabel.cluster_node_identity.receiver]
+          	job_name   = "node-exporter"
+
+          	scrape_interval = "60s"
+          	scrape_timeout  = "30s"
+          }
+
+          prometheus.relabel "cluster_node_identity" {
+          	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+          	rule {
+          		action = "replace"
+          		// prometheus.exporter.unix stamps job=integrations/unix on its own targets, and a target
+          		// label beats prometheus.scrape's job_name argument.
+          		replacement  = "node-exporter"
+          		target_label = "job"
+          	}
+
+          	rule {
+          		action = "replace"
+          		// See kubelet.alloy: read by nas:telemetry_discovered_targets_up.
+          		replacement  = "static"
+          		target_label = "collector_scrape"
+          	}
+
+          	rule {
+          		action       = "replace"
+          		replacement  = sys.env("K8S_NODE_NAME")
+          		target_label = "instance"
+          	}
+
+          	rule {
+          		action       = "replace"
+          		replacement  = sys.env("K8S_NODE_NAME")
+          		target_label = "node"
+          	}
+          }
+        cluster-self.alloy: |
+          prometheus.scrape "cluster_self" {
+          	targets = [{
+          		// Loopback rather than the chart's ServiceMonitor, so the metrics reporting on the pipeline
+          		// do not depend on the discovery they report about; serviceMonitor.enabled is false for it.
+          		__address__      = "127.0.0.1:12345",
+          		instance         = sys.env("K8S_NODE_NAME"),
+          		job              = "alloy",
+          		collector_scrape = "static",
+          	}]
+          	forward_to = [prometheus.relabel.cluster_self_keep.receiver]
+
+          	scrape_interval = "60s"
+          	scrape_timeout  = "30s"
+          }
+
+          prometheus.relabel "cluster_self_keep" {
+          	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+          	rule {
+          		action        = "keep"
+          		source_labels = ["__name__"]
+
+          		// Allow-list: every name here is read by a nas:telemetry_* rule.
+          		regex = "up|scrape_.+|alloy_build_info|alloy_component_controller_(running_components|evaluating)|" + "alloy_component_evaluation_seconds_(count|sum)|loki_write_(sent|dropped)_(entries|bytes)_total|" + "loki_write_batch_retries_total|prometheus_remote_storage_(samples_total|samples_failed_total|" + "samples_retried_total|samples_dropped_total|samples_pending|highest_timestamp_in_seconds|" + "queue_highest_sent_timestamp_seconds|shards|shards_desired|shards_max|shards_min|" + "enqueue_retries_total|bytes_total)|prometheus_remote_write_wal_(samples_appended_total|" + "storage_size_bytes)|prometheus_target_scrapes_exceeded_sample_limit_total|go_goroutines|" + "go_memstats_alloc_bytes|process_(resident_memory_bytes|cpu_seconds_total)"
+          	}
+          }
+        cluster-write-metrics.alloy: |
+          // The metrics egress. The module's write.alloy carries the log path only.
+
+          prometheus.remote_write "cluster_default" {
+          	endpoint {
+          		// An env var rather than a Flux substitution variable: this ConfigMap has post-build
+          		// substitution disabled, so a substitution here would render an empty URL and the
+          		// collector would come up healthy shipping nothing.
+          		url = sys.env("HOMELAB_PROMETHEUS_WRITE_URL")
+
+          		// Do not raise the wal keepalive: this WAL is on a hostPath, which is not counted against
+          		// ephemeral-storage limits, so nothing evicts the pod if it grows.
+          		queue_config { }
+          	}
+
+          	external_labels = {
+          		// `k8s_cluster`, not `cluster`: `cluster` already carries CloudNativePG's Postgres-cluster
+          		// name on live series at the destination.
+          		k8s_cluster = "nas",
+          	}
+          }
+    target:
+      kind: ConfigMap
+      name: alloy-config
+      namespace: logging

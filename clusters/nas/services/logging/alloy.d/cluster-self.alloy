@@ -1,0 +1,26 @@
+prometheus.scrape "cluster_self" {
+	targets = [{
+		// Loopback rather than the chart's ServiceMonitor, so the metrics reporting on the pipeline
+		// do not depend on the discovery they report about; serviceMonitor.enabled is false for it.
+		__address__      = "127.0.0.1:12345",
+		instance         = sys.env("K8S_NODE_NAME"),
+		job              = "alloy",
+		collector_scrape = "static",
+	}]
+	forward_to = [prometheus.relabel.cluster_self_keep.receiver]
+
+	scrape_interval = "60s"
+	scrape_timeout  = "30s"
+}
+
+prometheus.relabel "cluster_self_keep" {
+	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+
+		// Allow-list: every name here is read by a nas:telemetry_* rule.
+		regex = "up|scrape_.+|alloy_build_info|alloy_component_controller_(running_components|evaluating)|" + "alloy_component_evaluation_seconds_(count|sum)|loki_write_(sent|dropped)_(entries|bytes)_total|" + "loki_write_batch_retries_total|prometheus_remote_storage_(samples_total|samples_failed_total|" + "samples_retried_total|samples_dropped_total|samples_pending|highest_timestamp_in_seconds|" + "queue_highest_sent_timestamp_seconds|shards|shards_desired|shards_max|shards_min|" + "enqueue_retries_total|bytes_total)|prometheus_remote_write_wal_(samples_appended_total|" + "storage_size_bytes)|prometheus_target_scrapes_exceeded_sample_limit_total|go_goroutines|" + "go_memstats_alloc_bytes|process_(resident_memory_bytes|cpu_seconds_total)"
+	}
+}

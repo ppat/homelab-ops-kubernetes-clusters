@@ -25,6 +25,7 @@ jobs:
         - .github/workflows/**.yaml
         alloy:
         - '**/*.alloy'
+        - '**/alloy-version.yaml'
         - 'clusters/*/kustomizations/*.yaml'
         - ci/scripts/alloy-lint.sh
         - ci/scripts/alloy-lint-version.yaml

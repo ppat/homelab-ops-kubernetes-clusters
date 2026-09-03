@@ -1,0 +1,20 @@
+// The metrics egress. The module's write.alloy carries the log path only.
+
+prometheus.remote_write "cluster_default" {
+	endpoint {
+		// An env var rather than a Flux substitution variable: this ConfigMap has post-build
+		// substitution disabled, so a substitution here would render an empty URL and the
+		// collector would come up healthy shipping nothing.
+		url = sys.env("HOMELAB_PROMETHEUS_WRITE_URL")
+
+		// Do not raise the wal keepalive: this WAL is on a hostPath, which is not counted against
+		// ephemeral-storage limits, so nothing evicts the pod if it grows.
+		queue_config { }
+	}
+
+	external_labels = {
+		// `k8s_cluster`, not `cluster`: `cluster` already carries CloudNativePG's Postgres-cluster
+		// name on live series at the destination.
+		k8s_cluster = "nas",
+	}
+}

@@ -1,0 +1,9 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# What the module's alloy subdirectory assumes but does not create: the namespaces its
+# HelmReleases target, and the HelmRepository they reference by name.
+resources:
+- namespace.yaml
+- helm-repository-grafana.yaml

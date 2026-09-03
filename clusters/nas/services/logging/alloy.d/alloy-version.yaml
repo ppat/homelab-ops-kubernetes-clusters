@@ -1,0 +1,6 @@
+---
+# nas deploys a newer observability-core tag than homelab, so its Alloy is a different binary.
+# Track the appVersion of the alloy chart the module tag in
+# clusters/nas/sources/infra-observability-core.yaml deploys.
+# renovate: datasource=docker depName=grafana/alloy
+version: "v1.19.2"

@@ -1,0 +1,72 @@
+prometheus.exporter.unix "cluster_node" {
+	// Host paths: without them the exporter silently reports the container's own filesystem.
+	rootfs_path = "/host/root"
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
+
+	set_collectors = [
+		"cpu",
+		"diskstats",
+		"filefd",
+		"filesystem",
+		"loadavg",
+		"meminfo",
+		"netdev",
+		"pressure",
+		"stat",
+		"time",
+		"uname",
+		"vmstat",
+	]
+
+	filesystem {
+		// statfs on a hung network mount blocks. This cluster has 18 NFS PVs whose global mounts sit
+		// under /var/lib/kubelet/plugins and cannot be excluded, because the store's iSCSI mount will
+		// live beside them. Without this bound one dead mount takes the whole exporter past its
+		// scrape timeout and every node metric disappears.
+		mount_timeout = "5s"
+
+		fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|" + "mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+		mount_points_exclude = "^/(dev|proc|sys|run/credentials/.+|var/lib/docker/.+|var/lib/kubelet/pods/.+|" + "var/lib/containers/storage/.+)(/.*)?$"
+	}
+}
+
+prometheus.scrape "cluster_node" {
+	targets    = prometheus.exporter.unix.cluster_node.targets
+	forward_to = [prometheus.relabel.cluster_node_identity.receiver]
+	job_name   = "node-exporter"
+
+	scrape_interval = "60s"
+	scrape_timeout  = "30s"
+}
+
+prometheus.relabel "cluster_node_identity" {
+	forward_to = [prometheus.remote_write.cluster_default.receiver]
+
+	rule {
+		action = "replace"
+		// prometheus.exporter.unix stamps job=integrations/unix on its own targets, and a target
+		// label beats prometheus.scrape's job_name argument.
+		replacement  = "node-exporter"
+		target_label = "job"
+	}
+
+	rule {
+		action = "replace"
+		// See kubelet.alloy: read by nas:telemetry_discovered_targets_up.
+		replacement  = "static"
+		target_label = "collector_scrape"
+	}
+
+	rule {
+		action       = "replace"
+		replacement  = sys.env("K8S_NODE_NAME")
+		target_label = "instance"
+	}
+
+	rule {
+		action       = "replace"
+		replacement  = sys.env("K8S_NODE_NAME")
+		target_label = "node"
+	}
+}

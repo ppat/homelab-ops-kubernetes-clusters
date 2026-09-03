@@ -41,7 +41,18 @@ if [[ -z "${alloy_version}" ]]; then
   echo "alloy-lint.sh: could not read pinned version from ${script_dir}/alloy-lint-version.yaml" >&2
   exit 1
 fi
-alloy_image="grafana/alloy:${alloy_version}"
+
+# A directory may pin its own version. Consumers of observability-core do not all deploy the same
+# module tag, so its Alloy version differs between them, and `alloy validate` is only evidence if
+# it is the binary that will load the config.
+dir_alloy_version() {
+  local f="$1/alloy-version.yaml"
+  if [[ -f "${f}" ]]; then
+    sed -n 's/^version: "\(.*\)"$/\1/p' "${f}"
+  else
+    echo "${alloy_version}"
+  fi
+}
 
 # Matches the --stability.level the module's HelmRelease pins on the alloy container.
 stability_level="generally-available"
@@ -53,12 +64,13 @@ name_prefix="cluster_"
 
 run_alloy() {
   local mount_dir="$1"
-  shift
+  local version="$2"
+  shift 2
   docker run --rm \
     --user "$(id -u):$(id -g)" \
     --volume "${mount_dir}:/workdir" \
     --workdir /workdir \
-    "${alloy_image}" \
+    "grafana/alloy:${version}" \
     "$@"
 }
 
@@ -83,8 +95,10 @@ validate_dirs() {
     scratch="$(mktemp -d)"
     cp "${d}"/*.alloy "${scratch}/"
     cp "${stub_file}" "${scratch}/zz-module-anchors.alloy"
-    echo "alloy validate: ${d} (+ module anchor stub)"
-    run_alloy "${scratch}" validate --stability.level="${stability_level}" . || rc=1
+    local version
+    version="$(dir_alloy_version "${d}")"
+    echo "alloy validate: ${d} (+ module anchor stub, alloy ${version})"
+    run_alloy "${scratch}" "${version}" validate --stability.level="${stability_level}" . || rc=1
     rm -rf "${scratch}"
   done
   return "${rc}"
@@ -159,7 +173,7 @@ fi
 case "${mode}" in
 fmt-check)
   for f in "$@"; do
-    run_alloy "$(pwd)" fmt --test "${f}"
+    run_alloy "$(pwd)" "$(dir_alloy_version "$(dirname -- "${f}")")" fmt --test "${f}"
   done
   ;;
 validate)
