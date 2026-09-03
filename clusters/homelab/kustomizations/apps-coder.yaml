@@ -31,6 +31,8 @@ spec:
   postBuild:
     substitute:
       cert_issuer: letsencrypt-production-issuer
+      backup_s3_host: s3.nas
+      backup_s3_region: us-east-1
       db_bootstrap_database: coder
       db_bootstrap_owner: coder
       db_name: coder-db
