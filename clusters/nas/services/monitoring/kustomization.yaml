@@ -1,0 +1,10 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- namespace.yaml
+- helm-repository-prometheus-community.yaml
+- helm-release-prometheus-operator-crds.yaml
+- helm-release-kube-state-metrics.yaml
+- helm-release-node-exporter.yaml

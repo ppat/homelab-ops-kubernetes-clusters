@@ -1,0 +1,13 @@
+---
+# Name/namespace must match what infra-observability-core's alloy HelmReleases
+# reference (infrastructure/subsystems/observability-core/helm-repository-grafana.yaml) -
+# the alloy submodule cherry-pick (infra-observability-alloy Kustomization) does not fetch
+# the module root, so its HelmRepository isn't available unless declared here too.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: grafana-repository
+  namespace: flux-system
+spec:
+  interval: 15m0s
+  url: https://grafana.github.io/helm-charts

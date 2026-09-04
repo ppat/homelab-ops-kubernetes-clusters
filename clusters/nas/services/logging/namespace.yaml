@@ -1,0 +1,15 @@
+---
+# Same orphaned-shell situation and the same ssa:merge behavior as
+# monitoring/namespace.yaml - see that file's comment. Created here rather than by the
+# alloy/ module cherry-pick because that Kustomization's spec.path points at the
+# module's alloy/ submodule directly, which never fetches the module root's own
+# namespace.yaml - the same gap the nas/minio cherry-pick has for its namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge
+  labels:
+    goldilocks.fairwinds.com/enabled: "true"

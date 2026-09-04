@@ -1,0 +1,20 @@
+---
+# Already exists on this cluster as an orphaned shell (Active, empty, unlabeled) left
+# behind by a torn-down GitOps structure that predates the current per-component
+# Kustomizations.
+#
+# kustomize.toolkit.fluxcd.io/ssa: merge does not control adoption - server-side apply
+# adopts a pre-existing object regardless of this annotation. What it actually does is
+# exclude this object from kustomize-controller's metadata cleanup step, which otherwise
+# strips kubectl.kubernetes.io/last-applied-configuration and rewrites managedFields
+# entries for disallowed field managers (see clusters/homelab/storage/infra/node/
+# beelink-ser8-1.yaml for the fuller explanation and the Flux doc citation).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge
+  labels:
+    goldilocks.fairwinds.com/enabled: "true"

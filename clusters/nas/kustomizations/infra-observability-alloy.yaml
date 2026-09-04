@@ -1,0 +1,248 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-observability-alloy
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: config-services
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-core/alloy
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-core
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      # `getent group systemd-journal` was not obtainable for this host (no cloud-init/
+      # provisioning config for it exists in any checked-out repo, and a live read-only
+      # investigation can't reach the host's /etc/group) - 999 mirrors homelab's own
+      # value on the same assumption it was allocated the same way. VERIFY on the actual
+      # host before trusting this: a wrong GID fails silently (the journal tailer reports
+      # healthy and collects zero entries), so if `{k8s_cluster="nas", systemd_unit=~".+"}`
+      # is empty in Loki after this deploys, re-derive the real GID and fix this value.
+      systemd_journal_gid: "999"
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+  patches:
+  # LOKI_WRITE_URL/K8S_CLUSTER_LABEL point this cluster's node collector at homelab's
+  # Loki instead of the in-cluster default (which doesn't exist here). PROMETHEUS_WRITE_URL
+  # is the same seam for cluster-metrics.alloy's prometheus.remote_write - required, not
+  # optional, since alloy-config carries substitute:disabled (see that file's own comment).
+  # Both the memory limit and request are raised for the scrape targets + WAL
+  # cluster-metrics.alloy adds on top of log shipping - the request moves too because the
+  # module's own comment on this HelmRelease explains why: the request, not the limit,
+  # governs eviction ranking, so a collector under its request is a first-choice eviction
+  # candidate regardless of how high the limit is set. Both figures are an estimate, not
+  # a measurement - re-check container_memory_working_set_bytes{container="alloy"} after
+  # this has run for a few days and tighten or raise further from what's actually
+  # observed.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: alloy-release
+        namespace: logging
+      spec:
+        values:
+          alloy:
+            extraEnv:
+            - name: LOKI_WRITE_URL
+              value: https://loki.${homelab_domain_name}/loki/api/v1/push
+            - name: K8S_CLUSTER_LABEL
+              value: nas
+            - name: PROMETHEUS_WRITE_URL
+              value: https://prometheus.${homelab_domain_name}/api/v1/write
+            resources:
+              requests:
+                memory: 256Mi
+              limits:
+                memory: 768Mi
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-release
+      namespace: logging
+  # Independent seam, same two vars - see helm-release-alloy-events.yaml (apps repo) for
+  # why this instance needs its own copy rather than sharing the node collector's.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: alloy-events-release
+        namespace: logging
+      spec:
+        values:
+          alloy:
+            extraEnv:
+            - name: LOKI_WRITE_URL
+              value: https://loki.${homelab_domain_name}/loki/api/v1/push
+            - name: K8S_CLUSTER_LABEL
+              value: nas
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: alloy-events-release
+      namespace: logging
+  # This cluster's own metrics-collection job, added as an extra key in the module's
+  # alloy-config ConfigMap - the extension seam its README documents. Alloy loads
+  # /etc/alloy as a directory, so this file joins the module's own *.alloy files in one
+  # component graph; the cluster_ name prefix keeps it collision-free.
+  #
+  # This patch is the single source of truth for the fragment below - there is no
+  # separate on-disk copy to keep in sync. Flux's spec.patches are inline-only (a patch
+  # cannot reference a file), so `ci/scripts/alloy-lint.sh` extracts this *.alloy data
+  # key directly from this patch and runs `alloy fmt`/`alloy validate` against exactly
+  # what Flux ships, rather than against a file this repo would otherwise have to keep
+  # byte-identical by hand.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: alloy-config
+        namespace: logging
+      data:
+        cluster-metrics.alloy: |
+          // Cluster-owned metrics pipeline, added as an extra key in the module's alloy-config
+          // ConfigMap - the extension seam its README documents. Runs inside the module's
+          // node-collector DaemonSet (this cluster is single-node, so that's one pod, not one
+          // per node) rather than as a second Alloy: no separate chart pin, no separate RBAC
+          // identity, no separate WAL storage question - it inherits the collector's own
+          // /var/lib/alloy hostPath for free.
+          //
+          // Single-node is load-bearing, not just an optimization: this runs inside a DaemonSet,
+          // so a second node would run every ServiceMonitor/PodMonitor discovery and both node
+          // scrapes on every node, remote-writing each target's series once per node under
+          // identical label sets. If this cluster ever gains a second node, this fragment must
+          // move to a singleton (like the module's own event collector) or gain clustering first.
+          //
+          // Read before editing:
+          //
+          //   - This patch is the single source of truth - there is no on-disk copy of this
+          //     fragment. Flux's spec.patches are inline-only (a patch cannot reference a
+          //     file), which is why this content lives here rather than as a file; CI
+          //     (`ci/scripts/alloy-lint.sh`) extracts this *.alloy data key directly from
+          //     this patch and runs `alloy fmt`/`alloy validate` against exactly what Flux
+          //     applies to the module's alloy-config ConfigMap and thereby /etc/alloy.
+          //   - Every *.alloy file in /etc/alloy shares one component namespace, so
+          //     cluster-supplied components must carry the `cluster_` prefix the module
+          //     requires. A duplicate name fails the whole config load, not just this file.
+          //   - PROMETHEUS_WRITE_URL is read via sys.env(), not substituted as a Flux postBuild
+          //     variable directly in this file: the ConfigMap this generates into carries
+          //     kustomize.toolkit.fluxcd.io/substitute: disabled (the module's relabel rules
+          //     contain literal $1 tokens Flux's substitution would otherwise expand to empty
+          //     strings), so a variable reference placed here would never be filled in. The env
+          //     var is set via alloy.extraEnv on the alloy-release HelmRelease instead, where
+          //     postBuild substitution does apply.
+          //   - kubelet's own request routing maps every /metrics* subpath (including
+          //     /metrics/cadvisor below) to the nodes/metrics subresource, not the more
+          //     sensitive nodes/proxy - the RBAC this fragment needs (granted by the standalone
+          //     ClusterRole/ClusterRoleBinding alongside this file, not a patch) reflects that.
+
+          // Discovers every ServiceMonitor/PodMonitor already on this cluster (minio, harbor,
+          // cert-manager, kyverno, traefik, external-secrets, ...) - they light up with zero
+          // per-workload changes the moment this scrapes and forwards them.
+          prometheus.operator.servicemonitors "cluster_metrics" {
+          	forward_to = [prometheus.remote_write.cluster_metrics.receiver]
+          }
+
+          prometheus.operator.podmonitors "cluster_metrics" {
+          	forward_to = [prometheus.remote_write.cluster_metrics.receiver]
+          }
+
+          discovery.kubernetes "cluster_metrics_nodes" {
+          	role = "node"
+          }
+
+          // job_name is "kubelet" on both scrapes - not "cadvisor" on the second - to match what
+          // every kube-prometheus-stack/kubernetes-mixin panel and recording rule actually selects:
+          // {job="kubelet", metrics_path="/metrics/cadvisor"} for cadvisor data,
+          // {job="kubelet", metrics_path="/metrics"} for kubelet's own metrics. Both come from
+          // prometheus-operator's own kubelet ServiceMonitor generating this exact shape upstream;
+          // matching it is what makes nas's series visible to dashboards/rules built for it.
+          //
+          // metrics_path is stamped as a real target label (not just the HTTP path each scrape
+          // requests) because it is also what keeps the two scrapes' synthetic per-target series
+          // (up, scrape_duration_seconds, scrape_samples_scraped, ...) from colliding: those
+          // inherit every label on the target they were scraped from, and with both scrapes now
+          // sharing job="kubelet" and an identical instance (same node, same port), metrics_path is
+          // the only remaining thing that tells them apart. Two small discovery.relabel components,
+          // each feeding straight off discovery.kubernetes.cluster_metrics_nodes.targets, are the
+          // only way to add a static label here - Alloy's expression language has no list
+          // comprehension or map-merge to do it inline on the targets argument itself (verified: an
+          // inline `[for t in ... : merge(...)]` expression fails to parse).
+          discovery.relabel "cluster_kubelet_targets" {
+          	targets = discovery.kubernetes.cluster_metrics_nodes.targets
+
+          	rule {
+          		action       = "replace"
+          		target_label = "metrics_path"
+          		replacement  = "/metrics"
+          	}
+          }
+
+          discovery.relabel "cluster_cadvisor_targets" {
+          	targets = discovery.kubernetes.cluster_metrics_nodes.targets
+
+          	rule {
+          		action       = "replace"
+          		target_label = "metrics_path"
+          		replacement  = "/metrics/cadvisor"
+          	}
+          }
+
+          prometheus.scrape "cluster_kubelet" {
+          	targets           = discovery.relabel.cluster_kubelet_targets.output
+          	job_name          = "kubelet"
+          	scheme            = "https"
+          	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+          	tls_config {
+          		insecure_skip_verify = true
+          	}
+
+          	forward_to = [prometheus.remote_write.cluster_metrics.receiver]
+          }
+
+          prometheus.scrape "cluster_cadvisor" {
+          	targets           = discovery.relabel.cluster_cadvisor_targets.output
+          	job_name          = "kubelet"
+          	metrics_path      = "/metrics/cadvisor"
+          	scheme            = "https"
+          	bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+          	tls_config {
+          		insecure_skip_verify = true
+          	}
+
+          	forward_to = [prometheus.remote_write.cluster_metrics.receiver]
+          }
+
+          prometheus.remote_write "cluster_metrics" {
+          	external_labels = {
+          		k8s_cluster = "nas",
+          	}
+
+          	endpoint {
+          		// If this is ever unset (the extraEnv patch below is dropped or retargeted),
+          		// this evaluates to url="" - measured behavior: the component graph stays
+          		// green, the WAL watcher runs normally, and remote_write retries forever with
+          		// zero data delivered. No error, no unhealthy component, no signal anywhere
+          		// except an absence in Prometheus. Unlike the module's own LOKI_WRITE_URL seam
+          		// there is no in-cluster default to coalesce() against here.
+          		url = sys.env("PROMETHEUS_WRITE_URL")
+          	}
+          }
+    target:
+      kind: ConfigMap
+      name: alloy-config
+      namespace: logging
