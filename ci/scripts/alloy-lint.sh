@@ -10,25 +10,26 @@
 # plus its own stand-in fragment, never this cluster's.
 #
 # Usage:
-#   alloy-lint.sh fmt-check <file>...    # fail if formatting would change a file
-#   alloy-lint.sh validate  <file>...    # validate each parent directory + name prefix
-#   alloy-lint.sh check-embedded         # fragment file == the copy embedded in the
-#                                        # Flux Kustomization that injects it
+#   alloy-lint.sh fmt-check [file...]    # fail if formatting would change a fragment
+#   alloy-lint.sh validate  [file...]    # validate each fragment group
 #
-# All three modes are driven by the `alloy` CI job in .github/workflows/lint.yaml --
-# there is no local pre-commit hook (this repo's primary dev environment has no Docker,
-# and the shared lint-pre-commit reusable workflow only runs a fixed hardcoded hook-id
-# list, so a local hook here would get zero CI coverage anyway). There is deliberately
-# no `fmt-write` mode: it existed only to back that hook, and nothing else calls it.
+# Every cluster-owned Alloy fragment lives ONLY inside a Flux Kustomization's
+# spec.patches: patches are inline-only, so there is no file kustomize's own build
+# could ever point at. fmt-check and validate therefore EXTRACT every `*.alloy`-named
+# data key from every ConfigMap-targeting patch under clusters/*/kustomizations/*.yaml
+# and lint the extracted bytes directly -- the patch is the only copy, and what CI
+# checks is exactly what Flux ships. [file...] arguments are still accepted and linted
+# the same way, for any fragment that does live on disk.
 #
-# `validate` is directory-scoped and adds ci/alloy/module-anchors.alloy.stub, because
-# alloy loads /etc/alloy as one merged component graph and these fragments reference
-# module-owned components from the other repo. See that file for what the stub does and
-# does not prove.
+# `validate` groups every `*.alloy` key from the SAME spec.patches entry into one
+# scratch directory before validating, mirroring how they'd actually be merged into one
+# generated ConfigMap and thus into one /etc/alloy load at runtime -- plus
+# ci/alloy/module-anchors.alloy.stub, because alloy loads /etc/alloy as one merged
+# component graph and these fragments reference module-owned components from the other
+# repo. See that file for what the stub does and does not prove.
 #
 # fmt/validate run the pinned grafana/alloy image (ci/scripts/alloy-lint-version.yaml)
-# so nothing needs the alloy binary installed -- only docker. check-embedded needs
-# neither: just yq and diff.
+# so nothing needs the alloy binary installed -- only docker.
 
 set -euo pipefail
 
@@ -75,31 +76,16 @@ check_name_prefix() {
   return "${rc}"
 }
 
-validate_dirs() {
-  local rc=0
-  mapfile -t dirs < <(for f in "$@"; do dirname -- "${f}"; done | sort -u)
-  for d in "${dirs[@]}"; do
-    local scratch
-    scratch="$(mktemp -d)"
-    cp "${d}"/*.alloy "${scratch}/"
-    cp "${stub_file}" "${scratch}/zz-module-anchors.alloy"
-    echo "alloy validate: ${d} (+ module anchor stub)"
-    run_alloy "${scratch}" validate --stability.level="${stability_level}" . || rc=1
-    rm -rf "${scratch}"
-  done
-  return "${rc}"
-}
-
-# A Flux Kustomization's spec.patches are inline-only: they cannot reference a file. The
-# fragments therefore exist twice -- as a real .alloy file (what gets formatted and
-# validated) and as a verbatim copy inside the patch (what Flux actually applies). This
-# is the guard that keeps the copy honest.
-check_embedded() {
-  local rc=0 found=0
-  local ks rel cluster n i kind name key src
+# Extracts every `*.alloy` data key from every ConfigMap-targeting spec.patches entry
+# across clusters/*/kustomizations/*.yaml into "${1}", one subdirectory per patch entry
+# (named <kustomization-basename>-patch<index>) so that keys added together in one
+# patch -- and therefore merged into the same ConfigMap and the same /etc/alloy load --
+# land together on disk too. Echoes the number of keys extracted.
+extract_embedded_fragments() {
+  local out_root="$1" found=0
+  local ks rel n i kind name key group_dir
   while IFS= read -r ks; do
     rel="${ks#"${repo_root}/"}"
-    cluster="$(echo "${rel}" | cut -d'/' -f2)"
     n="$(yq '.spec.patches | length' "${ks}")"
     [[ "${n}" == "null" ]] && continue
     for ((i = 0; i < n; i++)); do
@@ -109,68 +95,83 @@ check_embedded() {
       local tmp
       tmp="$(mktemp -d)"
       yq ".spec.patches[${i}].patch" "${ks}" > "${tmp}/patch.yaml"
+      group_dir=""
       while IFS= read -r key; do
         [[ "${key}" == *.alloy ]] || continue
+        if [[ -z "${group_dir}" ]]; then
+          group_dir="${out_root}/$(basename "${ks}" .yaml)-patch${i}"
+          mkdir -p "${group_dir}"
+        fi
+        # $(...) strips the one trailing newline end-of-file-fixer would otherwise
+        # leave; immaterial to fmt/validate, kept for tidy extracted files.
+        printf '%s\n' "$(yq ".data.\"${key}\"" "${tmp}/patch.yaml")" > "${group_dir}/${key}"
         found=$((found + 1))
-        # Both sides go through the same $(...) round trip, which strips trailing
-        # newlines, so the comparison is exact on content and blind only to how many
-        # newlines the file ends with (end-of-file-fixer already pins that to one).
-        printf '%s\n' "$(yq ".data.\"${key}\"" "${tmp}/patch.yaml")" > "${tmp}/embedded"
-        src="$(find "${repo_root}/clusters/${cluster}/services" -type f -name "${key}" -print -quit)"
-        if [[ -z "${src}" ]]; then
-          echo "alloy-lint.sh: ${rel} embeds '${key}' but no such file exists under clusters/${cluster}/services" >&2
-          rc=1
-          continue
-        fi
-        printf '%s\n' "$(cat "${src}")" > "${tmp}/src"
-        if ! diff -u "${tmp}/src" "${tmp}/embedded" > "${tmp}/diff"; then
-          echo "alloy-lint.sh: ${rel} embeds a copy of ${src#"${repo_root}/"} that has drifted:" >&2
-          sed -e "s|${tmp}/src|${src#"${repo_root}/"}|" -e "s|${tmp}/embedded|<copy embedded in ${rel}>|" "${tmp}/diff" >&2
-          rc=1
-        else
-          echo "ok: ${rel} embeds ${src#"${repo_root}/"} verbatim"
-        fi
+        echo "alloy-lint.sh: extracted ${key} from ${rel} (spec.patches[${i}])" >&2
       done < <(yq '.data | keys | .[]' "${tmp}/patch.yaml")
       rm -rf "${tmp}"
     done
   done < <(find "${repo_root}/clusters" -path '*/kustomizations/*.yaml' -type f | sort)
-  if [[ "${found}" -eq 0 ]]; then
-    echo "alloy-lint.sh: found no embedded .alloy fragment to check" >&2
-    return 1
-  fi
+  echo "${found}"
+}
+
+validate_group() {
+  local d="$1" rc=0
+  local scratch
+  scratch="$(mktemp -d)"
+  cp "${d}"/*.alloy "${scratch}/"
+  cp "${stub_file}" "${scratch}/zz-module-anchors.alloy"
+  echo "alloy validate: ${d} (+ module anchor stub)"
+  run_alloy "${scratch}" validate --stability.level="${stability_level}" . || rc=1
+  rm -rf "${scratch}"
   return "${rc}"
 }
 
-mode="${1:?usage: alloy-lint.sh <fmt-check|validate|check-embedded> [file...]}"
+mode="${1:?usage: alloy-lint.sh <fmt-check|validate> [file...]}"
 shift
 
-if [[ "${mode}" == "check-embedded" ]]; then
-  check_embedded
-  exit
-fi
+case "${mode}" in
+fmt-check | validate) ;;
+*)
+  echo "alloy-lint.sh: unknown mode '${mode}' (expected fmt-check or validate)" >&2
+  exit 1
+  ;;
+esac
 
-# The CI job skips these modes when no *.alloy file matches; this guard only makes a
-# manual invocation with no files a no-op.
-if [[ $# -eq 0 ]]; then
-  echo "alloy-lint.sh: no files given, nothing to do"
+extract_dir="$(mktemp -d)"
+trap 'rm -rf "${extract_dir}"' EXIT
+extract_embedded_fragments "${extract_dir}" > /dev/null
+mapfile -t extracted_files < <(find "${extract_dir}" -name '*.alloy' -type f | sort)
+
+files=("$@" "${extracted_files[@]}")
+
+# Nothing to do only when both the caller passed no files AND nothing was embedded --
+# the latter is worth noticing (the extraction mechanism broken, or every fragment gone
+# from every Kustomization) but not worth failing the job over here: a silent no-op
+# matches how the CI job already tolerates an empty file list when
+# `git ls-files -- '*.alloy'` matches nothing.
+if [[ "${#files[@]}" -eq 0 ]]; then
+  echo "alloy-lint.sh: no fragments given and none embedded, nothing to do"
   exit 0
 fi
 
 case "${mode}" in
 fmt-check)
-  for f in "$@"; do
-    run_alloy "$(pwd)" fmt --test "${f}"
+  for f in "${files[@]}"; do
+    run_alloy "$(dirname "${f}")" fmt --test "$(basename "${f}")"
   done
   ;;
 validate)
-  # Both run even if the first fails, so one report covers everything.
   rc=0
-  check_name_prefix "$@" || rc=1
-  validate_dirs "$@" || rc=1
+  check_name_prefix "${files[@]}" || rc=1
+  # Explicit [file...] args are grouped per their own parent directory (the on-disk
+  # behavior this mode always had); extracted fragments are already grouped per patch
+  # entry by extract_embedded_fragments.
+  mapfile -t explicit_dirs < <(for f in "$@"; do dirname -- "${f}"; done | sort -u)
+  mapfile -t extracted_dirs < <(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | sort)
+  for d in "${explicit_dirs[@]}" "${extracted_dirs[@]}"; do
+    [[ -z "${d}" ]] && continue
+    validate_group "${d}" || rc=1
+  done
   exit "${rc}"
-  ;;
-*)
-  echo "alloy-lint.sh: unknown mode '${mode}' (expected fmt-check, validate or check-embedded)" >&2
-  exit 1
   ;;
 esac

@@ -276,10 +276,12 @@ spec:
   # loads /etc/alloy as a directory, so this file joins the module's own *.alloy files
   # in one component graph; the cluster_ name prefix keeps it collision-free.
   #
-  # The body below is a verbatim copy of
-  # clusters/homelab/services/logging/conf.d/cluster-pvc-logs.alloy. It is duplicated
-  # because a Flux patch is inline-only and cannot reference a file; edit that file, not
-  # this copy - `ci/scripts/alloy-lint.sh check-embedded` fails when the two differ.
+  # This patch is the single source of truth for the fragment below - there is no
+  # separate on-disk copy to keep in sync. Flux's spec.patches are inline-only (a patch
+  # cannot reference a file), so `ci/scripts/alloy-lint.sh` extracts this *.alloy data
+  # key directly from this patch and runs `alloy fmt`/`alloy validate` against exactly
+  # what Flux ships, rather than against a file this repo would otherwise have to keep
+  # byte-identical by hand.
   # yamllint disable-line rule:indentation
   - patch: |
       apiVersion: v1
@@ -295,11 +297,12 @@ spec:
           //
           // Read before editing:
           //
-          //   - This file is the source of truth, but it is not what Flux applies. A Flux
-          //     Kustomization's spec.patches are inline-only, so a verbatim copy of this file
-          //     is embedded in clusters/homelab/kustomizations/infra-observability-core.yaml,
-          //     which is how it reaches the module's alloy-config ConfigMap and thereby
-          //     /etc/alloy. `ci/scripts/alloy-lint.sh check-embedded` fails if the two drift.
+          //   - This patch is the single source of truth - there is no on-disk copy of this
+          //     fragment. Flux's spec.patches are inline-only (a patch cannot reference a
+          //     file), which is why this content lives here rather than as a file; CI
+          //     (`ci/scripts/alloy-lint.sh`) extracts this *.alloy data key directly from
+          //     this patch and runs `alloy fmt`/`alloy validate` against exactly what Flux
+          //     applies to the module's alloy-config ConfigMap and thereby /etc/alloy.
           //   - Every *.alloy file in /etc/alloy shares one component namespace, so
           //     cluster-supplied components must carry the `cluster_` prefix the module
           //     requires. A duplicate name fails the whole config load, not just this file --
