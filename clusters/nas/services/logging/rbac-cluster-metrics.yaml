@@ -1,0 +1,54 @@
+---
+# Grants the node collector's ServiceAccount (chart-rendered name `alloy` - confirmed via
+# `helm template alloy grafana/alloy --version 1.12.1 -f <the module's actual values>
+# --show-only templates/serviceaccount.yaml` against the pinned chart version, not
+# assumed) the additional access cluster-metrics.alloy needs beyond what the module's own
+# alloy-release HelmRelease grants (pods get/list/watch only). RBAC is additive - Kubernetes
+# unions ClusterRoleBindings rather than letting one replace another - so this stands
+# alongside the chart's own `alloy` ClusterRole/ClusterRoleBinding without touching them,
+# and survives a module upgrade that reshapes rbac.rules/rbac.clusterRules: this used to be
+# a JSON6902 patch appending onto those exact value-list paths, which broke the moment the
+# module's own list layout changed shape. A standalone binding has no such coupling.
+#
+# servicemonitors/podmonitors resolve Services/PodMonitors' own selectors down to
+# Endpoints/EndpointSlices/Pods; nodes+nodes/metrics back discovery.kubernetes role=node
+# and the kubelet/cadvisor scrapes in cluster-metrics.alloy. No configmaps/secrets grant:
+# the chart attributes those to remote.kubernetes.*, not to the prometheus.operator.*
+# components this fragment uses, and none of this cluster's existing ServiceMonitors
+# reference a Secret/ConfigMap today - add it back the day one does (the failure mode is a
+# loud RBAC forbidden in the collector's logs, not a silent one, so there is no cost to
+# waiting). NOT nodes/proxy: kubelet's own request routing maps every /metrics* subpath to
+# the nodes/metrics subresource, so scraping /metrics and /metrics/cadvisor never touches
+# the more sensitive proxy subresource. nodes/metrics only needs get (the scrapes issue
+# GET, nothing lists or watches a metrics subresource); discovery.kubernetes role=node
+# needs list+watch on nodes itself, not get.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy-cluster-metrics
+rules:
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "podmonitors"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["", "discovery.k8s.io"]
+  resources: ["services", "endpoints", "endpointslices"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes/metrics"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy-cluster-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy-cluster-metrics
+subjects:
+- kind: ServiceAccount
+  name: alloy
+  namespace: logging

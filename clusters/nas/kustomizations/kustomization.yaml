@@ -15,5 +15,7 @@ resources:
 - infra-database-core.yaml
 - apps-harbor.yaml
 - config-storage.yaml
+- config-services.yaml
+- infra-observability-alloy.yaml
 - policy-baseline-pss.yaml
 - policy-best-practices.yaml

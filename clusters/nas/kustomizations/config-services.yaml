@@ -1,0 +1,26 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services
+  namespace: flux-system
+spec:
+  dependsOn:
+  # This directory creates HelmReleases; without this, a bootstrap/DR reconcile can run
+  # it before infra-clusterops-core has installed helm-controller, and the HelmRelease
+  # CRD isn't there yet.
+  - name: infra-clusterops-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./clusters/nas/services
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  # Longer than config-storage's 2m0s (which this otherwise matches): the three
+  # HelmReleases this Kustomization creates each carry their own 5m0s timeout, so 2m0s
+  # could report this Kustomization failed before its own HelmReleases could possibly
+  # finish on a cold install.
+  timeout: 5m0s
+  wait: true

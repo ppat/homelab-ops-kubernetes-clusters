@@ -1,0 +1,65 @@
+---
+# `releaseName`/`targetNamespace` intentionally match a Helm release that no longer exists
+# (`kube-prometheus-stack` in `monitoring`), not this HelmRelease's own name. This cluster's
+# monitoring.coreos.com CRDs are leftovers from a torn-down kube-prometheus-stack install and
+# still carry that release's ownership annotations (`meta.helm.sh/release-name`,
+# `meta.helm.sh/release-namespace`) - Helm 3 refuses to touch an object whose annotations
+# point at a different release, so a HelmRelease presenting any other release identity would
+# fail with "invalid ownership metadata" on install. Presenting the same identity here is
+# what infrastructure/bootstrap/crds/prometheus-operator (apps repo) does on every other
+# cluster for the same reason: it lets a Helm-managed release adopt CRDs that already exist
+# rather than conflict with them.
+#
+# Invariant: no automated path here may ever delete these CRDs - 24 live CRs (18
+# ServiceMonitors + 6 PodMonitors, owned by other charts on this cluster) would cascade
+# with them. This is why install.remediation is disabled rather than left at a retry
+# count: helm-controller's only install-remediation strategy is uninstall-then-retry, and
+# an uninstall of this release deletes every object in its manifest - i.e. the CRDs -
+# regardless of why the install failed. upgrade.remediation is disabled the same way, for
+# the same reason on the upgrade path.
+#
+# values.crds.annotations sets `helm.sh/resource-policy: keep` on every CRD this chart
+# renders (verified against the pulled chart: each CRD template renders
+# `metadata.annotations` from `.Values.annotations` inside the `crds` subchart, which this
+# key feeds) - this is the actual guard: Helm skips resource-policy:keep objects on both
+# `helm uninstall` and on upgrade-triggered removal, while still updating them normally on
+# every other operation, and it doesn't touch the ownership annotations the adoption match
+# above depends on. (`uninstall.deletionPropagation: orphan` was tried here first and
+# removed: it governs Kubernetes' ownerReference garbage-collection propagation, which is
+# not how CRD deletion cascades to the CRs it defines - orphan does not spare the CRD
+# itself, and the CRs are removed by the apiserver's own
+# `customresourcecleanup.apiextensions.k8s.io` finalizer regardless of the deleted object's
+# propagation policy. A guard that doesn't guard is worse than none, since it invites
+# re-enabling remediation on the strength of a backstop that isn't there - resource-policy
+# is the guard that's actually real.)
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus-operator-crds-release
+  namespace: monitoring
+spec:
+  chart:
+    spec:
+      chart: prometheus-operator-crds
+      interval: 24h0m0s
+      reconcileStrategy: ChartVersion
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community-repository
+        namespace: flux-system
+      version: 31.0.1
+  install:
+    createNamespace: false
+    remediation:
+      retries: 0
+  interval: 15m0s
+  releaseName: kube-prometheus-stack
+  targetNamespace: monitoring
+  timeout: 5m0s
+  upgrade:
+    remediation:
+      retries: 0
+  values:
+    crds:
+      annotations:
+        helm.sh/resource-policy: keep
