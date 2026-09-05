@@ -1,0 +1,25 @@
+---
+# Also declared by the storage-core module's versitygw component. It is repeated here
+# because the claim beside it is namespaced and this Kustomization must apply first, while
+# the module cannot run first without deadlocking on its dependency on this volume.
+#
+# Two Kustomizations declaring one object is safe here only because both apply through the
+# same field manager (kustomize-controller) with byte-identical content, so server-side
+# apply has nothing to conflict over -- keep the copies byte-identical. It is NOT the
+# ssa: merge annotation that permits this: that annotation controls neither adoption nor
+# conflict, it only excludes the object from kustomize-controller's metadata cleanup step
+# (see clusters/nas/services/monitoring/namespace.yaml and
+# clusters/homelab/storage/infra/node/beelink-ser8-1.yaml). It is kept as the same guard
+# those two describe, against a client-side kubectl apply landing on this object.
+#
+# The cost of the duplication is that the Flux owner labels on this object flip every
+# reconcile, so drift detection on it is permanently noisy.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: versitygw
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge
+  labels:
+    goldilocks.fairwinds.com/enabled: "true"

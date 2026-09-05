@@ -1,0 +1,23 @@
+---
+# Separate from the collector's Kustomization and from the volume's, so that a red status
+# on either never means "a scrape declaration is wrong". dependsOn is the namespace, not
+# the Services: a ServiceMonitor may name a Service that does not exist yet, but not a
+# namespace that does not.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-versitygw
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: config-storage-versitygw
+    namespace: flux-system
+  interval: 15m0s
+  path: ./clusters/nas/services/versitygw
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
