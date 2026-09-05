@@ -36,3 +36,9 @@ spec:
     prometheus:
       monitor:
         enabled: true
+        # The chart's 10s default is the exact margin a node_exporter gather was measured
+        # crossing (10.22s) while a filesystem collector stalled on an unresponsive remote
+        # mount. A gather that stalls past the timeout yields nothing at all, so the target
+        # reads down and the host metrics disappear rather than arriving late; 30s buys the
+        # slow-path headroom for the cost of a later scrape.
+        scrapeTimeout: 30s
