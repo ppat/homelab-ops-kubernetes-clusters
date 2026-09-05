@@ -153,6 +153,12 @@ spec:
           // per-workload changes the moment this scrapes and forwards them.
           prometheus.operator.servicemonitors "cluster_metrics" {
           	forward_to = [prometheus.remote_write.cluster_metrics.receiver]
+
+          	// Without this, a ServiceMonitor whose endpoint sets bearerTokenFile is dropped
+          	// with no target, no error and no unhealthy component - the absence is the only
+          	// symptom. Three on this cluster do: metallb-controller, metallb-speaker and
+          	// dragonfly-operator.
+          	allow_arbitrary_file_access = true
           }
 
           prometheus.operator.podmonitors "cluster_metrics" {
@@ -180,6 +186,16 @@ spec:
           // only way to add a static label here - Alloy's expression language has no list
           // comprehension or map-merge to do it inline on the targets argument itself (verified: an
           // inline `[for t in ... : merge(...)]` expression fails to parse).
+          //
+          // collector_scrape="static" marks the two scrapes this fragment hand-authors, as
+          // against everything reached through ServiceMonitor/PodMonitor discovery above (which
+          // carries no such label). It is a cross-repo contract with homelab's
+          // nas:telemetry_static_targets_up / nas:telemetry_discovered_targets_up recording
+          // rules, which split up{k8s_cluster="nas"} on this label alone and expect exactly two
+          // targets to carry it. Nothing fails if it is dropped: one rule silently pins at its
+          // zero failure-sentinel and the other silently becomes a duplicate of total target
+          // count, so the instruments meant to make a discovery outage legible stop being able
+          // to see one.
           discovery.relabel "cluster_kubelet_targets" {
           	targets = discovery.kubernetes.cluster_metrics_nodes.targets
 
@@ -187,6 +203,12 @@ spec:
           		action       = "replace"
           		target_label = "metrics_path"
           		replacement  = "/metrics"
+          	}
+
+          	rule {
+          		action       = "replace"
+          		target_label = "collector_scrape"
+          		replacement  = "static"
           	}
           }
 
@@ -197,6 +219,12 @@ spec:
           		action       = "replace"
           		target_label = "metrics_path"
           		replacement  = "/metrics/cadvisor"
+          	}
+
+          	rule {
+          		action       = "replace"
+          		target_label = "collector_scrape"
+          		replacement  = "static"
           	}
           }
 
