@@ -8,6 +8,7 @@ resources:
 - openclaw-data.yaml
 - vault-data.yaml
 - vault-git-cache.yaml
+- obsidian-vault-nats-jetstream.yaml
 
 patches:
 # yamllint disable-line rule:indentation
@@ -23,7 +24,7 @@ patches:
         recurring-job-group.longhorn.io/backup-ops: enabled
   target:
     kind: PersistentVolumeClaim
-    name: '^(openwebui|n8n-data|openclaw-data|vault-data)$'
+    name: '^(openwebui|n8n-data|openclaw-data|vault-data|obsidian-vault-nats-jetstream)$'
 # vault-git-cache only holds the committer's clone of vault git history/state —
 # it's re-derivable with a fresh `git clone` from the remotes it pushes to, so
 # unlike the other PVCs here it skips snapshot-ops/backup-ops (nothing to
