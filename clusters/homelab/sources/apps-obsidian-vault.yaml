@@ -2,17 +2,15 @@
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
-  name: apps-ai
+  name: apps-obsidian-vault
   namespace: flux-system
 spec:
   ignore: |
     # exclude all
     /*
-    # include components
-    !/components
     # include the corresponding apps subsystems directory
-    !/apps/subsystems/ai
+    !/apps/subsystems/obsidian-vault
   interval: 1m0s
   ref:
-    tag: apps-ai-v0.8.2
+    tag: apps-obsidian-vault-v0.1.0
   url: https://github.com/ppat/homelab-ops-kubernetes-apps.git

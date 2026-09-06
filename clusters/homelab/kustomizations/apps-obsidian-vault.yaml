@@ -1,0 +1,57 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-obsidian-vault
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-storage-core
+    namespace: flux-system
+  - name: infra-networking-core
+    namespace: flux-system
+  # The headless Obsidian pod carries descheduler.alpha.kubernetes.io/prefer-no-eviction:
+  # it holds the vault's only read-write mount and must not be rebalanced off its node.
+  - name: infra-kubernetes-extra
+    namespace: flux-system
+  # Not an infrastructure edge: this module's two MCP servers are registered as tools on the
+  # LiteLLM gateway, and batch-processor and the batch-mode watchdog route every vault read
+  # and write through that gateway. The gateway stays in apps-ai and does not follow the
+  # vault out, because it also fronts ten unrelated MCP servers. Ordering matters beyond
+  # steady state: apps-ai has prune: true, so on the release that removes the vault from its
+  # path, apps-ai deletes those objects and this Kustomization recreates them in the new
+  # namespace. dependsOn makes that a prune-then-apply rather than a race between two
+  # managers of the same objects.
+  - name: apps-ai
+    namespace: flux-system
+  interval: 15m0s
+  path: ./apps/subsystems/obsidian-vault
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: apps-obsidian-vault
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      cert_issuer: letsencrypt-production-issuer
+      # Which repository the vault's git committer pushes derived history to. Module
+      # configuration, not a cluster-wide value, so it belongs here rather than in
+      # cluster-secrets alongside dns_zone and the IP addresses. It has no default in
+      # obsidian-tools -- a missing value fails the run at startup rather than silently
+      # defaulting to something wrong.
+      #
+      # git_committer_remote_nas_url is deliberately not set. The NAS bare repository is a
+      # second push target for independence insurance, and obsidian-tools treats it as
+      # optional: with the variable absent the committer pushes to origin only and logs
+      # which remotes are configured. Enabling it later means adding one line here, plus
+      # the NAS-side setup (bare repo, authorized_keys, and its host key via
+      # GIT_SSH_KNOWN_HOSTS_EXTRA, since it is published nowhere).
+      git_committer_remote_origin_url: git@github.com:ppat/obsidian-vault.git
+      secret_store: bitwarden-secret-manager-store
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets

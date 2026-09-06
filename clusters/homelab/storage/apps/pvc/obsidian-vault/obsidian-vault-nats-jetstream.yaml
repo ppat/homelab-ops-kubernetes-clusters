@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: obsidian-vault-nats-jetstream
+  namespace: obsidian-vault
+  labels:
+    app.kubernetes.io/name: obsidian-vault-nats
+spec:
+  # RWO, not vault-data's RWX: the broker is a single replica on strategy Recreate and is
+  # the only mounter. JetStream's file store is single-writer by construction, so there is
+  # no concurrent-mount need to justify Longhorn's RWX/NFS overhead.
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: sc-longhorn-replicated
+  volumeMode: Filesystem
