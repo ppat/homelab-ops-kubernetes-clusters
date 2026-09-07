@@ -14,7 +14,7 @@ links below into the [apps repo](https://github.com/ppat/homelab-ops-kubernetes-
 | Module | Kustomization(s) | Provides |
 | --- | --- | --- |
 | [security-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/security-core/README.md) | `infra-security-core` | cert-manager, external-secrets, trust-manager, Kyverno, Policy Reporter |
-| [storage-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/storage-core/README.md) | `infra-storage-csi-driver-nfs`, `infra-storage-minio` | NFS CSI driver, MinIO — deployed as two separate `Kustomization`s pointing at submodule paths (`storage-core/csi-driver-nfs`, `storage-core/minio`) instead of one, since this cluster has no Longhorn and since the module root is what `homelab` consumes |
+| [storage-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/storage-core/README.md) | `infra-storage-csi-driver-nfs`, `infra-storage-minio`, `infra-storage-versitygw` | NFS CSI driver, MinIO, versitygw — deployed as separate `Kustomization`s pointing at submodule paths (`storage-core/csi-driver-nfs`, `storage-core/minio`, `storage-core/versitygw`) instead of one, since this cluster has no Longhorn and since the module root is what `homelab` consumes. The versitygw component also ships its own `ServiceMonitor`s, so it is the one submodule that requires the Prometheus-operator CRDs `config-services` installs |
 | [networking-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/networking-core/README.md) | `infra-networking-core` | MetalLB, external-dns, Traefik (patched to run as a 2-replica `Deployment` instead of a `DaemonSet` for redundancy) |
 | [kubernetes-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/kubernetes-core/README.md) | `infra-kubernetes-core` | CoreDNS, Node Feature Discovery, Vertical Pod Autoscaler |
 | [database-core](https://github.com/ppat/homelab-ops-kubernetes-apps/blob/main/infrastructure/subsystems/database-core/README.md) | `infra-database-core` | CloudNativePG, Dragonfly operator (Redis-compatible cache instances) |
@@ -93,6 +93,7 @@ flowchart TB
         sec[security-core]:::core
         nfs[storage: csi-driver-nfs]:::core
         minio[storage: minio]:::core
+        vgw[storage: versitygw]:::core
         k8s[kubernetes-core]:::core
         net[networking-core]:::core
         db[database-core]:::core
@@ -112,6 +113,7 @@ flowchart TB
     k8s --> sec
     net --> sec & nfs
     minio --> nfs
+    vgw --> sec & vol
     db --> net & nfs
     out --> sec & net
     alloy --> svc
@@ -125,11 +127,11 @@ Kustomization) and `vol` (`config-storage-versitygw`) aren't apps-repo
 modules — they're the repo-authored Kustomizations described in
 [Cluster-specific resources](#cluster-specific-resources) above, included here
 because they are top-level Kustomizations of this cluster in their own right.
-Two of them carry real `dependsOn` edges: `alloy` depends on `svc` for the
+They carry real `dependsOn` edges: `alloy` depends on `svc` for the
 `monitoring`/`logging` namespaces and CRDs its ServiceMonitor/PrometheusRule
-need. `vol` is drawn with none, which is accurate rather than an omission — it
-waits on nothing, because the in-tree `iscsi` plugin ships with kubelet and
-there is no driver to come up first. Exact per-module `dependsOn` lists are in each
+need. `vgw` depends on `vol` for the volume and the namespace its claim needs. `vol`
+itself waits on nothing, because the in-tree `iscsi` plugin ships with kubelet
+and there is no driver to come up first. Exact per-module `dependsOn` lists are in each
 `kustomizations/*.yaml`. The `docker.io` mirror's routing dependency on
 `harbor`/`networking-core` is now internal to the `apps-harbor` module (see
 above) and isn't a separate cluster-level edge.
