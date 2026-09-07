@@ -7,6 +7,9 @@
 #
 # Track the appVersion of the alloy chart the observability-core module deploys, not
 # the newest release: `alloy validate` is only evidence if it is the same binary that
-# will load the config.
+# will load the config. The Renovate comment below tracks the newest grafana/alloy
+# release instead - the two only coincide by chance, so a Renovate bump here is a
+# prompt to re-read the deployed chart's appVersion, not an answer; the gate goes on
+# passing either way while validating a binary no cluster runs.
 # renovate: datasource=docker depName=grafana/alloy
-version: "v1.18.1"
+version: "v1.19.2"
