@@ -22,6 +22,7 @@ resources:
 - apps-home-automation.yaml
 - apps-media.yaml
 - apps-misc.yaml
+- apps-obsidian-vault.yaml
 - config-storage.yaml
 - config-services.yaml
 - config-services-ci-diagnostics.yaml
