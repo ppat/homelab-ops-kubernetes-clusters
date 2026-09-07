@@ -1,0 +1,24 @@
+---
+# Separate from `config-storage`, which MinIO's Kustomization depends on: a failure here
+# must not stop MinIO reconciling while its data is still the only copy of every backup.
+# No dependsOn, because the in-tree `iscsi` plugin ships with kubelet and there is no
+# driver to wait for -- unlike the NFS CSI volumes `config-storage` carries.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-storage-versitygw
+  namespace: flux-system
+spec:
+  interval: 15m0s
+  path: ./clusters/nas/storage/versitygw
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets

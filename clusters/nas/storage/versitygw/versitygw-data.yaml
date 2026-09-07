@@ -1,0 +1,20 @@
+---
+# Half of the binding: volumeName stops this claim reaching another volume, and the
+# volume's own claimRef stops another claim reaching it. Both are needed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: versitygw-data
+  namespace: versitygw
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      # must match the value specified in PV
+      storage: 1536Gi
+  volumeMode: Filesystem
+  # Explicitly empty, not absent: on a claim, absent lets the DefaultStorageClass admission
+  # plugin write the cluster default in, and a class the volume does not carry never binds.
+  storageClassName: ""
+  volumeName: static-iscsi-lun-nas-versitygw
