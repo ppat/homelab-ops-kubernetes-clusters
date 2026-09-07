@@ -11,6 +11,7 @@ resources:
 - infra-security-outpost.yaml
 - infra-storage-csi-driver-nfs.yaml
 - infra-storage-core-minio.yaml
+- infra-storage-core-versitygw.yaml
 - apps-bitwarden.yaml
 - infra-database-core.yaml
 - apps-harbor.yaml
