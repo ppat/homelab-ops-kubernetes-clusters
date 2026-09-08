@@ -54,3 +54,25 @@ spec:
     target:
       group: postgresql.cnpg.io
       kind: Cluster
+  # Quiesce for the object-store trial's cutover. Home Assistant owns both the
+  # Longhorn volume and the CloudNativePG database being repointed, and the two
+  # are joined only at this Deployment -- so it has to be stopped while they are
+  # swapped, or it runs a restored volume against a live database or the
+  # reverse.
+  #
+  # A PR rather than a `kubectl scale`: Flux reconciles this Kustomization every
+  # 15 minutes with `wait: true`, so a live scale of a managed object is undone
+  # within one interval and presents as an unexplained rollback in the middle of
+  # a cutover.
+  #
+  # Removed again by the repoint that follows. It is separate from that repoint
+  # because the restored volume's name is not knowable until the restore has
+  # run, and the app must already be stopped by then.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 0
+    target:
+      kind: Deployment
+      name: home-assistant
