@@ -7,6 +7,7 @@ resources:
 - coder/
 - dns/
 - downloaders/
+- home-automation/
 - logging/
 - loki-query-correctness/
 - longhorn-system/
