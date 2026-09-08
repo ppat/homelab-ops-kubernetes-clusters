@@ -36,8 +36,17 @@ spec:
       db_replicas: "3"
       db_storage_class: sc-longhorn-local-non-replicated
       db_storage_size: 10Gi
-      db_suffix_current: "v20251018"
-      db_suffix_restore: "2025.07.03"
+      # REPLACE BEFORE MERGE with the generation the promotion restore creates.
+      # Flipping this re-renders the ExternalName Service `home-automation-db`,
+      # which is what Home Assistant's `db_uri` names -- so the application is
+      # repointed without editing a secret and without touching a volume.
+      db_suffix_current: "vYYYYMMDD"
+      # The generation the promotion restore bootstraps *from*, consumed by
+      # `components/db-restore` as the `serverName` of its `externalClusters`
+      # entry. It has to move to the generation whose WAL chain is on versitygw;
+      # left at 2025.07.03 the new cluster would try to recover from a server
+      # path that exists only on MinIO.
+      db_suffix_restore: "v20251018"
       secret_store: bitwarden-secret-manager-store
       # see: https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-substitution-of-numbers-and-booleans
       quote: '"'
@@ -54,25 +63,28 @@ spec:
     target:
       group: postgresql.cnpg.io
       kind: Cluster
-  # Quiesce for the object-store trial's cutover. Home Assistant owns both the
-  # Longhorn volume and the CloudNativePG database being repointed, and the two
-  # are joined only at this Deployment -- so it has to be stopped while they are
-  # swapped, or it runs a restored volume against a live database or the
-  # reverse.
+  # Bind Home Assistant to the Longhorn volume restored from the versitygw
+  # store. Only `claimName` moves: the pod-internal volume is still called
+  # `home-assistant-data`, so all three volumeMounts that reference it --
+  # including code-server's `subPath: .coder` -- are untouched.
   #
-  # A PR rather than a `kubectl scale`: Flux reconciles this Kustomization every
-  # 15 minutes with `wait: true`, so a live scale of a managed object is undone
-  # within one interval and presents as an unexplained rollback in the middle of
-  # a cutover.
-  #
-  # Removed again by the repoint that follows. It is separate from that repoint
-  # because the restored volume's name is not knowable until the restore has
-  # run, and the app must already be stopped by then.
+  # A name-keyed strategic merge rather than an index-addressed JSON6902 op.
+  # `/spec/template/spec/volumes/0/...` is correct against the tag deployed when
+  # this was written, and silently repoints the wrong volume the day the module
+  # reorders that list. The merge key is the volume's name, which cannot drift.
   # yamllint disable-line rule:indentation
   - patch: |
-      - op: replace
-        path: /spec/replicas
-        value: 0
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: home-assistant
+      spec:
+        template:
+          spec:
+            volumes:
+            - name: home-assistant-data
+              persistentVolumeClaim:
+                claimName: home-assistant-data-restored
     target:
       kind: Deployment
       name: home-assistant
