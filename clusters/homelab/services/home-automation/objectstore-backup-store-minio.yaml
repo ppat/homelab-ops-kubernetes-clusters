@@ -1,0 +1,94 @@
+---
+# A standing, unreferenced pointer at the MinIO copy of home-automation-db's
+# backup history.
+#
+# `components/db-backups` parameterises exactly one `ObjectStore`, mutated in
+# place: moving `backup_s3_host` does not create a second store, it moves the
+# only one. So the moment this database's backups are pointed at versitygw, the
+# only declared way to reach its MinIO history is to revert that variable and
+# wait for a reconcile -- which works, and is the rollback path regardless, but
+# it disturbs the running trial to read a backup taken before it started.
+#
+# These two objects cost one file and remove that coupling: the MinIO history
+# stays addressable by name, during the trial, without touching what the trial
+# is measuring. Nothing references them, so they change no behaviour at all
+# until a `Cluster`'s `externalClusters` names this store.
+#
+# The honest limitation, so nobody discovers it under pressure:
+# `components/db-restore` hardcodes `${db_name}-backup-store` in its
+# `externalClusters` reference, so bootstrapping from *this* store needs a
+# hand-written `Cluster` manifest rather than the component. That is acceptable
+# for a rehearsal and is the same hand-written shape a `recoveryTarget` restore
+# needs anyway, since the component cannot express one either.
+#
+# Retire this file when the migration is done and MinIO's copy stops being the
+# fallback.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: home-automation-db-backup-credentials-minio
+  namespace: home-automation
+spec:
+  data:
+  - secretKey: access_key_id
+    remoteRef:
+      key: cluster_nas_minio_cloudnativepg_accesskeyid
+  - secretKey: secret_key
+    remoteRef:
+      key: cluster_nas_minio_cloudnativepg_secretkey
+  refreshInterval: 24h
+  secretStoreRef:
+    name: bitwarden-secret-manager-store
+    kind: ClusterSecretStore
+  target:
+    template:
+      type: Opaque
+      metadata:
+        annotations: {}
+        labels:
+          cnpg.io/reload: "1"
+      data:
+        s3_accesskeyid: "{{ .access_key_id }}"
+        s3_secretaccesskey: "{{ .secret_key }}"
+        # A literal, not a store lookup: the plugin's only region input is a
+        # SecretKeySelector, and external-secrets renders this template
+        # client-side. us-east-1 is what botocore falls back to when
+        # AWS_DEFAULT_REGION is unset, so this states what these backups were
+        # already signed with rather than changing anything.
+        s3_region: "us-east-1"
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: home-automation-db-backup-store-minio
+  namespace: home-automation
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    # Deliberately identical to what `components/db-backups` renders for this
+    # database today, endpoint included, so that reading from here and reading
+    # from the component's own store are the same read against the same paths.
+    # No trailing slash: the plugin appends serverName as its own path segment
+    # and a double slash makes MinIO's ListObjectsV2 reject every retention
+    # cycle while backups keep succeeding.
+    destinationPath: s3://nas-cloudnativepg-backups/home-automation-db
+    endpointURL: https://s3.nas.${dns_zone}
+    s3Credentials:
+      accessKeyId:
+        name: home-automation-db-backup-credentials-minio
+        key: s3_accesskeyid
+      secretAccessKey:
+        name: home-automation-db-backup-credentials-minio
+        key: s3_secretaccesskey
+      region:
+        name: home-automation-db-backup-credentials-minio
+        key: s3_region
+    data:
+      # Not a size setting. Base backups are always multipart, multipart
+      # checksum validation is silent in the sidecar's client, and framed
+      # Snappy's per-chunk CRC-32C is therefore the only corruption detector
+      # these objects have. It must match what wrote them.
+      compression: snappy
+    wal:
+      compression: snappy
+      maxParallel: 8
