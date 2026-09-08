@@ -1,0 +1,46 @@
+---
+# The PersistentVolume for the Longhorn volume `home-assistant-data-restored`,
+# restored from the versitygw store at the end of the object-store trial.
+#
+# A Longhorn restore through `Volume.spec.fromBackup` creates only the Longhorn
+# Volume; nothing creates a PersistentVolume for it. The claim binds by
+# `volumeName`, which names a PV, so without this object it stays Pending, the
+# `config-storage` health gate fails, and Home Assistant never leaves
+# ContainerCreating.
+#
+# One string is load-bearing and appears four times: the Longhorn Volume's
+# name (chosen by the operator when the restore is applied, not generated),
+# `csi.volumeHandle` here, this PV's name, and the claim's `volumeName`. It is
+# the same shape as the live PV behind `home-assistant-data`, whose name and
+# volumeHandle are both its Longhorn volume's name.
+#
+# `claimRef` reserves the PV for its one claim. Without it an unbound PV of
+# this class and size can be taken by any new `sc-longhorn-replicated` claim
+# in any namespace. It is `+structType=granular`, so the binder's `uid` and
+# Flux's `name`/`namespace` coexist under server-side apply.
+#
+# `fsType: ext4` must match the filesystem inside the backup. Mounting a
+# device with no filesystem formats it silently, so an empty restore would
+# mount as an empty volume; the in-volume manifest check on the restored
+# volume is what rules that out, before this claim is ever used by the app.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: home-assistant-data-restored
+  labels:
+    app.kubernetes.io/name: home-assistant
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: 3Gi
+  claimRef:
+    name: home-assistant-data-restored
+    namespace: home-automation
+  csi:
+    driver: driver.longhorn.io
+    fsType: ext4
+    volumeHandle: home-assistant-data-restored
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: sc-longhorn-replicated
+  volumeMode: Filesystem

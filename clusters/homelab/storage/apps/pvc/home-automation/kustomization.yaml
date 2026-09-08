@@ -4,6 +4,7 @@ kind: Kustomization
 
 resources:
 - home-assistant-data.yaml
+- home-assistant-data-restored.yaml
 - piper-data.yaml
 - whisper-data.yaml
 
