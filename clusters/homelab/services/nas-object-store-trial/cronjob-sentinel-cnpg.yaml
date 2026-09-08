@@ -1,0 +1,126 @@
+---
+# Hourly write of one sentinel row into home-automation-db, for the duration of
+# the nas object-store trial.
+#
+# The trial moves this one database's backups from MinIO to versitygw for a
+# week and then restores them. Without something written *during* the week whose
+# presence after the restore is a necessary consequence of the data having
+# survived, the only available claims are "the cluster came up" and "recovery
+# completed" -- and neither is evidence. A cluster that hit a corrupt or missing
+# WAL segment cannot tell that apart from end-of-WAL, logs the difference at
+# DEBUG2, and promotes at the last good segment looking entirely healthy.
+#
+# sentinel-cnpg.sql carries the rest of the reasoning: why the LSN rather than a
+# timestamp, why rows *after* the target matter as much as rows before it, and
+# why there is no forced WAL switch. Read it before changing anything here.
+#
+# Inert by construction. It creates schema `campaign_sentinel` and inserts into
+# its own table; it reads, writes and references nothing else in the database.
+#
+# Cluster-specific and trial-scoped: it names this cluster's database generation
+# and exists only until the trial reports. Retire by deleting this directory --
+# see clusters/homelab/README.md#cluster-specific-services.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: campaign-sentinel-cnpg
+  namespace: home-automation
+  labels:
+    app.kubernetes.io/name: campaign-sentinel-cnpg
+spec:
+  # Hourly on the hour. The cadence is not a sampling rate -- it is the
+  # resolution of the recovery target the restore can aim at, and the granularity
+  # of the continuity proof. Twenty-four rows a day against ~288 archived
+  # segments a day means roughly one sentinel per twelve segments, so a lost
+  # stretch of WAL shorter than an hour can still hide between two rows; the
+  # store-side segment ordinal is what covers that gap, not this.
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 8
+  successfulJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: campaign-sentinel-cnpg
+    spec:
+      activeDeadlineSeconds: 120
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: campaign-sentinel-cnpg
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: OnFailure
+          containers:
+          - name: sentinel
+            # The cluster's own PostgreSQL image, so the client is never a
+            # version ahead of the server it writes to.
+            image: ghcr.io/cloudnative-pg/postgresql:16.4@sha256:99be063781d171d3971089b49c992706bdab9ccbd2b57cdf126c7542773aedfe
+            command:
+            - psql
+            - --no-psqlrc
+            - --set=ON_ERROR_STOP=1
+            - --file=/sql/sentinel-cnpg.sql
+            env:
+            # The stable ExternalName service, not the generation's own -rw
+            # service: it is what Home Assistant itself connects through, so the
+            # sentinel exercises the same name resolution the application does,
+            # and it follows a `db_suffix_current` rotation without an edit here.
+            - name: PGHOST
+              value: home-automation-db.home-automation.svc.cluster.local
+            # The credential is generation-suffixed and the service is not,
+            # because CloudNativePG mints one application secret per cluster
+            # generation. Promoting a restored generation therefore needs this
+            # name moved by hand -- which is fine, since the trial's last act is
+            # that promotion and this CronJob is deleted with the directory.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: home-automation-db-v20251018-app
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: home-automation-db-v20251018-app
+                  key: password
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: home-automation-db-v20251018-app
+                  key: dbname
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: home-automation-db-v20251018-app
+                  key: port
+            - name: PGCONNECT_TIMEOUT
+              value: "15"
+            - name: HOME
+              value: /tmp
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            volumeMounts:
+            - mountPath: /sql
+              name: sql
+              readOnly: true
+            - mountPath: /tmp
+              name: temp
+          securityContext:
+            runAsUser: 26
+            runAsGroup: 26
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: sql
+            configMap:
+              name: campaign-sentinel-cnpg-sql
+          - name: temp
+            emptyDir: {}
+      ttlSecondsAfterFinished: 86400
