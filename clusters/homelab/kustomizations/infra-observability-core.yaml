@@ -24,10 +24,12 @@ spec:
     namespace: flux-system
   # Git-declared, not imperative: root reconciles this Kustomization's parent every 1m and
   # re-applies whatever git says, so an imperative `flux suspend` does not reliably hold
-  # (see prod-plan OPEN-DECISIONS.md #13, Route B). Suspends Loki's module for the
-  # MinIO->Garage cutover window (ppat/homelab-ops-kubernetes-apps#3611). The flip PR clears
-  # this back to false as part of its own change -- the resume rides the flip merge.
-  suspend: false
+  # (see prod-plan OPEN-DECISIONS.md #13, Route B). Re-suspends the module to quiesce Loki
+  # (still pointed at Garage at this point) ahead of a post-cutover rollback
+  # (ppat/homelab-ops-kubernetes-apps#3611). Cleared back to false by the rollback PR that
+  # follows, alongside its own key reversal -- mirroring the flip PR, so that PR's merge is
+  # again the resume-is-the-restart moment (Route B, OPEN-DECISIONS.md #13).
+  suspend: true
   timeout: 2m0s
   wait: true
   postBuild:
