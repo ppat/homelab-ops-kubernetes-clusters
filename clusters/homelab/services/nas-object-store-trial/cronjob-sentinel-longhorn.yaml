@@ -1,0 +1,120 @@
+---
+# Writes the in-volume manifest into home-assistant-data five minutes before
+# Longhorn's 00:00 backup of it, for the duration of the nas object-store trial.
+#
+# sentinel-longhorn.py carries the reasoning: why a file-level digest is the
+# only available detector for a dropped `Blocks[]` entry, why the manifest needs
+# a large deterministic filler to have known coverage at all, why mtime is
+# recorded beside every digest, why the permitted-to-differ list is written
+# *into* the manifest rather than supplied at verification time, and why every
+# write is fsynced. Read it before changing anything here -- several values in
+# this file are load-bearing for claims made there.
+#
+# Cluster-specific and trial-scoped. Retire by deleting this directory -- see
+# clusters/homelab/README.md#cluster-specific-services.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: campaign-sentinel-longhorn
+  namespace: home-automation
+  labels:
+    app.kubernetes.io/name: campaign-sentinel-longhorn
+spec:
+  # 23:55, five minutes ahead of the volume's 00:00 recurring backup. The gap is
+  # the window in which Home Assistant can legitimately change files under the
+  # manifest, so it is kept as small as the job's own runtime allows rather than
+  # rounded to something comfortable.
+  #
+  # timeZone is stated rather than inherited: a CronJob with no timeZone runs in
+  # whatever zone kube-controller-manager happens to be in, and this schedule is
+  # only correct relative to a Longhorn RecurringJob whose cron is evaluated in
+  # UTC.
+  schedule: "55 23 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 8
+  successfulJobsHistoryLimit: 3
+  startingDeadlineSeconds: 240
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: campaign-sentinel-longhorn
+    spec:
+      # The first run writes the filler and is the slow one; later runs re-read
+      # it and rewrite a manifest. The deadline is sized for the first.
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: campaign-sentinel-longhorn
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: OnFailure
+          # home-assistant-data is ReadWriteOnce and Home Assistant holds it.
+          # Kubernetes permits a second pod on the *same node* to mount an RWO
+          # claim and refuses anywhere else, so without this affinity the job
+          # would schedule freely and then sit unschedulable-on-volume until its
+          # deadline -- a daily failure that looks like a backup problem and is
+          # not one.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: home-assistant
+                topologyKey: kubernetes.io/hostname
+          containers:
+          - name: sentinel
+            image: python:3.14-alpine@sha256:05b2b8b732ecd268fee8727a369f936f022d1321b59befd13c30ede22769dcdc
+            command: ["python3", "/scripts/sentinel-longhorn.py"]
+            env:
+            - name: VOLUME_ROOT
+              value: /volume
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            volumeMounts:
+            - mountPath: /scripts
+              name: script
+              readOnly: true
+            - mountPath: /volume
+              name: volume
+            - mountPath: /tmp
+              name: temp
+          securityContext:
+            # The same uid/gid/fsGroup Home Assistant runs as, so files written
+            # here are indistinguishable from its own and nothing it does later
+            # trips over ownership.
+            #
+            # OnRootMismatch, not Always: the mount root is already 1000:1000,
+            # so this is a no-op, whereas Always re-chowns the whole tree on
+            # every single mount -- daily, for nothing.
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: script
+            configMap:
+              name: campaign-sentinel-longhorn-script
+          - name: volume
+            persistentVolumeClaim:
+              claimName: home-assistant-data
+          - name: temp
+            emptyDir: {}
+      ttlSecondsAfterFinished: 86400
