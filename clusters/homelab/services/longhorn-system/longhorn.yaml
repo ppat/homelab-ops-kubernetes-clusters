@@ -29,3 +29,70 @@ spec:
         AWS_ENDPOINTS: "https://s3.nas.{{ .dns_zone }}"
         AWS_ACCESS_KEY_ID: "{{ .access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ .secret_key }}"
+---
+# The versitygw store's Longhorn credential. Its Bitwarden keys follow the
+# versitygw provisioner's own formula (`versitygw_<account>_accesskey` /
+# `_secretkey`, from modules/versitygw-account in the terraform repo) rather
+# than the `cluster_nas_minio_*` formula above; the two formulas are distinct
+# precisely so both stores' entries can be live at once through the migration.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backup-target-credentials-versitygw
+  namespace: longhorn-system
+spec:
+  data:
+  - secretKey: access_key_id
+    remoteRef:
+      key: versitygw_longhorn_accesskey
+  - secretKey: secret_key
+    remoteRef:
+      key: versitygw_longhorn_secretkey
+  - secretKey: dns_zone
+    remoteRef:
+      key: cluster_homelab_dns_zone
+  refreshInterval: 24h
+  secretStoreRef:
+    name: bitwarden-secret-manager-store
+    kind: ClusterSecretStore
+  target:
+    template:
+      type: Opaque
+      metadata:
+        annotations: {}
+        labels: {}
+      data:
+        AWS_ENDPOINTS: "https://versitygw-s3.nas.{{ .dns_zone }}"
+        AWS_ACCESS_KEY_ID: "{{ .access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ .secret_key }}"
+---
+# A second backup target, standing alongside `default` rather than replacing it.
+#
+# `default` is not declared here and cannot be: it is materialised by Longhorn's
+# chart from `defaultSettings.backupTarget` in
+# kustomizations/infra-storage-core.yaml, so it carries no Flux labels. This CR
+# is the first backup target in this estate that is declared as a CR, and the
+# only one this file owns.
+#
+# Declaring a target does not move any data. Which volumes write here is
+# `Volume.spec.backupTargetName`, a field on a CR that Longhorn's CSI controller
+# owns and nothing in git declares -- so it is set live, per volume, and is
+# reverted by nothing. `RecurringJob` carries no backup-target field at all, so
+# a volume's scheduled backups always follow the volume's own target; the
+# existing `daily-backup` job needs no change to send a moved volume here.
+#
+# The bucket name is deliberately identical to the one MinIO serves, so moving a
+# volume between the two stores changes an endpoint and a credential and never a
+# path. The `@us-east-1` in the URL is a signing region and must equal the
+# gateway's own `VGW_REGION`: versitygw rejects a mismatched region on
+# HeadBucket and ListBuckets while still accepting PutObject, so a wrong value
+# here leaves backups succeeding and breaks discovery of them.
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: versitygw
+  namespace: longhorn-system
+spec:
+  backupTargetURL: s3://nas-longhorn-backups@us-east-1/cluster-homelab/
+  credentialSecret: backup-target-credentials-versitygw
+  pollInterval: 5m0s
