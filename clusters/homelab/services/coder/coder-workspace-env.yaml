@@ -1,0 +1,15 @@
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: coder-workspace-env
+  namespace: coder
+spec:
+  data:
+  - secretKey: CODER_VAR_MISE_GITHUB_TOKEN
+    remoteRef:
+      key: coder_github_token
+  refreshInterval: 24h
+  secretStoreRef:
+    name: bitwarden-secret-manager-store
+    kind: ClusterSecretStore
