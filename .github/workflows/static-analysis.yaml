@@ -58,7 +58,7 @@ jobs:
       # infrastructure/subsystems/security-core/kyverno/helm-release-kyverno.yaml),
       # so the CLI's policy engine matches what's actually running.
       # renovate: datasource=github-releases depName=kyverno/kyverno
-      KYVERNO_CLI_VERSION: "v1.19.0"
+      KYVERNO_CLI_VERSION: "v1.19.1"
     steps:
     - name: Setup repository and tools
       uses: ppat/homelab-ops-actions/actions/setup-repository-tools@2045fb6e6cb00ab099280625b6989cf62ccc1b77 # v2.7.0
