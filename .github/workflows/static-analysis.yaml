@@ -61,7 +61,7 @@ jobs:
       KYVERNO_CLI_VERSION: "v1.19.0"
     steps:
     - name: Setup repository and tools
-      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@26cdd23c133bd8db2f408be4c6ef225509d6e8c4 # v2.5.0
+      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@2045fb6e6cb00ab099280625b6989cf62ccc1b77 # v2.7.0
       with:
         current_git_ref: ${{ github.head_ref || github.ref }}
         current_repository: ${{ github.repository }}
