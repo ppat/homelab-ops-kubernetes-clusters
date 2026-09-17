@@ -4,6 +4,7 @@ kind: Kustomization
 
 resources:
 - ai/
+- coder/
 - dns/
 - downloaders/
 - logging/
