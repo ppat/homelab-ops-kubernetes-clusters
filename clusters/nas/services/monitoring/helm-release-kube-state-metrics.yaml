@@ -14,7 +14,7 @@ spec:
         kind: HelmRepository
         name: prometheus-community-repository
         namespace: flux-system
-      version: 8.4.1
+      version: 8.4.2
   dependsOn:
   - name: prometheus-operator-crds-release
     namespace: monitoring
