@@ -81,9 +81,14 @@ spec:
 # a volume's scheduled backups always follow the volume's own target; the
 # existing `daily-backup` job needs no change to send a moved volume here.
 #
-# The bucket name is deliberately identical to the one MinIO serves, so moving a
-# volume between the two stores changes an endpoint and a credential and never a
-# path. The `@us-east-1` in the URL is a signing region and must equal the
+# The bucket name is identical to the one MinIO serves, but the path prefix is
+# not, and cannot be: Longhorn's admission webhook refuses two S3 targets whose
+# URLs are equal as strings, and the endpoint -- the only thing distinguishing
+# the two stores -- lives in the credential secret, which it does not compare.
+# The separate prefix is also what keeps this target's backups out of
+# `cluster-homelab/` on the new store, the prefix the MinIO corpus is copied into
+# during migration; sharing it would put two diverging backup chains for the
+# same volume in one place. The `@us-east-1` in the URL is a signing region and must equal the
 # gateway's own `VGW_REGION`: versitygw rejects a mismatched region on
 # HeadBucket and ListBuckets while still accepting PutObject, so a wrong value
 # here leaves backups succeeding and breaks discovery of them.
@@ -93,6 +98,6 @@ metadata:
   name: versitygw
   namespace: longhorn-system
 spec:
-  backupTargetURL: s3://nas-longhorn-backups@us-east-1/cluster-homelab/
+  backupTargetURL: s3://nas-longhorn-backups@us-east-1/cluster-homelab-trial/
   credentialSecret: backup-target-credentials-versitygw
   pollInterval: 5m0s
