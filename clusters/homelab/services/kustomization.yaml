@@ -13,5 +13,4 @@ resources:
 - longhorn-system/
 - monitoring/
 - nas-object-store-trial/
-- object-store-kpi-archive/
 - tailscale/
