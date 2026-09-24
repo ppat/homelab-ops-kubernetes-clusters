@@ -6,14 +6,14 @@ metadata:
   namespace: flux-system
 spec:
   components:
-  - ../../../components/oidc-credentials/minio
   - ../../../components/sso
   dependsOn:
   - name: infra-security-core
     namespace: flux-system
   interval: 15m0s
   path: ./infrastructure/subsystems/storage-core
-  prune: true
+  # false keeps the removed MinIO objects running until they are hand-deleted.
+  prune: false
   sourceRef:
     kind: GitRepository
     name: infra-storage-core
@@ -22,12 +22,7 @@ spec:
   wait: true
   postBuild:
     substitute:
-      oidc_minio_app_name: minio-homelab
-      oidc_minio_clientid_key: oidc_miniohomelab_clientid
-      oidc_minio_clientsecret_key: oidc_miniohomelab_clientsecret
       secret_store: bitwarden-secret-manager-store
-      minio_admin_username_key: cluster_homelab_minio_admin_username
-      minio_admin_password_key: cluster_homelab_minio_admin_password
       # Garage rebuilt on plain Kubernetes resources, no operator/CRDs (apps#3611,
       # apps#3639) -- garage_replication_factor/garage_storage_replicas/
       # garage_storage_class/garage_metadata_size/garage_data_size/
@@ -70,26 +65,6 @@ spec:
     - kind: Secret
       name: cluster-secrets
   patches:
-  # yamllint disable-line rule:indentation
-  - patch: |-
-      apiVersion: helm.toolkit.fluxcd.io/v2
-      kind: HelmRelease
-      metadata:
-        name: minio-release
-        namespace: minio
-      spec:
-        values:
-          persistence:
-            enabled: true
-            existingClaim: minio-data
-          securityContext:
-            fsGroup: 65539
-            fsGroupChangePolicy: "OnRootMismatch"
-    target:
-      group: helm.toolkit.fluxcd.io
-      kind: HelmRelease
-      name: minio-release
-      namespace: minio
   # yamllint disable-line rule:indentation
   - patch: |-
       apiVersion: helm.toolkit.fluxcd.io/v2
