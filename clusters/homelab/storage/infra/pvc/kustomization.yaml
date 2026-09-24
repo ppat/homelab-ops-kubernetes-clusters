@@ -6,7 +6,6 @@ resources:
 - garage-data.yaml
 - garage-metadata.yaml
 - grafana-data.yaml
-- minio-data.yaml
 - pihole-data.yaml
 - pihole-logs.yaml
 - traefik-logs.yaml
