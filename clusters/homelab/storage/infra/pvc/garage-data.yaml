@@ -8,7 +8,7 @@
 #
 # Name ends in "-data" on purpose: storage/infra/pvc/kustomization.yaml's Longhorn
 # recurring-job-label patch matches on that suffix, so this PVC gets the same
-# backup/snapshot labels as minio-data/grafana-data without repeating them here.
+# backup/snapshot labels as grafana-data/pihole-data without repeating them here.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
