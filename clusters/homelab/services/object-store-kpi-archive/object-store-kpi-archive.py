@@ -116,6 +116,45 @@ means "not reported", never "zero bytes used". The per-run ledger (the `runs`
 key) records which series each run actually saw, so an absence is an auditable
 fact rather than something inferred from a hole in the data.
 
+--- Cross-cluster contamination: why the query also matches k8s_cluster --
+
+homelab's Prometheus has ingested `nas`'s metrics via remote_write since
+clusters#1039 (2026-09-04), and that PR's own body says plainly what this
+means: "any dashboard or query written without a `k8s_cluster` selector is
+quietly wrong from this merge onward." KPI_QUERY and DETECTOR_QUERY were both
+exactly that - written before #1039 existed, with no selector - and `max by
+(namespace, persistentvolumeclaim)` is precisely the shape that turns "wrong"
+into "wrong in the direction you won't notice": nas runs its own MinIO with a
+~66 TiB `minio-data` PVC, so from 2026-09-04T21:00:00Z onward `max` silently
+preferred nas's value over homelab's every single run, and the append-only
+ledger has no way to tell a legitimate 1500x jump from a contaminated one -
+it recorded three weeks of nas's MinIO as if it were homelab's trial.
+
+homelab's own series carry no `k8s_cluster` label at all (not the literal
+string `"homelab"` - that relabeling was deliberately rejected, see #1039's
+"Cross-cluster series" section); only series shipped in from another cluster
+carry one. So the selector that actually isolates this cluster's series is
+`k8s_cluster=""`, not `k8s_cluster="homelab"` - the latter would match
+nothing homelab ever reports and would have silently emptied the ledger
+instead of contaminating it, the same failure mode by another route. Applied
+to both KPI_QUERY and DETECTOR_QUERY, not just the former: DETECTOR_QUERY's
+whole job is to prove *this* cluster's kubelet scrape still works, and an
+unscoped detector would keep reading OK off of nas's kubelet forever even if
+homelab's own volume-stats scrape died outright, misreporting a real
+EXIT_DETECTOR_DEAD as the merely-a-finding EXIT_NO_SERIES_IN_SCOPE.
+
+Adding the selector, rather than changing the `by (namespace,
+persistentvolumeclaim)` clause, is what keeps this an additive fix: series_key
+(the merge's identity function) reads only those two labels, `k8s_cluster`
+was never part of it, and it still isn't - a v1 archive with points keyed
+`minio/minio-data` merges cleanly against this query's output, append-only
+guard included. This does not repair the three weeks of nas's MinIO already
+recorded under that key (2026-09-04T21:00:00Z onward, per the archive's own
+timestamps) - the append-only guard refuses that by design (see "Append,
+never overwrite" above), and rewriting isn't a thing this script's ledger can
+ever do. See the PR that introduced this fix for exactly which timestamps
+are contaminated and what to do about reading them.
+
 --- Why 6 hours ----------------------------------------------------------
 
 Cadence and resolution are decoupled here, which is the thing to understand
@@ -174,9 +213,10 @@ Four independent mechanisms, in order of how early they stop the damage:
 If the KPI query returns nothing, that is not evidence the volumes are gone; it
 is equally consistent with Prometheus being broken, the kubelet not scraping,
 or a bad selector. So before concluding anything from silence, every run also
-evaluates DETECTOR_QUERY over the identical window: the *unscoped*
-`kubelet_volume_stats_used_bytes` family, which must return something if this
-Prometheus can answer questions about volume stats at all.
+evaluates DETECTOR_QUERY over the identical window: the `kubelet_volume_stats_
+used_bytes` family unscoped *by namespace* (still scoped to this cluster - see
+"Cross-cluster contamination" above), which must return something if this
+cluster's Prometheus can answer questions about volume stats at all.
 
   - detector has points, KPI query has none -> a real finding about the trial's
     volumes (EXIT_NO_SERIES_IN_SCOPE).
@@ -231,11 +271,19 @@ SCHEMA_VERSION = "1"
 
 # See the module docstring ("Why the query is shaped the way it is") for why
 # this selects by namespace, why it aggregates, and why `max` rather than `sum`.
-KPI_QUERY = 'max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{namespace=~"garage|minio"})'
+# k8s_cluster="" is load-bearing, not decorative: see the module docstring's
+# "Cross-cluster contamination" section. Without it, `max` silently prefers
+# whichever cluster's kubelet reports a bigger number for the same
+# namespace/PVC pair - and since clusters#1039, that is sometimes nas's, not
+# this cluster's own.
+KPI_QUERY = 'max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{namespace=~"garage|minio", k8s_cluster=""})'
 
-# Falsifiability control for KPI_QUERY's silence - the unscoped metric family.
-# See the module docstring ("Empty output is not a negative result").
-DETECTOR_QUERY = "count(kubelet_volume_stats_used_bytes)"
+# Falsifiability control for KPI_QUERY's silence - the unscoped (by namespace)
+# metric family, but still scoped to k8s_cluster="" for the same reason as
+# KPI_QUERY - see the module docstring's "Cross-cluster contamination"
+# section. An unscoped detector would report this cluster's kubelet as alive
+# forever off of nas's traffic alone, even if this cluster's own scrape died.
+DETECTOR_QUERY = 'count(kubelet_volume_stats_used_bytes{k8s_cluster=""})'
 
 # The TSDB's own oldest timestamp, used as the first run's backfill start. Read
 # live rather than duplicated from infra-observability-core.yaml's 720h - see
