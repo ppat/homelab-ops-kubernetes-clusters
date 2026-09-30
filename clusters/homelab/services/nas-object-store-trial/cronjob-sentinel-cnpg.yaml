@@ -72,28 +72,28 @@ spec:
               value: home-automation-db.home-automation.svc.cluster.local
             # The credential is generation-suffixed and the service is not,
             # because CloudNativePG mints one application secret per cluster
-            # generation. Promoting a restored generation therefore needs this
-            # name moved by hand -- which is fine, since the trial's last act is
-            # that promotion and this CronJob is deleted with the directory.
+            # generation. Promoting a restored generation therefore moves this
+            # name in the same change as `db_suffix_current`, so the first run
+            # after the promotion writes into the restored generation.
             - name: PGUSER
               valueFrom:
                 secretKeyRef:
-                  name: home-automation-db-v20251018-app
+                  name: home-automation-db-v20261001-app
                   key: username
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: home-automation-db-v20251018-app
+                  name: home-automation-db-v20261001-app
                   key: password
             - name: PGDATABASE
               valueFrom:
                 secretKeyRef:
-                  name: home-automation-db-v20251018-app
+                  name: home-automation-db-v20261001-app
                   key: dbname
             - name: PGPORT
               valueFrom:
                 secretKeyRef:
-                  name: home-automation-db-v20251018-app
+                  name: home-automation-db-v20261001-app
                   key: port
             - name: PGCONNECT_TIMEOUT
               value: "15"
