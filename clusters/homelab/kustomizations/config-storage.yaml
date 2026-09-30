@@ -10,7 +10,8 @@ spec:
     namespace: flux-system
   interval: 15m0s
   path: ./clusters/homelab/storage
-  prune: true
+  # false keeps the removed MinIO objects running until they are hand-deleted.
+  prune: false
   sourceRef:
     kind: GitRepository
     name: root
