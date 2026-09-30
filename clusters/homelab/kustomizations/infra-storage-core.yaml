@@ -73,18 +73,6 @@ spec:
         name: longhorn-release
         namespace: longhorn-system
       spec:
-        chart:
-          spec:
-            # Deliberate hold, not an oversight: storage-core v0.3.0 bumps its default
-            # Longhorn chart to 1.12.0, but this cluster runs 1.11.2 and the standing
-            # practice here is to wait for a Longhorn `.1` release before adopting a new
-            # minor. Chart 1.11.2 ships Longhorn appVersion v1.11.2 (confirmed against
-            # charts.longhorn.io's index and this cluster's live longhorn-release
-            # HelmRelease/Setting current-longhorn-version, both v1.11.2 as of writing) --
-            # so this pin holds steady rather than upgrading. It must stay in the same
-            # commit as any storage-core ref.tag bump that changes this default, and
-            # should be removed once a Longhorn 1.12.1+ ships. Refs apps#3611.
-            version: 1.11.2
         values:
           persistence:
             defaultClass: false
