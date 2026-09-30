@@ -1,0 +1,26 @@
+---
+# Scratch namespace for the object-store trial's verification restore. Everything the
+# restore needs lives here -- its own credential copy, its own reader-only ObjectStore,
+# the recovered Cluster and the Job that asserts against it -- so nothing in
+# `home-automation` is created, read from or written to by this directory.
+#
+# A new namespace is the case that gets a Kustomization of its own
+# (`kustomizations/config-services-nas-object-store-restore.yaml`) rather than a place in
+# `services/kustomization.yaml`: a first apply that fails here must not fail the shared
+# `config-services` umbrella.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: campaign-restore
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge
+  labels:
+    # Stated rather than inherited: nothing else on this cluster enforces a Pod Security
+    # level at the namespace, and a throwaway namespace should not be the loosest one.
+    # Checked against what runs here: CloudNativePG's instance and recovery pods, the
+    # barman-cloud plugin's injected container (it sets runAsNonRoot, RuntimeDefault
+    # seccomp, drop ALL, no privilege escalation), and the verification Job.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

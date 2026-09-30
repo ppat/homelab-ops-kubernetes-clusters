@@ -1,0 +1,50 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-nas-object-store-restore
+  namespace: flux-system
+spec:
+  # CloudNativePG, its webhooks and the barman-cloud plugin come from infra-database-core;
+  # external-secrets from infra-security-core.
+  dependsOn:
+  - name: infra-database-core
+    namespace: flux-system
+  - name: infra-security-core
+    namespace: flux-system
+  # Its own Kustomization rather than a directory under config-services: a new namespace, an
+  # ExternalSecret, a recovering Cluster and a one-shot Job are all things a first apply can
+  # refuse or fail, and none of that may take down the shared umbrella that ai, dns,
+  # downloaders, logging, longhorn-system, monitoring, tailscale and the trial's own
+  # sentinels reconcile through.
+  #
+  # `wait: false`: the recovery replays about a week of WAL, far past any sensible apply
+  # timeout, and its outcome is read from the verification Job, not from this object's
+  # health. Ready here means only "applied".
+  wait: false
+  interval: 15m0s
+  path: ./clusters/homelab/services/nas-object-store-restore
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  postBuild:
+    # The one place the restore point is written. The Cluster recovers to these values and
+    # the verification Job asserts against the same values, so the two cannot disagree.
+    #
+    # Target: sentinel row id 164, written 2026-09-30T19:00:01Z, LSN 2A6/AC00BBF0, in WAL
+    # segment 0000003D000002A6000000AC -- on the store by 20:10 that day (the WAL-continuity
+    # exporter's tail was 2A6/B9). A fixed, already-archived row keeps the target valid
+    # however late this merges. The row itself is on the far side of the stop: its lsn is
+    # sampled before its own INSERT, so ids 1..163 must be present and 164 onwards absent.
+    # The expected last row is named by its LSN (row 163's) rather than its id: every value
+    # here stays non-numeric, so substitution cannot turn one into a YAML number.
+    #
+    # Base backup: the first one taken on the store (2026-09-24T04:00, end LSN
+    # 29F/39000110), so the replay covers every segment archived there since the switch.
+    substitute:
+      restore_backup_id: "20260924T040000"
+      restore_target_lsn: "2A6/AC00BBF0"
+      restore_expected_last_lsn: "2A6/A000CBA0"

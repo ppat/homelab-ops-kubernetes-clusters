@@ -1,0 +1,92 @@
+---
+# Reads the restore's verdict out of the recovered database and prints it to its own log,
+# one PASS/FAIL line per assertion ending in `RESULT: PASS|FAIL`. verify-restore.sh
+# carries the assertions and why each one is evidence.
+#
+# Created with the Cluster and waits for it: until CloudNativePG mints
+# `campaign-restore-db-superuser` the pod cannot start, and until recovery has finished the
+# -rw Service has no endpoint. It exits non-zero on any failed assertion, so the Job's own
+# status carries the verdict as well as its log.
+#
+# No `ttlSecondsAfterFinished`, deliberately: this directory is reconciled continuously, so
+# a Job that deleted itself would be recreated by Flux and run again.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: campaign-restore-verify
+  namespace: campaign-restore
+  labels:
+    app.kubernetes.io/name: campaign-restore-verify
+spec:
+  # Three and a half hours of waiting for recovery inside the script, plus margin. The
+  # replay covers roughly 1,900 WAL segments fetched from the store.
+  activeDeadlineSeconds: 14400
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: campaign-restore-verify
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+      - name: verify
+        # The restored cluster's own PostgreSQL image, so the client is never a version
+        # ahead of the server it asserts against.
+        image: ghcr.io/cloudnative-pg/postgresql:16.4@sha256:99be063781d171d3971089b49c992706bdab9ccbd2b57cdf126c7542773aedfe
+        command:
+        - bash
+        - /scripts/verify-restore.sh
+        env:
+        - name: TARGET_LSN
+          value: "${restore_target_lsn}"
+        - name: BACKUP_ID
+          value: "${restore_backup_id}"
+        - name: EXPECTED_LAST_LSN
+          value: "${restore_expected_last_lsn}"
+        - name: WAIT_SECONDS
+          value: "12600"
+        - name: PGHOST
+          value: campaign-restore-db-rw.campaign-restore.svc.cluster.local
+        - name: PGPORT
+          value: "5432"
+        - name: PGDATABASE
+          value: home-assistant
+        - name: PGUSER
+          valueFrom:
+            secretKeyRef:
+              name: campaign-restore-db-superuser
+              key: username
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: campaign-restore-db-superuser
+              key: password
+        - name: PGCONNECT_TIMEOUT
+          value: "10"
+        - name: HOME
+          value: /tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: /scripts
+          name: scripts
+          readOnly: true
+        - mountPath: /tmp
+          name: temp
+      securityContext:
+        runAsUser: 26
+        runAsGroup: 26
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: scripts
+        configMap:
+          name: campaign-restore-verify-script
+      - name: temp
+        emptyDir: {}

@@ -1,0 +1,39 @@
+---
+# The same bucket, prefix, endpoint and compression that `components/db-backups` renders
+# for home-automation-db, declared a second time in this namespace so the recovering
+# Cluster can name it. It is only ever read: the Cluster below names it from an
+# `externalClusters` entry with `isWALArchiver: false` and has no `spec.plugins`, so no
+# WAL, base backup or retention pass is ever driven through it.
+#
+# No `retentionPolicy`, deliberately, although the live store has one. Retention is
+# enforced against whatever ObjectStore an archiving Cluster names; a reader has no use for
+# a policy, and leaving it out removes the only field here that could delete from the
+# bucket the trial is measuring if this object were ever wired into an archiver by mistake.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: campaign-restore-store
+  namespace: campaign-restore
+spec:
+  configuration:
+    # No trailing slash: the plugin appends the server name as its own path segment.
+    destinationPath: s3://nas-cloudnativepg-backups/home-automation-db
+    endpointURL: https://versitygw-s3.nas.nikara.net
+    s3Credentials:
+      accessKeyId:
+        name: campaign-restore-credentials
+        key: s3_accesskeyid
+      secretAccessKey:
+        name: campaign-restore-credentials
+        key: s3_secretaccesskey
+      region:
+        name: campaign-restore-credentials
+        key: s3_region
+    data:
+      # Must match what wrote the objects. The plugin's sidecar has no `awscrt`, so
+      # multipart checksum validation is skipped and framed Snappy's per-chunk CRC-32C is
+      # the only corruption detector on this read path.
+      compression: snappy
+    wal:
+      compression: snappy
+      maxParallel: 8

@@ -1,0 +1,66 @@
+---
+# Restore 1 of the object-store trial: recover home-automation-db from the versitygw store
+# to a fixed point, so the Job beside it can prove the WAL chain on the store is complete
+# and readable up to that point. Not a promotion: it is frozen at its target, and it is
+# hibernated once its result has been read.
+#
+# Why a recovery target rather than end-of-WAL: on a corrupt or missing segment PostgreSQL
+# cannot tell a failed restore_command from end-of-WAL, logs the difference at DEBUG2 and
+# promotes at the last good segment, healthy by every status field. With a target the chain
+# cannot reach, it fails instead:
+#
+#   FATAL:  recovery ended before configured recovery target was reached
+#
+# `components/db-restore` cannot express a recoveryTarget, which is why this Cluster is
+# written out by hand.
+#
+# Both inputs are Flux post-build variables set once, in
+# `kustomizations/config-services-nas-object-store-restore.yaml`, and read by this Cluster
+# and by the verification Job alike -- so the point replayed to and the point the Job
+# asserts against cannot drift apart.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: campaign-restore-db
+  namespace: campaign-restore
+spec:
+  instances: 1
+  # A recovery bootstrap replays the source's data directory, so the major version must
+  # match the source generation's image.
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  postgresUID: 26
+  postgresGID: 26
+  # The verification Job connects as the superuser: reading the promoted timeline's
+  # history file (the record of where recovery stopped, and why) needs pg_read_file.
+  enableSuperuserAccess: true
+  # A single scratch instance must never hold up a node drain.
+  enablePDB: false
+  storage:
+    storageClass: sc-longhorn-local-non-replicated
+    size: 10Gi
+  bootstrap:
+    recovery:
+      database: home-assistant
+      owner: home-assistant
+      source: origin
+      recoveryTarget:
+        # Pinned to the first base backup the store holds rather than left to the plugin,
+        # which would pick the newest backup ending before the target and so replay only
+        # the hours since it. Starting from the first one replays every WAL segment
+        # archived to the store since the switch, which is the chain the trial exists to
+        # prove.
+        backupID: "${restore_backup_id}"
+        targetLSN: "${restore_target_lsn}"
+        exclusive: false
+  externalClusters:
+  - name: origin
+    plugin:
+      name: barman-cloud.cloudnative-pg.io
+      enabled: true
+      # Reader only. With no `spec.plugins`, nothing in this namespace archives, so the
+      # scratch cluster never writes a timeline of its own into the store it is reading.
+      isWALArchiver: false
+      parameters:
+        barmanObjectName: campaign-restore-store
+        # The live generation, whose chain on versitygw starts 2026-09-24.
+        serverName: v20251018
