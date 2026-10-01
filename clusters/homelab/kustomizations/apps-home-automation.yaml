@@ -88,3 +88,25 @@ spec:
     target:
       group: postgresql.cnpg.io
       kind: Cluster
+  # Runs Home Assistant on the Longhorn volume restored from the versitygw
+  # store. Only `claimName` moves: the pod volume keeps its name, so all three
+  # volumeMounts that reference it, code-server's `subPath: .coder` included,
+  # are untouched. A name-keyed strategic merge, because an index-addressed
+  # JSON6902 path repoints the wrong volume the day the module reorders the
+  # list.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: home-assistant
+      spec:
+        template:
+          spec:
+            volumes:
+            - name: home-assistant-data
+              persistentVolumeClaim:
+                claimName: home-assistant-data-restored
+    target:
+      kind: Deployment
+      name: home-assistant
