@@ -1,0 +1,117 @@
+---
+# Never commit a rendered copy of this file: it holds literal credential values.
+apiVersion: v1
+kind: Namespace
+metadata:
+  # The run's own namespace, not the gateway's: deleting it disposes of the credential
+  # Secret, which a Flux-owned prune-disabled namespace would keep indefinitely.
+  name: ${NAMESPACE}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: migration-evidence
+  namespace: ${NAMESPACE}
+spec:
+  # The derivation report is the estate's first enumeration of MinIO's pre-existing
+  # damage, and the verify results are the evidence for the "a real restore verified
+  # from the new store" gate. On an emptyDir both die with the pod -- including when
+  # activeDeadlineSeconds terminates the Job, which is terminal. sc-nfs-dynamic-share
+  # is reclaimPolicy: Retain, so the run's directory under /volume1/kubernetes-dynamic
+  # outlives `kubectl delete namespace`. It must never live in the store's own data
+  # buckets: the evidence for a copy cannot be held by the thing being copied into.
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 8Gi
+  storageClassName: sc-nfs-dynamic-share
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: migration-${CONSUMER}-${VERB}-${RUN_ID}
+  namespace: ${NAMESPACE}
+type: Opaque
+stringData:
+  SRC_ENDPOINT: "${SRC_ENDPOINT}"
+  SRC_ACCESS_KEY_ID: "${SRC_ACCESS_KEY_ID}"
+  SRC_SECRET_ACCESS_KEY: "${SRC_SECRET_ACCESS_KEY}"
+  DST_ENDPOINT: "${DST_ENDPOINT}"
+  DST_ACCESS_KEY_ID: "${DST_ACCESS_KEY_ID}"
+  DST_SECRET_ACCESS_KEY: "${DST_SECRET_ACCESS_KEY}"
+  # Set for `preflight` only, and left unset for every other verb. migrate.py refuses
+  # to start any other verb while these are populated, so a re-render that carries the
+  # root key into a copy run fails closed instead of reading the corpus with a
+  # credential that can delete it.
+  ROOT_ACCESS_KEY_ID: "${ROOT_ACCESS_KEY_ID}"
+  ROOT_SECRET_ACCESS_KEY: "${ROOT_SECRET_ACCESS_KEY}"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migration-${CONSUMER}-${VERB}-${RUN_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/component: minio-to-versitygw-migration
+    migration/consumer: "${CONSUMER}"
+    migration/verb: "${VERB}"
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: migrate
+        image: docker.io/library/python:3.13-slim@${PYTHON_IMAGE_DIGEST}
+        command: ["/bin/sh", "/bin/scripts/entrypoint.sh"]
+        args:
+        - "${VERB}"
+        - "--consumer=${CONSUMER}"
+        - "--src-bucket=${SRC_BUCKET}"
+        - "--src-prefix=${SRC_PREFIX}"
+        - "--dst-bucket=${SRC_BUCKET}"
+        - "--state-dir=/state"
+        env:
+        # Word-split by the entrypoint, so this carries several flags -- which the
+        # verify step needs (`--tier etag --tier bytes --tier deep`).
+        - {name: EXTRA_ARGS, value: "${EXTRA_ARGS}"}
+        - {name: BOTO3_VERSION, value: "${BOTO3_VERSION}"}
+        - {name: LZ4_VERSION, value: "${LZ4_VERSION}"}
+        - {name: HOME, value: /state}
+        envFrom:
+        - secretRef: {name: "migration-${CONSUMER}-${VERB}-${RUN_ID}"}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities: {drop: ["ALL"]}
+        resources:
+          # Measured: ~385 MiB peak during derivation at the live object count (the two
+          # inventory dicts plus the block index), ~262 MiB steady during the copy with
+          # the plan resident. On top of that the copy buffers object bodies -- bounded
+          # by --large-concurrency x SINGLE_PUT_MAX and by
+          # max_in_memory_upload_chunks x multipart_chunksize, ~400 MiB at the shipped
+          # defaults. Request covers the derivation peak; the limit is ~2.3x the
+          # computed copy peak, because an OOMKill here strands multipart parts as
+          # `.sgwtmp/` residue on the LUN.
+          requests: {cpu: "200m", memory: "768Mi"}
+          limits: {cpu: "2", memory: "1536Mi"}
+        volumeMounts:
+        - {name: scripts, mountPath: /bin/scripts}
+        - {name: state, mountPath: /state}
+      volumes:
+      - name: scripts
+        configMap:
+          name: migration-scripts-${RUN_ID}
+          defaultMode: 493  # 0755; YAML 1.1 parses `0o755` as a string and rejects it
+      - name: state
+        persistentVolumeClaim:
+          claimName: migration-evidence
