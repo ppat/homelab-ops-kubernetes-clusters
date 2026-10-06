@@ -2,6 +2,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+resources:
+# Recording rules describing the health of nas's telemetry path, evaluated by this cluster's
+# Prometheus because this is where nas's series arrive. Cluster-specific by content: every
+# rule names `k8s_cluster="nas"`.
+#
+# The route those series travel over is not here. It is a correction to `components/sso` in
+# the apps repo (apps#3935), which gates every path on Prometheus's host rather than just the
+# UI it targets -- a defect every consumer of `observability-core` has, not a nas peculiarity.
+- prometheusrule-nas-telemetry.yaml
+
 configMapGenerator:
 - name: grafana-extra-config
   namespace: monitoring
