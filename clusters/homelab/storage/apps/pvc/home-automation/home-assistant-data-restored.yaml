@@ -1,0 +1,43 @@
+---
+# The claim that binds the Longhorn volume restored from the versitygw store at
+# the end of the object-store trial, through the static PV of the same name in
+# ../../pv/. The operator applies this file and that PV by hand right after the
+# restore, so the restored volume can be verified through this claim before the
+# application uses it; merging adopts both unchanged.
+#
+# A NEW claim, not an edit of home-assistant-data.
+# `PersistentVolumeClaim.spec.volumeName` is immutable once bound, so repointing
+# the existing file in place makes Flux fail the apply with an immutable-field
+# error -- permanently, since nothing about a later reconcile changes that.
+#
+# What makes this cheap rather than risky: `sc-longhorn-replicated` carries
+# `reclaimPolicy: Retain`, so the original claim and its volume stay bound and
+# untouched for as long as this exists. Rollback is moving the Deployment's
+# claimName back; nothing has to be restored twice.
+#
+# No `recurring-job-group.longhorn.io/backup-ops` label, deliberately. The
+# labels on home-assistant-data are applied by a name-targeted patch in this
+# directory's kustomization.yaml and this claim is outside it, so it enters no
+# backup or snapshot group until a later, separate change opts it in (Longhorn
+# gives an unlabelled volume only the `default` group, which holds trim and
+# snapshot cleanup, no backup). An unverified volume never enters the backup
+# set -- and the verification is 24 hours of the real application running on
+# it, not the restore's own assertions.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-assistant-data-restored
+  namespace: home-automation
+  labels:
+    app.kubernetes.io/name: home-assistant
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: sc-longhorn-replicated
+  resources:
+    requests:
+      storage: 3Gi
+  volumeMode: Filesystem
+  # The PV declared in ../../pv/home-assistant-data-restored.yaml, whose
+  # volumeHandle is the restored Longhorn volume's name.
+  volumeName: home-assistant-data-restored
