@@ -1,0 +1,118 @@
+---
+# Derived series for the `nas` object store's contents, evaluated here because
+# this is where the Prometheus that holds them runs -- `nas` ships metrics over
+# remote-write and runs no Prometheus of its own, so a rule authored beside the
+# producer would never be loaded by anything.
+#
+# Recording rules only, no alerts: AlertManager is deliberately unwired estate
+# wide. What these buy is that the queries an operator would otherwise have to
+# get exactly right under pressure are written down once, correctly, here.
+#
+# Each rule exists because the obvious form of the same question fails in the
+# direction that reads as healthy. Both failures below were reproduced against a
+# live Prometheus, not reasoned about.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nas-object-store
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nas-object-store
+spec:
+  groups:
+  - name: nas-object-store
+    rules:
+    # THE signal. The exporter walks daily, so anything under roughly 30 hours
+    # is healthy and 1e9 means no walk result has ever arrived.
+    #
+    # `or vector(1e9)` is what puts the no-data case on the FAILING side. The
+    # bare form -- time() - max(...) -- returns an EMPTY result when the producer
+    # is gone, and a threshold comparison against an empty result is empty too,
+    # which reads as "nothing over threshold". Measured: with the exporter scaled
+    # to zero, the bare expression returned empty while this one returned 1e9.
+    #
+    # It does not, and cannot, cover the case where this rule itself is not
+    # loaded: an unevaluated rule is an absent series, indistinguishable from a
+    # healthy one that has not been scraped. Confirm the series exists before
+    # believing any reading taken from it.
+    - record: nas:object_store_inventory_staleness_seconds
+      expr: |
+        (time() - max(versitygw_store_last_scan_timestamp_seconds{k8s_cluster="nas"})) or vector(1e9)
+
+    # Bucket directories at the gateway root. It earns its own rule by being the
+    # one holding that reads zero rather than absent on an emptied store: the
+    # per-bucket series behind the two rules below vanish along with their
+    # buckets, so this is the only count whose zero is a measurement rather than
+    # a reconstruction.
+    #
+    # `or vector(0)` covers what remains -- the exporter publishes no gauges at
+    # all until its first walk completes.
+    - record: nas:object_store_buckets
+      expr: |
+        (max(versitygw_store_buckets{k8s_cluster="nas"})) or vector(0)
+
+    # The store's holdings, and the reason free space cannot stand in for them:
+    # this distinguishes "empty because new" from "empty because the volume was
+    # silently reformatted", which no capacity metric can.
+    #
+    # `or vector(0)` because per-bucket series DISAPPEAR when their bucket does,
+    # so on a fully emptied store the inner sum is empty rather than zero --
+    # again the reading that looks like nothing is wrong. Measured: deleting both
+    # bucket directories left `versitygw_store_objects` returning empty while
+    # this rule recorded 0.
+    #
+    # The trade that makes this correct is worth stating, because it is the one
+    # thing that will confuse a reader of the graph: a dead exporter also records
+    # 0 here. That is deliberate -- a false "the store looks empty" is the safe
+    # direction, and the staleness series above is what tells the two apart. Read
+    # them together or not at all.
+    - record: nas:object_store_objects
+      expr: |
+        (sum(versitygw_store_objects{k8s_cluster="nas"})) or vector(0)
+
+    - record: nas:object_store_bytes
+      expr: |
+        (sum(versitygw_store_bytes{k8s_cluster="nas"})) or vector(0)
+
+    # Unreclaimable bytes, summed across buckets. Not a capacity number -- it is
+    # the sweep CronJob's outcome made queryable, since a sweep that silently
+    # stopped matching anything reports success either way. A figure that grows
+    # and never falls is the sweep failing to reclaim.
+    #
+    # Both of the exporter's residue forms, because the sweep reclaims both and
+    # a rule covering one of them would report the sweep's outcome only when the
+    # other happened to be empty: staged multipart parts under `.sgwtmp`, which
+    # no S3 API can reach, and overwrite-race files stranded BESIDE their object
+    # by an overwrite interrupted between its link and its rename.
+    #
+    # The overwrite form is also counted in `nas:object_store_objects` and
+    # `nas:object_store_bytes`, deliberately and not by mistake: such a file is
+    # S3-visible as an ordinary key, and the object count's whole worth is that
+    # it equals what a client's ListObjectsV2 returns. So this series overlaps
+    # those and is not subtractable from them.
+    #
+    # Each half carries its own sentinel rather than one wrapping the sum: with
+    # a single `or vector(0)`, an exporter predating either series would take
+    # the whole expression empty and report a clean zero for the half it does
+    # publish.
+    - record: nas:object_store_residue_bytes
+      expr: |
+        (sum(versitygw_store_residue_bytes{k8s_cluster="nas"}) or vector(0))
+        +
+        (sum(versitygw_store_overwrite_residue_bytes{k8s_cluster="nas"}) or vector(0))
+
+    # Walks that raised. The prompt, unambiguous "the walk is aborting" reading:
+    # staleness climbs for that reason too, but only once a whole walk interval
+    # has passed, so on its own it cannot separate a walk that is failing from
+    # one that is merely slow.
+    #
+    # Two properties to read it correctly. It is a counter that resets when the
+    # exporter restarts, so its increase carries the signal, not its level. And
+    # it is the one rule in this file whose sentinel sits on the HEALTHY side:
+    # a lost counter and a counter at rest are both zero, so no substituted
+    # value could make a `> 0` check catch a dead producer. Absence is the
+    # staleness rule's job, which is the other half of why these are read
+    # together.
+    - record: nas:object_store_inventory_scan_failures
+      expr: |
+        (max(versitygw_store_scan_failures_total{k8s_cluster="nas"})) or vector(0)
