@@ -24,4 +24,4 @@ patches:
         recurring-job-group.longhorn.io/backup-ops: enabled
   target:
     kind: PersistentVolumeClaim
-    name: '^.+-data$'
+    name: '^.+-(data|metadata)$'

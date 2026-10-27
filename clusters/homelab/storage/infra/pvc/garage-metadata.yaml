@@ -16,10 +16,6 @@ metadata:
   namespace: garage
   labels:
     app.kubernetes.io/name: garage
-    recurring-job.longhorn.io/source: enabled
-    recurring-job-group.longhorn.io/default: enabled
-    recurring-job-group.longhorn.io/snapshot-ops: enabled
-    recurring-job-group.longhorn.io/backup-ops: enabled
 spec:
   accessModes:
   - ReadWriteOnce
@@ -28,3 +24,4 @@ spec:
       storage: 16Gi
   storageClassName: sc-longhorn-replicated
   volumeMode: Filesystem
+  volumeName: pvc-22f7d36d-74dd-498a-9148-1d259b6bbf62

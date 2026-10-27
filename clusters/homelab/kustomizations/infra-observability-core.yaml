@@ -51,7 +51,7 @@ spec:
       # constraint at 30d retention.
       prometheus_retention_period: 720h
       prometheus_storage_class: sc-longhorn-replicated
-      prometheus_storage_size: 60Gi
+      prometheus_storage_size: 100Gi
       prometheus_volume_name: pv-prometheus
       # Pre-existing defect (apps#3613): measured 2026-08-12 at 99.9% of the module's
       # previously-hardcoded 2Gi limit (max_over_time(container_memory_working_set_bytes{

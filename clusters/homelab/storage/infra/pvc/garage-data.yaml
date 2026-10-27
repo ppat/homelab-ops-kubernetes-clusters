@@ -21,6 +21,7 @@ spec:
   - ReadWriteOnce
   resources:
     requests:
-      storage: 28Gi
+      storage: 64Gi
   storageClassName: sc-longhorn-replicated
   volumeMode: Filesystem
+  volumeName: pvc-300b5d2c-97f7-467c-b8de-2dbd13d2a1ab
