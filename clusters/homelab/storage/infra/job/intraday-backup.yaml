@@ -21,4 +21,6 @@ spec:
   - backup-ops-intraday
   parameters:
     full-backup-interval: "6"
-  retain: 180  # 30 days of 4-hourly backups, the same restore depth as daily-backup's retain 30
+  # Longhorn rejects retain above its recurring-job-max-retention setting (default 100). At 6 runs a
+  # day that is about 16 days of restore points.
+  retain: 100
