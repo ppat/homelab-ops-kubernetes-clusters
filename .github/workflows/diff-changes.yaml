@@ -74,8 +74,9 @@ jobs:
 
     steps:
     # Warm clone reused by prepare-sources.sh for every source whose `spec.url`
-    # matches MODULES_URL below (today: all module/apps/infra sources), and
-    # unconditionally for the shared `components/` directory. Sources pointing
+    # matches MODULES_URL below (today: all module/apps/infra sources),
+    # including the `spec.components` each Kustomization declares, which are
+    # copied from that Kustomization's pinned tag. Sources pointing
     # at a different repo (e.g. the standalone policies repo) are cloned by
     # the script itself, keyed by their own `spec.url`.
     - name: Checkout modules repository

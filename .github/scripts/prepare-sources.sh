@@ -24,7 +24,7 @@ detect_kustomizations() {
 # full history) is reused as-is -- without a redundant clone -- for any
 # source whose url matches ${MODULES_URL}, since that's the overwhelming
 # majority of sources today (every module/apps/infra source) and the
-# workflow needs that same clone anyway for copy_components(). Any other
+# workflow checks it out with full history anyway. Any other
 # url (e.g. the standalone homelab-ops-policies repo) gets its own clone
 # under a deterministic, hash-of-url directory name, so a repo referenced
 # by several Kustomizations (e.g. multiple policy-* Kustomizations pointing
@@ -60,11 +60,12 @@ resolve_source_clone_dir() {
 }
 
 copy_external_source() {
-  local ks_src="$1"
-  local ks_src_tag="$2"
-  local ks_src_url="$3"
-  local ks_path="$4"
-  local copied_ks_sources="$5"
+  local ks_name="$1"
+  local ks_src="$2"
+  local ks_src_tag="$3"
+  local ks_src_url="$4"
+  local ks_path="$5"
+  local copied_ks_sources="$6"
 
   local clone_dir
   clone_dir=$(resolve_source_clone_dir "${ks_src_url}")
@@ -117,16 +118,37 @@ copy_external_source() {
     done < <(yq '.resources[]' "${copy_path}/kustomization.yaml" 2> /dev/null | grep '^\.\./')
   fi
 
-  popd > /dev/null 2>&1
-}
+  # Flux resolves a Kustomization's `spec.components` (relative to
+  # `spec.path`) inside that Kustomization's own source artifact, i.e. at
+  # the pinned tag. Copy them from that same tag so the diff sees what the
+  # cluster sees. Copying from the source repo's default branch instead
+  # breaks every diff of a cluster still pinned to a tag whose component
+  # has since been deleted on the default branch.
+  #
+  # flux-local renders every source into one shared tree, so when two
+  # Kustomizations pin the same component at different tags, the one
+  # copied last wins. Kustomizations are processed sorted by name.
+  local component
+  while IFS= read -r component; do
+    [[ -z "${component}" ]] && continue
 
-copy_components() {
-  echo "Copying components..."
-  pushd "${MODULES_DIR}" > /dev/null 2>&1
-  git checkout main 2> /dev/null
-  mkdir -p "${DESTINATION_DIR}/components"
-  rsync -r -q "${MODULES_DIR}/components/" "${DESTINATION_DIR}/components/"
-  echo " "
+    local component_path
+    component_path=$(realpath -m --relative-to="." "${copy_path}/${component}")
+    if [[ "${component_path}" == ..* ]]; then
+      echo "WARNING: component '${component}' of Kustomization '${ks_name}' resolves outside the source repo ('${component_path}'); skipping" >&2
+      continue
+    fi
+    if [[ ! -e "${component_path}" ]]; then
+      echo "ERROR: component '${component}' of Kustomization '${ks_name}' does not exist at ${ks_src_url}@${ks_src_tag}" >&2
+      popd > /dev/null 2>&1
+      return 1
+    fi
+
+    echo "${ks_src}: ${ks_src_url}@${ks_src_tag} -> ${DESTINATION_DIR}/${component_path} (component of ${ks_name})..."
+    mkdir -p "${DESTINATION_DIR}/${component_path}"
+    rsync -r -q "${component_path}/" "${DESTINATION_DIR}/${component_path}/"
+  done < <(yq ea "select(.kind == \"Kustomization\" and .metadata.name == \"${ks_name}\") | .spec.components[]" "${KUSTOMIZATION_DIR}"/*.yaml 2> /dev/null)
+
   popd > /dev/null 2>&1
 }
 
@@ -136,13 +158,14 @@ prep_external_sources() {
 
   echo "Preparing external sources..."
   while IFS= read -r ks; do
+    ks_name=$(echo ${ks} | cut -d',' -f1)
     ks_path=$(echo ${ks} | cut -d',' -f2)
     ks_src=$(echo ${ks} | cut -d',' -f3)
     ks_src_file="${SOURCES_DIR}/${ks_src}.yaml"
     if [[ -e "${ks_src_file}" ]]; then
       ks_src_tag=$(yq '.spec.ref.tag // .spec.ref.branch' "${ks_src_file}")
       ks_src_url=$(yq '.spec.url' "${ks_src_file}")
-      copy_external_source "${ks_src}" "${ks_src_tag}" "${ks_src_url}" "${ks_path}" "${copied_ks_sources}"
+      copy_external_source "${ks_name}" "${ks_src}" "${ks_src_tag}" "${ks_src_url}" "${ks_path}" "${copied_ks_sources}"
     fi
   done < <(grep -v root "${detected_ks_file}") | pr -t -o 4
   echo " "
@@ -159,8 +182,8 @@ main() {
   local copied_ks_sources="${TEMP_DIR}/copied"
 
   detect_kustomizations "${detected_ks_file}"
+  mkdir -p "${DESTINATION_DIR}/components"
   prep_external_sources "${detected_ks_file}" "${copied_ks_sources}"
-  copy_components
 
   echo "Copied files..."
   show_file_counts | column -t
