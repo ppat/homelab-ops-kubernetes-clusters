@@ -61,6 +61,13 @@ every contaminated PR run and none of the controlled ones -- an instrument incap
 the population it exists to measure, which would have left the dashboard empty at its own default
 filter.
 
+Pass B's run listing spans the widest suite window, because one workflow serves every suite.
+Each job is still held to **its own** suite's window. Each suite's dedupe map only covers that
+suite's window, so without that cut a single empty or rarely run suite stretches the sweep to 90
+days and every other suite's older baseline jobs look new. They are then downloaded again on
+every pass, dropped by Loki as duplicates, and use up `MAX_LOG_FETCHES` before anything new is
+read.
+
 ### The direction is the design
 
 This **pulls** from the homelab. There is no inbound path to this cluster, no secret in CI,
@@ -160,6 +167,13 @@ real run -- because it pins chainsaw's assertion semantics rather than deploying
 has no pods whose readiness to report.
 | a grammar field layout changed | `unparsed` non-zero on `OUTCOME` lines, and in the Job log |
 | the token expiring | the Job fails; `Jobs ingested` goes to 0 within a day |
+| GitHub's log blob storage throttling (`503 Egress is over the account limit`) or erroring | the Job succeeds with a non-zero `deferred=` and one `log unreachable` line; log fetches stop for that pass and resume on the next |
+
+**A log URL the API hands out is not proof the log exists.** `/actions/jobs/{id}/logs` can
+answer `302` for a job whose blob was never written or is already purged, and the blob then
+answers `404 The specified blob does not exist.` The script records that the same way as an
+API-side `404`/`410`: an `OUTCOME` row with `instrumentation=log-unavailable`. Only a 401 or
+another non-transient 4xx from the API still fails the Job, so an expired token stays loud.
 
 An interrupted pass is safe and needs no intervention: work is pushed per suite, and the next
 pass rebuilds its to-do list by set difference against what Loki already holds. The same applies to
