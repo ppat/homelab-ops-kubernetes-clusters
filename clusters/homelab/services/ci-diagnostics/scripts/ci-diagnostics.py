@@ -72,6 +72,7 @@ prefix match is exact.
 from __future__ import annotations
 
 import gzip
+import heapq
 import http.client
 import json
 import os
@@ -126,7 +127,7 @@ MAX_LOG_FETCHES = int(os.environ.get("MAX_LOG_FETCHES", "1200"))
 # value silently truncates instead of erroring.
 QUERY_LIMIT = int(os.environ.get("LOKI_QUERY_LIMIT", "5000"))
 
-# Flush once this many entries are buffered, rather than once per suite.
+# Flush once this many entries are buffered.
 #
 # This is what bounds the pod's memory, and it is the only thing that does. Measured on real
 # logs: ~9 MiB of Python objects per 1000 buffered entries, and ~70 entries per job. Buffering
@@ -400,6 +401,7 @@ class HttpError(Exception):
     def __init__(self, status, body=""):
         super().__init__(f"HTTP {status}: {body[:400]}")
         self.status = status
+        self.body = body
 
 
 def _request(url, *, headers=None, data=None, method=None, retries=4, timeout=None):
@@ -1179,22 +1181,39 @@ def build_streams(collected):
     return streams
 
 
+_IGNORED_RE = re.compile(r"total ignored: (\d+) out of (\d+)")
+
+
 def push_in_batches(streams, batch_entries=2000):
-    sent = 0
-    batch, count = [], 0
+    """Push each stream on its own request. Returns (entries accepted, entries rejected).
+
+    **One stream per request, because a multi-stream push cannot be trusted to report loss.**
+    Measured against Loki 3.7.9: a request carrying several streams answers for its *last*
+    stream only. If that one is accepted the response is 204 even when every earlier stream's
+    entries were discarded as "entry too far behind"; the only trace is Loki's own
+    `loki_discarded_samples_total`. Batching streams together is how lines were once lost with
+    nothing logged.
+
+    A rejection is also partial rather than all-or-nothing: Loki stores the acceptable entries
+    of a stream and answers 400 naming how many it ignored. That count is read from the body;
+    a 400 without it, or any other failure, counts the whole chunk as rejected.
+    """
+    accepted = rejected = 0
     for stream in streams:
+        labels = stream["stream"]
         for i in range(0, len(stream["values"]), batch_entries):
             chunk = stream["values"][i:i + batch_entries]
-            batch.append({"stream": stream["stream"], "values": chunk})
-            count += len(chunk)
-            if count >= batch_entries:
-                loki_push(batch)
-                sent += count
-                batch, count = [], 0
-    if batch:
-        loki_push(batch)
-        sent += count
-    return sent
+            try:
+                loki_push([{"stream": labels, "values": chunk}])
+                accepted += len(chunk)
+            except (HttpError, urllib.error.URLError, TimeoutError, OSError) as exc:
+                match = _IGNORED_RE.search(getattr(exc, "body", "") or str(exc))
+                lost = int(match.group(1)) if match else len(chunk)
+                accepted += len(chunk) - lost
+                rejected += lost
+                log(f"  PUSH REJECTED {lost}/{len(chunk)} entries for suite={labels.get('suite')} "
+                    f"instrument={labels.get('instrument')}: {str(exc)[:240]}")
+    return accepted, rejected
 
 
 def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
@@ -1210,9 +1229,8 @@ def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
     decide what is outstanding, so writing an OUTCOME row for a job whose log this pass chose
     not to read would mark it done **forever** -- the next pass skips it before making any API
     call, and its instrument lines are never collected even though the log stays available for
-    up to 90 more days. With a global fetch budget and suites iterated in sorted order, that
-    would silently discard the backfill for every suite after the budget ran out, which on
-    measured volume is most of them.
+    up to 90 more days. With a global fetch budget, that would silently discard the backfill for
+    every job after the budget ran out, which on measured volume is most of them.
 
     So a job whose log is still fetchable but was skipped for budget is left **unrecorded**,
     and the set difference correctly reports it as outstanding next pass. This is also what
@@ -1226,20 +1244,40 @@ def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
     fresh = bool(completed) and iso_to_ns(completed) > int(lines_cutoff.timestamp() * 1e9)
     if fresh and budget <= 0:
         return "deferred"
-    try:
-        produced = collect_job(suite, run, job, fresh, stats)
-    except LogFetchDeferred as exc:
-        log(f"  {suite}: job {job['id']} log unreachable ({exc}); "
-            "deferring it and all further log fetches to the next pass")
-        return "unreachable"
+    # A reset connection to blob storage is routine (seen about once per 50 downloads on some
+    # networks) and clears on the next attempt, so it gets two quick retries. Only a failure that
+    # persists defers the job, and with it every later fetch in this pass: that is the shape of
+    # Azure's egress throttle, which more requests only prolong.
+    for attempt in range(3):
+        try:
+            produced = collect_job(suite, run, job, fresh, stats)
+            break
+        except LogFetchDeferred as exc:
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+                continue
+            log(f"  {suite}: job {job['id']} log unreachable ({exc}); "
+                "deferring it and all further log fetches to the next pass")
+            return "unreachable"
     for stream_key, values in produced.items():
         collected.setdefault(stream_key, []).extend(values)
     stats["jobs"] += 1
     return "fetched" if fresh else "meta-only"
 
 
+# The only run and job fields anything downstream reads. Stage 1 holds every pending job of
+# a pass in memory at once, and the raw API objects carry `steps` and a dozen URLs each.
+RUN_FIELDS = ("id", "run_attempt", "event", "head_branch", "head_sha", "conclusion",
+              "created_at")
+JOB_FIELDS = ("id", "name", "conclusion", "started_at", "completed_at", "run_attempt")
+
+
+def _slim(obj, fields):
+    return {k: obj[k] for k in fields if k in obj}
+
+
 def _since(now, days):
-    """The `created>=` date both passes filter on, so their window edges agree exactly."""
+    """The `created>=` date every run listing filters on, so window edges agree exactly."""
     return (now - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
@@ -1259,24 +1297,25 @@ def _completed_runs(workflow, days, now, cap):
     return runs
 
 
-def _flush(collected, stats, label):
-    """Push one unit of work. A push failure is logged and swallowed, deliberately.
+def _flush(collected, stats):
+    """Push what has been collected. Rejections are counted, not raised.
 
-    Loki rejects a whole batch on a 400 -- too far behind, too old, a limit tripped -- and an
-    uncaught raise here would abandon every suite after this one. Since the next pass rebuilds
-    its to-do list by set difference, a dropped batch is retried rather than lost, so
-    continuing is strictly better than dying. It is logged loudly because a batch that fails
-    every pass would otherwise be an invisible standstill.
+    A rejected entry is **not** retried on a later pass. Its job's OUTCOME row is usually
+    accepted alongside it, so the set difference counts the job as held; and the stream's
+    newest entry only moves forward, so a retry would be rejected again. Rejection is what
+    the ingestion order in main() exists to prevent, so a non-zero count means that order
+    has been broken. main() fails the Job on it rather than letting it pass as a warning.
     """
     if not collected:
-        return 0
-    try:
-        entries = push_in_batches(build_streams(collected))
-    except HttpError as exc:
-        log(f"  {label}: PUSH FAILED ({exc}); leaving it outstanding for the next pass")
-        return 0
-    stats["pushed"] += entries
-    return entries
+        return
+    # OUTCOME and PHASE last. If the pass is killed between two of these requests, a job is
+    # then left with lines but no OUTCOME, which the set difference re-reads; the other way
+    # round it would be held forever with its lines missing.
+    streams = build_streams(collected)
+    streams.sort(key=lambda st: st["stream"]["instrument"] in (INSTRUMENT_OUTCOME, INSTRUMENT_PHASE))
+    accepted, rejected = push_in_batches(streams)
+    stats["pushed"] += accepted
+    stats["rejected"] += rejected
 
 
 def main():
@@ -1294,10 +1333,11 @@ def main():
         return 2
     log(f"{len(suites)} suites: {', '.join(suites)}")
 
-    stats = {"logs_read": 0, "logs_gone": 0, "jobs": 0, "pushed": 0, "unparsed": 0}
+    stats = {"logs_read": 0, "logs_gone": 0, "jobs": 0, "pushed": 0, "rejected": 0,
+             "unparsed": 0}
     push_markers()
 
-    # One Loki round-trip per suite, up front, shared by both passes below. A baseline run and
+    # One Loki round-trip per suite, up front, shared by both listings below. A baseline run and
     # a PR run have different run ids, so they coexist in the same per-suite map without
     # colliding.
     windows, known = {}, {}
@@ -1317,133 +1357,160 @@ def main():
         log("FATAL: could not read any suite's watermark from Loki; doing nothing")
         return 1
 
-    # -- Pass 1: the scheduled fleet sample. FIRST, and the order is load-bearing. ----------
+    # -- Which jobs, from which population ------------------------------------------------
     #
-    # This is the smaller population by two orders of magnitude -- 25 baseline runs over 90
-    # days against ~4000 `test-*` runs -- and it is the one the dashboard defaults to. Running
-    # the PR sweep first would spend the whole of `activeDeadlineSeconds` on contaminated runs
-    # and never reach the controlled ones, so a first backfill would leave the dashboard empty
-    # at its own default filter for hours while appearing to work.
+    # Two populations feed the same streams. The scheduled fleet sample is a matrix inside
+    # BASELINE_WORKFLOW, whose jobs are named `<suite> [<topology>] / test`, so its suite comes
+    # from the **job name**; jobs with no `[topology]` are `plan`/`harvest` scaffolding and are
+    # skipped rather than guessed at. The PR and dispatch runs live in the per-suite `test-*`
+    # workflows, so their suite comes from the workflow.
     #
-    # One workflow, many suites: the suite is in the **job name**, not the workflow, so these
-    # are routed by name rather than looked up. Jobs with no `[topology]` are the `plan` and
-    # `harvest` scaffolding and carry no suite -- skipped rather than guessed at.
+    # Both are ingested as one sequence, in order of **job completion**, because both write to
+    # the same `{suite, instrument}` streams and two invariants hold only if each stream receives
+    # its entries oldest-first across the whole pass:
     #
-    # Pushed per run rather than per suite: a run spans several suites, and a run is the
-    # natural resumable unit here.
+    # * Loki rejects an entry more than an hour behind the newest one already in its stream
+    #   ("entry too far behind"), and a stream never moves back. Sweeping one population to the
+    #   present and then the other drops the second one's older lines for good.
+    # * plan_window treats a suite's newest OUTCOME as "everything older is held". A recorded
+    #   job newer than an unrecorded one hides the older one from every later pass.
+    #
+    # Completion order bounds how far behind any entry can land to the length of its own job,
+    # whatever the overlap between runs: jobs are capped at 15 minutes against Loki's hour. It
+    # also keeps deferral safe, since once the budget is spent every later job is newer than the
+    # first one deferred, so the walk simply stops there.
     log_fetches = deferred = 0
+    counts = {}
     days = max(windows.values())
+    sources = []  # (run, suite) -- suite None for a baseline run, routed per job by name
     baseline = _completed_runs(BASELINE_WORKFLOW, days, now, MAX_RUNS_PER_SUITE)
-    slot_jobs = skipped = already_held = 0
-    for run in baseline:
-        collected = {}
-        try:
-            jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs", filter="all", per_page=100)
-        except HttpError as exc:
-            log(f"  baseline: run {run['id']} jobs unavailable ({exc})")
+    sources += [(_slim(run, RUN_FIELDS), None) for run in baseline]
+    for suite, workflow_id in suites.items():
+        if suite not in windows:
             continue
-        for job in jobs.get("jobs", []):
-            suite = JOB_NAME_RE.match(job.get("name") or "")
-            if not suite:
-                skipped += 1
+        runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
+        counts.setdefault(suite, [0, 0])[0] = len(runs)
+        for run in runs:
+            # Skipped before the jobs call: comparing attempts needs no per-run request.
+            if known[suite].get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
                 continue
-            suite = suite.group(1)
-            if suite not in known:
-                # A suite sampled by the fleet but with no `test-*` workflow of its own. Take
-                # it anyway rather than dropping data on the floor, with an empty dedupe map:
-                # the duplicate-timestamp rule keeps a re-read from doubling anything.
-                known[suite] = {}
-            if suite in windows and (run.get("created_at") or "")[:10] < _since(now, windows[suite]):
-                # This sweep spans the stalest suite's window, but known[suite] only covers
-                # this suite's own. Without this cut, one empty or rarely-run suite widens the
-                # sweep to 90 days and every other suite's older baseline jobs look new: they
-                # are re-downloaded every pass, dropped by Loki as duplicates, and use up the
-                # log budget before anything new is reached. Pass 2 already treats a suite's
-                # window as "everything older is held"; this applies the same rule here.
-                already_held += 1
-                continue
-            budget = MAX_LOG_FETCHES - log_fetches
+            sources.append((_slim(run, RUN_FIELDS), suite))
+    sources.sort(key=lambda s: s[0].get("created_at") or "")
+
+    # -- Ingest while walking the runs ----------------------------------------------------
+    #
+    # A job is known only once its run's jobs are fetched, so a full listing would have to come
+    # before any ingestion -- over 20 minutes for a 90-day backfill, all of it lost if
+    # activeDeadlineSeconds cuts the pass short, and the same again next pass. Instead runs are
+    # walked in creation order and a job is ingested as soon as no unread run can hold an
+    # earlier-completing one: every job completes after its run was created, so once the walk
+    # reaches a run created at T, every buffered job completed by T is safe to ingest.
+    pending, seq = [], 0  # heap of (completion, seq, suite, run, job)
+    collected = {}
+    skipped = already_held = unread = 0
+
+    def _drain(horizon):
+        nonlocal log_fetches, deferred, collected
+        while pending and (horizon is None or pending[0][0] <= horizon):
+            _, _, suite, run, job = heapq.heappop(pending)
             verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
-                                  budget, collected, stats)
+                                  MAX_LOG_FETCHES - log_fetches, collected, stats)
             if verdict == "fetched":
                 log_fetches += 1
             elif verdict == "deferred":
                 deferred += 1
             elif verdict == "unreachable":
+                # Exhausting the budget, rather than retrying, because the throttle observed
+                # here (Azure's per-account egress limit) does not clear in seconds and every
+                # further request adds to it.
                 deferred += 1
                 log_fetches = MAX_LOG_FETCHES
-            slot_jobs += 1
             if sum(len(v) for v in collected.values()) >= FLUSH_EVERY:
-                _flush(collected, stats, "baseline")
+                _flush(collected, stats)
                 collected = {}
-        _flush(collected, stats, "baseline")
-    log(f"  baseline: window={days}d runs={len(baseline)} suite_jobs={slot_jobs} "
-        f"scaffolding_skipped={skipped} outside_suite_window={already_held}")
 
-    # -- Pass 2: the per-suite `test-*` workflows (PR and dispatch runs). -------------------
-    #
-    # Pushed per suite rather than accumulated across the fleet, for two reasons that are both
-    # about failure rather than tidiness: it bounds peak memory to one suite's window, and it
-    # leaves the suites already done *ingested*, so an interrupted pass resumes by set
-    # difference instead of redoing everything.
-    for suite, workflow_id in suites.items():
-        if suite not in windows:
+    def _queue(suite, run, job):
+        nonlocal seq
+        if int(job.get("run_attempt", run.get("run_attempt", 1)) or 1) <= known[suite].get(str(run["id"]), 0):
+            return
+        counts.setdefault(suite, [0, 0])[1] += 1
+        key = job.get("completed_at") or job.get("started_at") or run.get("created_at") or ""
+        seq += 1
+        heapq.heappush(pending, (key, seq, suite, run, _slim(job, JOB_FIELDS)))
+
+    for index, (run, owner) in enumerate(sources):
+        _drain(run.get("created_at") or "")
+        if log_fetches >= MAX_LOG_FETCHES:
+            # Everything from here on is newer than what the budget allowed, so it would only be
+            # deferred. Stopping saves the jobs calls, and the next pass resumes from here.
+            unread = len(sources) - index
+            break
+        # filter=all, not the default filter=latest. The runs API returns only the latest
+        # attempt, which is how 130 failures repo-wide once became invisible to a failure
+        # filter: a job that failed and was re-run green simply is not there.
+        try:
+            jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs",
+                      filter="all", per_page=100).get("jobs", [])
+        except HttpError as exc:
+            log(f"  {owner or 'baseline'}: run {run['id']} jobs unavailable ({exc})")
             continue
-        collected = {}
-        runs = _completed_runs(workflow_id, windows[suite], now, MAX_RUNS_PER_SUITE)
-        new = entries = 0
-        for run in runs:
-            if known[suite].get(str(run["id"]), 0) >= int(run.get("run_attempt", 1) or 1):
-                continue
-            # filter=all, not the default filter=latest. The runs API returns only the latest
-            # attempt, which is how 130 failures repo-wide once became invisible to a failure
-            # filter: a job that failed and was re-run green simply is not there. One parameter
-            # is the difference between a flake series and a survivorship-biased one.
-            try:
-                jobs = gh(f"repos/{REPO}/actions/runs/{run['id']}/jobs", filter="all", per_page=100)
-            except HttpError as exc:
-                log(f"  {suite}: run {run['id']} jobs unavailable ({exc})")
-                continue
-            for job in jobs.get("jobs", []):
-                budget = MAX_LOG_FETCHES - log_fetches
-                verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
-                                      budget, collected, stats)
-                if verdict == "fetched":
-                    log_fetches += 1
-                elif verdict == "deferred":
-                    deferred += 1
-                elif verdict == "unreachable":
-                    # Exhausting the budget, rather than retrying, because the throttle
-                    # observed here (Azure's per-account egress limit) does not clear in
-                    # seconds and every further request adds to it. Metadata-only jobs are
-                    # still recorded, so the rest of the pass is not wasted.
-                    deferred += 1
-                    log_fetches = MAX_LOG_FETCHES
-                if verdict != "known":
-                    new += 1
-                if sum(len(v) for v in collected.values()) >= FLUSH_EVERY:
-                    entries += _flush(collected, stats, suite)
-                    collected = {}
-        entries += _flush(collected, stats, suite)
-        log(f"  {suite}: window={windows[suite]}d runs={len(runs)} "
-            f"known={len(known[suite])} new_jobs={new} entries={entries}")
+        for job in jobs:
+            suite = owner
+            if suite is None:
+                match = JOB_NAME_RE.match(job.get("name") or "")
+                if not match:
+                    skipped += 1
+                    continue
+                suite = match.group(1)
+                if suite not in known:
+                    # A suite sampled by the fleet but with no `test-*` workflow of its own. Take
+                    # it anyway rather than dropping data on the floor, with an empty dedupe map:
+                    # the duplicate-timestamp rule keeps a re-read from doubling anything.
+                    known[suite] = {}
+                if suite in windows and (run.get("created_at") or "")[:10] < _since(now, windows[suite]):
+                    # The baseline listing spans the stalest suite's window, but known[suite]
+                    # only covers this suite's own. Without this cut, one empty or rarely run
+                    # suite widens the listing to 90 days and every other suite's older baseline
+                    # jobs look new: they are re-downloaded every pass and use up the log budget
+                    # before anything new is reached.
+                    already_held += 1
+                    continue
+            _queue(suite, run, job)
+    if not unread:
+        _drain(None)
+    deferred += len(pending) if unread else 0
+    _flush(collected, stats)
+
+    log(f"  baseline: window={days}d runs={len(baseline)} "
+        f"scaffolding_skipped={skipped} outside_suite_window={already_held}")
+    for suite in sorted(counts):
+        log(f"  {suite}: window={windows.get(suite, days)}d runs={counts[suite][0]} "
+            f"known={len(known[suite])} new_jobs={counts[suite][1]}")
+    if unread:
+        log(f"  log budget spent; {unread} runs left unread for the next pass")
 
     log(
-        f"jobs={stats['jobs']} entries={stats['pushed']} logs_read={stats['logs_read']} "
-        f"logs_gone={stats['logs_gone']} deferred={deferred} suites_read={len(windows)}/{len(suites)}"
+        f"jobs={stats['jobs']} entries={stats['pushed']} rejected={stats['rejected']} "
+        f"logs_read={stats['logs_read']} "
+        f"logs_gone={stats['logs_gone']} deferred={deferred} unread_runs={unread} "
+        f"suites_read={len(windows)}/{len(suites)}"
     )
-    if deferred:
+    if deferred or unread:
         # Not an error: these jobs were left unrecorded on purpose, so the next pass picks them
         # up. A first backfill will report a large number here for several passes running, and
         # a number that never reaches zero means MAX_LOG_FETCHES is below the arrival rate.
-        log(f"{deferred} jobs deferred past the {MAX_LOG_FETCHES}-log budget; "
-            "they remain outstanding and will be collected on later passes")
+        log(f"{deferred} jobs deferred and {unread} runs left unread past the "
+            f"{MAX_LOG_FETCHES}-log budget; they remain outstanding and will be collected on "
+            "later passes")
     if stats["unparsed"]:
         # A recognised prefix whose body did not yield fields. The line is stored either way
         # (that is the point of storing verbatim), but a non-zero count here is the signal
         # that a field layout has changed under us. Also carried per job on the OUTCOME line,
         # so it reaches the dashboard rather than only this terminal.
         log(f"WARNING: {stats['unparsed']} lines matched a known prefix but yielded no fields")
+    if stats["rejected"]:
+        log(f"ERROR: Loki rejected {stats['rejected']} entries; they are lost, not outstanding")
+        return 1
     return 0
 
 
