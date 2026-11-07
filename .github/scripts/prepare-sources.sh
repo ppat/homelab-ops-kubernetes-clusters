@@ -128,6 +128,27 @@ copy_external_source() {
   # flux-local renders every source into one shared tree, so when two
   # Kustomizations pin the same component at different tags, the one
   # copied last wins. Kustomizations are processed sorted by name.
+  #
+  # Flux also copies a source's `spec.include` entries into its artifact
+  # before kustomize-controller builds it, which is how cluster-owned
+  # components (clusters/<cluster>/components/) reach a module. Only includes
+  # of `root` are modelled: root is this repo, already checked out at
+  # DESTINATION_DIR. A component path provided by an include is taken from
+  # there instead of from the module's tag.
+  local included_paths=""
+  local incl_repo incl_from incl_to
+  while IFS=$'\t' read -r incl_repo incl_from incl_to; do
+    [[ -z "${incl_repo}" ]] && continue
+    if [[ "${incl_repo}" != "root" ]]; then
+      echo "WARNING: include of '${incl_repo}' in source '${ks_src}' is not modelled; skipping" >&2
+      continue
+    fi
+    echo "${ks_src}: include root:${incl_from} -> ${DESTINATION_DIR}/${incl_to}..."
+    mkdir -p "${DESTINATION_DIR}/${incl_to}"
+    rsync -r -q "${DESTINATION_DIR}/${incl_from}/" "${DESTINATION_DIR}/${incl_to}/"
+    included_paths="${included_paths} ${incl_to}"
+  done < <(yq -r '.spec.include[]? | [.repository.name, .fromPath, .toPath] | @tsv' "${SOURCES_DIR}/${ks_src}.yaml" 2> /dev/null)
+
   local component
   while IFS= read -r component; do
     [[ -z "${component}" ]] && continue
@@ -136,6 +157,9 @@ copy_external_source() {
     component_path=$(realpath -m --relative-to="." "${copy_path}/${component}")
     if [[ "${component_path}" == ..* ]]; then
       echo "WARNING: component '${component}' of Kustomization '${ks_name}' resolves outside the source repo ('${component_path}'); skipping" >&2
+      continue
+    fi
+    if [[ " ${included_paths} " == *" ${component_path} "* ]]; then
       continue
     fi
     if [[ ! -e "${component_path}" ]]; then

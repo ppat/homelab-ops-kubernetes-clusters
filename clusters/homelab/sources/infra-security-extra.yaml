@@ -5,6 +5,13 @@ metadata:
   name: infra-security-extra
   namespace: flux-system
 spec:
+  # Maps this cluster's own Kustomize components into the module artifact's components/ path
+  # (see components/db-longhorn-trim-daily/kustomization.yaml).
+  include:
+  - repository:
+      name: root
+    fromPath: clusters/homelab/components/db-longhorn-trim-daily
+    toPath: components/db-longhorn-trim-daily
   ignore: |
     # exclude all
     /*

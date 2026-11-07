@@ -24,4 +24,46 @@ patches:
         recurring-job-group.longhorn.io/backup-ops: enabled
   target:
     kind: PersistentVolumeClaim
-    name: '^.+-(data|metadata)$'
+    name: '^(grafana|pihole)-data$'
+# Garage is in the intraday backup tier (backup-ops-intraday) instead of backup-ops, and takes no
+# snapshot-ops: every trim marks the whole snapshot chain removed, and backups every 4 hours cover it.
+# garage-metadata (LMDB, rewritten in place) churns enough to trim daily; garage-data stays weekly.
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/default: enabled
+        recurring-job-group.longhorn.io/backup-ops-intraday: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: garage-data
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/trim-daily: enabled
+        recurring-job-group.longhorn.io/backup-ops-intraday: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: garage-metadata
+# Log volumes: daily trim only. Log data has no restore value, so no snapshots or backups.
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/trim-daily: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: '^(pihole|traefik)-logs$'

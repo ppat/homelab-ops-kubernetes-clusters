@@ -1,0 +1,24 @@
+---
+# Daily trim for high-churn volumes (Loki, Prometheus, CloudNativePG, log PVCs, garage-metadata).
+# A volume belongs to exactly one trim group: daily-trim volumes are labelled trim-daily and NOT
+# default, otherwise weekly-filesystem-trim would trim and purge them a second time on Wednesdays.
+#
+# 02:00 UTC is deliberate. With remove-snapshots-during-filesystem-trim enabled, every trim marks the
+# snapshot chain behind the volume head as removed, and the purge that follows coalesces away every
+# removed snapshot except the one directly behind the head. The incremental-backup base survives only
+# if that surviving snapshot is the last backup's. So on backed-up volumes the trim must run after a
+# backup, with no snapshot or backup job in between and none in flight: daily-backup and
+# intraday-backup both run at 00:00, and the next snapshot or backup job on any volume is at 04:00.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: daily-filesystem-trim
+  namespace: longhorn-system
+spec:
+  task: filesystem-trim
+  # Set explicitly: a RecurringJob with no concurrency deadlocks on Longhorn releases older than
+  # 1.12.1/1.11.3 (longhorn/longhorn#13416), and newer releases default it to 10.
+  concurrency: 2
+  cron: "0 2 * * *"  # daily @ 2am UTC (after the midnight backups, before any 4am snapshot/backup)
+  groups:
+  - trim-daily

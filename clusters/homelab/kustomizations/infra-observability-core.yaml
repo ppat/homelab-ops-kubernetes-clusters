@@ -126,20 +126,39 @@ spec:
     target:
       kind: Endpoints
       name: k3s-metrics-service
+  # Prometheus TSDB compaction and retention deletes churn heavily: daily trim, daily backup, no
+  # snapshot-ops (every trim marks the whole snapshot chain removed). The operator recreates the
+  # StatefulSet when its volumeClaimTemplate changes but never edits existing PVCs, so a label change
+  # here reaches the live PVC only through a one-time relabel of that PVC.
   # yamllint disable-line rule:indentation
   - patch: |
       - op: add
         path: /spec/values/prometheus/prometheusSpec/storageSpec/volumeClaimTemplate/metadata/labels
         value:
           recurring-job.longhorn.io/source: enabled
-          recurring-job-group.longhorn.io/default: enabled
-          recurring-job-group.longhorn.io/snapshot-ops: enabled
+          recurring-job-group.longhorn.io/trim-daily: enabled
           recurring-job-group.longhorn.io/backup-ops: enabled
     target:
       group: helm.toolkit.fluxcd.io
       kind: HelmRelease
       name: kube-prometheus-stack-release
       namespace: monitoring
+  # Loki's WAL and checkpoints churn constantly: daily trim only. No snapshots or backups, because the
+  # durable data is in Garage and a restored WAL is stale. volumeClaimTemplates are immutable and the
+  # chart's statefulSetRecreateJob does not cover label changes, so changing these labels needs the
+  # StatefulSet recreated (orphaning its pods and PVCs), and existing PVCs never inherit them.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      - op: add
+        path: /spec/values/singleBinary/persistence/labels
+        value:
+          recurring-job.longhorn.io/source: enabled
+          recurring-job-group.longhorn.io/trim-daily: enabled
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: loki-release
+      namespace: logging
   # Route alerts to n8n's Alertmanager-intake webhook (apps-ai's alertmanager-receiver
   # workflow) instead of the chart's default null receiver -- Alertmanager otherwise has
   # zero receivers configured. Watchdog stays routed to 'null' so the dead-man's-switch

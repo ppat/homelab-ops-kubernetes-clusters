@@ -10,3 +10,6 @@ spec:
   cron: "0 2 * * 3"  # once a week on Wednesday at 2am UTC (before the filesystem trim @ 3am UTC)
   groups:
   - default
+  # Volumes that trim cannot reach (block mode, detached between CronJob runs) get no post-trim
+  # purge, so this job is what purges their system snapshots.
+  - no-trim

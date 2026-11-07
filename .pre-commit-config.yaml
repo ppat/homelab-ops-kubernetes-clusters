@@ -67,7 +67,7 @@ repos:
     - --pkg-include
     - '["clusters/*"]'
     - --pkg-exclude
-    - '["components/*"]'
+    - '["components/*","clusters/*/components/*"]'
     - --kubeconform-flags
     - '-skip=Secret,IPAddressPool'
     - --env-file

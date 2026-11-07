@@ -30,8 +30,9 @@ patches:
 # vault-git-cache only holds the committer's clone of vault git history/state —
 # it's re-derivable with a fresh `git clone` from the remotes it pushes to, so
 # unlike the other PVCs here it skips snapshot-ops/backup-ops (nothing to
-# protect) and keeps only the default group's filesystem-trim housekeeping.
-# Same reasoning as the wyoming-* model caches in storage/apps/pvc/home-automation.
+# protect). It is attached only while the committer's CronJob runs, and Longhorn
+# never attaches a detached volume for a trim, so it is in no-trim (a group no
+# trim job references) rather than default.
 # yamllint disable-line rule:indentation
 - patch: |-
     apiVersion: v1
@@ -40,7 +41,7 @@ patches:
       name: irrelevant
       labels:
         recurring-job.longhorn.io/source: enabled
-        recurring-job-group.longhorn.io/default: enabled
+        recurring-job-group.longhorn.io/no-trim: enabled
   target:
     kind: PersistentVolumeClaim
     name: vault-git-cache

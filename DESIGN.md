@@ -77,6 +77,7 @@ flowchart TB
 | `cluster/` | `kubernetes-version/` (k3s upgrade `Plan`), `rbac/` (admin/readonly `ClusterRoleBinding`s), `secrets/` (Bitwarden `ClusterSecretStore` + the `cluster-secrets` `ExternalSecret`) | Bootstrapped once per cluster, not tied to any single module |
 | `storage/` | `infra/` and `apps/` subtrees of `PersistentVolume`/`PersistentVolumeClaim`/`StorageClass`/Longhorn `RecurringJob`, matching the module that will claim them | Pre-provisioned ahead of the module that mounts them (see [Storage](#storage)) |
 | `services/` | Cluster-specific extras that aren't modules at all — see [The `services/` directory](#the-services-directory) | Either looked up by name from inside a module, or standalone (no module awareness) |
+| `components/` | Kustomize components that encode this cluster's own choices (for example Longhorn recurring-job group labels), so they cannot live in the apps repo | Mapped into a module's artifact at `components/<name>` by that module's `GitRepository` `spec.include` from `root`, then mixed in through `spec.components` like any apps-repo component. `spec.ignore` is applied after includes, so the target path must stay under `components/` |
 
 `root.yaml` in `kustomizations/` is the Flux bootstrap entry point: it's the one
 `Kustomization` that Flux is told about directly, with `spec.path: ./clusters/<name>`,

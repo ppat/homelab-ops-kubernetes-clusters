@@ -8,6 +8,7 @@ spec:
   components:
   - ../../../components/db-backups
   - ../../../components/db-restore
+  - ../../../components/db-longhorn-trim-daily
   dependsOn:
   - name: infra-security-core
     namespace: flux-system

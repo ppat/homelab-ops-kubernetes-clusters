@@ -1,0 +1,24 @@
+---
+# The intraday backup tier: a backup every 4 hours with a full backup once a day. It is the
+# alternative to daily-backup (daily, full once a week), not an addition to it, so a volume belongs to
+# exactly one of backup-ops-intraday and backup-ops. Two backup jobs on one volume would also collide on
+# backupstore locks whenever their crons coincide.
+#
+# full-backup-interval counts this job's runs, so 6 runs a day gives one full backup a day. A full
+# re-uploads every data block, including blocks already in the store. A full of garage-data (about
+# 39 GB) takes roughly 80-85 minutes at the throughput its incrementals show, so a full on the 00:00
+# run still finishes before the 02:00 and 03:00 trims.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: intraday-backup
+  namespace: longhorn-system
+spec:
+  task: backup
+  concurrency: 2
+  cron: "0 */4 * * *"  # every 4 hours, starting at midnight UTC
+  groups:
+  - backup-ops-intraday
+  parameters:
+    full-backup-interval: "6"
+  retain: 180  # 30 days of 4-hourly backups, the same restore depth as daily-backup's retain 30
