@@ -22,6 +22,7 @@ configures, modules that live in the sibling apps repo (see below).
 - `clusters/<name>/cluster/` — cluster-wide, not module-specific: k8s version upgrades, RBAC bindings, Bitwarden-backed cluster secrets
 - `clusters/<name>/storage/` — `PersistentVolume`/`PersistentVolumeClaim`/`StorageClass` split `infra/`/`apps/`, pre-provisioned ahead of the module that claims them
 - `clusters/<name>/services/` — cluster-specific extras that aren't modules: either config/secrets a module looks up by name, or standalone CRs with no module awareness. See [DESIGN.md#the-services-directory](./DESIGN.md#the-services-directory)
+- `clusters/<name>/components/` — cluster-owned Kustomize components, mapped into module sources via `GitRepository` `spec.include` and mixed in through `spec.components`
 - `clusters/nas/outpost/` — nas-specific top-level directory authored directly in this repo (not sourced from the apps repo); nas has no `services/` directory of its own
 - `ci/validation/` — base kustomization + `.env` of dummy post-build substitution variables used by kubeconform validation
 

@@ -1,0 +1,29 @@
+---
+# Puts every CloudNativePG PGDATA volume of the consuming module into this cluster's Longhorn
+# daily trim group (RecurringJob daily-filesystem-trim, storage/infra/job/). CloudNativePG copies
+# spec.inheritedMetadata labels onto every PVC it owns, existing PVCs included, and Longhorn then
+# syncs a source-labelled PVC's recurring-job labels onto its volume. No snapshot-ops or backup-ops:
+# the databases are backed up by CloudNativePG itself.
+#
+# Lives in this repo because the group names are this cluster's. Module sources reach it through
+# GitRepository spec.include (sources/<module>.yaml), which maps it to components/ inside the
+# module's artifact; spec.ignore is applied after includes, so the target must stay under the
+# already-unignored components/ path.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    metadata:
+      name: irrelevant
+    spec:
+      inheritedMetadata:
+        labels:
+          recurring-job.longhorn.io/source: enabled
+          recurring-job-group.longhorn.io/trim-daily: enabled
+  target:
+    group: postgresql.cnpg.io
+    kind: Cluster

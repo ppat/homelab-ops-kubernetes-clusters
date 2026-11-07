@@ -4,11 +4,10 @@
 # metadata store grows with object *count*, not object size, so this is the volume
 # to watch as the bucket's item count grows, independent of garage-data's own growth.
 #
-# Not named "garage-metadata-data": storage/infra/pvc/kustomization.yaml's Longhorn
-# recurring-job-label patch only matches PVC names ending in "-data", so this PVC's
-# labels are set explicitly below rather than renamed to fit that pattern -- losing
-# Garage's node identity/cluster layout (this volume) is as disruptive as losing
-# object data, so it gets the same backup/snapshot treatment as garage-data.
+# Losing Garage's node identity/cluster layout (this volume) is as disruptive as losing
+# object data, so it gets the same backup schedule as garage-data. Its Longhorn
+# recurring-job labels are set by a garage-metadata-specific patch in
+# storage/infra/pvc/kustomization.yaml.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -31,3 +31,16 @@ patches:
   target:
     kind: PersistentVolumeClaim
     name: '^.+-data$'
+# recyclarr-data is only attached while its CronJob runs. Longhorn never attaches a detached volume
+# for a trim, so it moves from default (which carries weekly-filesystem-trim) to no-trim, a group no
+# trim job references. It keeps its snapshots and backups, which do auto-attach.
+# yamllint disable-line rule:indentation
+- patch: |-
+    - op: remove
+      path: /metadata/labels/recurring-job-group.longhorn.io~1default
+    - op: add
+      path: /metadata/labels/recurring-job-group.longhorn.io~1no-trim
+      value: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: recyclarr-data

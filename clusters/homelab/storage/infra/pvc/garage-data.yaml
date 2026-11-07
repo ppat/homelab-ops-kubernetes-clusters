@@ -6,9 +6,8 @@
 # now-reverted Garage attempt on this cluster computed by a different method --
 # re-derive from a fresh measurement before resizing, don't just bump the multiplier.
 #
-# Name ends in "-data" on purpose: storage/infra/pvc/kustomization.yaml's Longhorn
-# recurring-job-label patch matches on that suffix, so this PVC gets the same
-# backup/snapshot labels as grafana-data/pihole-data without repeating them here.
+# Longhorn recurring-job labels are set by a garage-data-specific patch in
+# storage/infra/pvc/kustomization.yaml.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -27,3 +27,16 @@ patches:
   target:
     kind: PersistentVolumeClaim
     name: '^.+-data$'
+# Log volumes: daily trim only. Log data has no restore value, so no snapshots or backups.
+# yamllint disable-line rule:indentation
+- patch: |-
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: irrelevant
+      labels:
+        recurring-job.longhorn.io/source: enabled
+        recurring-job-group.longhorn.io/trim-daily: enabled
+  target:
+    kind: PersistentVolumeClaim
+    name: '^(jellyfin|plex)-logs$'

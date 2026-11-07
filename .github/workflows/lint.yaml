@@ -133,7 +133,7 @@ jobs:
       with:
         files: ${{ steps.format-files.outputs.files_json }}
         pkg-include: '["clusters/*"]'
-        pkg-exclude: '["components/*",".archive/*"]'
+        pkg-exclude: '["components/*","clusters/*/components/*",".archive/*"]'
         kubeconform-flags: '-skip=Secret,IPAddressPool'
         env-file: 'ci/validation/.env'
         base-kustomization-file: 'ci/validation/kustomization.yaml'

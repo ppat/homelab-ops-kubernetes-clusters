@@ -10,6 +10,7 @@ spec:
   - ../../../components/sso
   - ../../../components/db-backups
   - ../../../components/db-restore
+  - ../../../components/db-longhorn-trim-daily
   dependsOn:
   - name: infra-security-extra
     namespace: flux-system

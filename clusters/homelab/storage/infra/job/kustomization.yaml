@@ -4,6 +4,8 @@ kind: Kustomization
 
 resources:
 - daily-backup.yaml
+- daily-filesystem-trim.yaml
+- intraday-backup.yaml
 - weekday-snapshot.yaml
 - weekend-snapshot.yaml
 - weekly-filesystem-trim.yaml
