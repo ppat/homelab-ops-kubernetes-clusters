@@ -65,10 +65,10 @@ Every PR runs `.github/workflows/lint.yaml`, which fans out to per-file-type
 jobs (commit-messages via commitlint, github-actions, kubernetes-manifests via
 kubeconform, markdown, pre-commit, renovate-config-check, shellcheck, yaml) —
 each gated on whether matching files changed. Separately,
-`.github/workflows/diff-changes.yaml` checks out the apps repo alongside
-before/after versions of this repo and comments a rendered `flux-diff` of
-affected `HelmRelease`/`Kustomization` resources on any PR touching
-`clusters/**`. Full breakdown in
+`.github/workflows/diff-changes.yaml` renders before/after versions of this
+repo with flate, which fetches each module at its pinned tag, and comments a
+`flux-diff` of affected `HelmRelease`/`Kustomization` resources on any PR
+touching `clusters/**`. Full breakdown in
 [DESIGN.md#ci-and-validation](./DESIGN.md#ci-and-validation).
 
 ## Commit conventions
