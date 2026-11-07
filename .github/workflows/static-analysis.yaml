@@ -50,7 +50,7 @@ permissions:
 
 jobs:
   rbac-clusterroles:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     env:
       # Pinned to the Kyverno CLI release matching the appVersion of the
@@ -111,7 +111,7 @@ jobs:
     # unsafe direction (a stale, too-long GLOBAL_RETENTION lets the guard trust a window
     # past when the data is actually gone). See ci/scripts/check-loki-retention-pairing.sh
     # for the full rationale and loki-query-correctness.py's GLOBAL_RETENTION comment.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
     - name: Checkout

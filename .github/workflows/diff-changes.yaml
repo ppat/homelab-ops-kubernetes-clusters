@@ -32,7 +32,7 @@ jobs:
 
   affected-clusters:
     needs: [detect-changes]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 2
     outputs:
       affected_clusters: ${{ steps.extract-clusters.outputs.clusters }}
@@ -59,7 +59,7 @@ jobs:
         fi
 
   diff:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     needs: [affected-clusters]
     if: ${{ needs.affected-clusters.outputs.affected_clusters != '[]' }}
