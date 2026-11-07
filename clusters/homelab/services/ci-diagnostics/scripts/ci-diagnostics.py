@@ -72,6 +72,7 @@ prefix match is exact.
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import os
 import re
@@ -490,7 +491,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def gh_job_log(job_id, spool):
-    """Stream a job's log to `spool`. Returns True, or False when it is past the 90-day window.
+    """Stream a job's log to `spool`. Returns True, or False when the log no longer exists.
+
+    Raises LogFetchDeferred when the log may exist but could not be read this time.
 
     **Streamed to a file rather than returned as a string, deliberately.** Holding the log in
     memory meant a 20 MiB log (the harvester's own notes cite one) cost ~49 MiB of *anonymous*
@@ -538,15 +541,50 @@ def gh_job_log(job_id, spool):
         if exc.code in (410, 404):
             return False
         if exc.code not in (301, 302, 303, 307, 308):
+            if _transient(exc.code):
+                raise LogFetchDeferred(f"API {exc.code} {exc.reason}") from exc
             raise HttpError(exc.code, exc.read().decode("utf-8", "replace")) from exc
         location = exc.headers.get("Location")
         if not location:
             raise HttpError(exc.code, "redirect without Location") from exc
+    except _NETWORK_ERRORS as exc:
+        raise LogFetchDeferred(f"API {exc!r}") from exc
+    # The blob leg fails independently of the API leg, and in two different ways.
+    #
+    # * 404 `The specified blob does not exist.` -- the API still issues a signed URL for a
+    #   job whose log was never written or has already been purged. It is the same fact as the
+    #   API-side 404/410 above, so it is recorded the same way: the log is gone.
+    # * 503 `Egress is over the account limit.` -- Azure throttling GitHub's storage account.
+    #   Transient, and retrying straight away only adds to the egress that tripped it.
+    #
+    # Neither may escape as an exception. Runs are processed oldest-first and the set
+    # difference hands the same job back on the next pass, so an uncaught error here stops
+    # every pass at that one job, before anything is flushed, for every suite.
     signed = urllib.request.Request(location)
     signed.add_header("User-Agent", USER_AGENT)
-    with urllib.request.urlopen(signed, timeout=120) as resp:
-        _spool(resp, spool)
+    try:
+        with urllib.request.urlopen(signed, timeout=120) as resp:
+            _spool(resp, spool)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (410, 404):
+            return False
+        raise LogFetchDeferred(f"blob {exc.code} {exc.reason}") from exc
+    except _NETWORK_ERRORS as exc:
+        raise LogFetchDeferred(f"blob {exc!r}") from exc
     return True
+
+
+class LogFetchDeferred(Exception):
+    """A log that exists but could not be read right now. The job is left unrecorded."""
+
+
+# Raised mid-transfer as well as on connect, so `_spool` can surface them too. HTTPError is
+# a subclass of URLError and is always caught ahead of this tuple.
+_NETWORK_ERRORS = (urllib.error.URLError, OSError, http.client.HTTPException)
+
+
+def _transient(status):
+    return status == 429 or 500 <= status < 600
 
 
 def _spool(resp, path):
@@ -1162,7 +1200,11 @@ def push_in_batches(streams, batch_entries=2000):
 def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
     """Route one job into `collected` unless it is already held.
 
-    Returns "fetched" | "deferred" | "known" | "meta-only".
+    Returns "fetched" | "deferred" | "unreachable" | "known" | "meta-only".
+
+    "unreachable" is a deferral caused by GitHub or its blob storage failing transiently
+    (LogFetchDeferred). The job is left unrecorded exactly like a budget deferral, and the
+    caller stops fetching logs for the rest of the pass.
 
     **The deferred case is the important one.** `known_attempts()` reads the OUTCOME stream to
     decide what is outstanding, so writing an OUTCOME row for a job whose log this pass chose
@@ -1184,14 +1226,25 @@ def _ingest_job(suite, run, job, known, lines_cutoff, budget, collected, stats):
     fresh = bool(completed) and iso_to_ns(completed) > int(lines_cutoff.timestamp() * 1e9)
     if fresh and budget <= 0:
         return "deferred"
-    for stream_key, values in collect_job(suite, run, job, fresh, stats).items():
+    try:
+        produced = collect_job(suite, run, job, fresh, stats)
+    except LogFetchDeferred as exc:
+        log(f"  {suite}: job {job['id']} log unreachable ({exc}); "
+            "deferring it and all further log fetches to the next pass")
+        return "unreachable"
+    for stream_key, values in produced.items():
         collected.setdefault(stream_key, []).extend(values)
     stats["jobs"] += 1
     return "fetched" if fresh else "meta-only"
 
 
+def _since(now, days):
+    """The `created>=` date both passes filter on, so their window edges agree exactly."""
+    return (now - timedelta(days=days)).strftime("%Y-%m-%d")
+
+
 def _completed_runs(workflow, days, now, cap):
-    since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    since = _since(now, days)
     runs = gh_paginate(
         f"repos/{REPO}/actions/workflows/{workflow}/runs",
         "workflow_runs",
@@ -1281,7 +1334,7 @@ def main():
     log_fetches = deferred = 0
     days = max(windows.values())
     baseline = _completed_runs(BASELINE_WORKFLOW, days, now, MAX_RUNS_PER_SUITE)
-    slot_jobs = skipped = 0
+    slot_jobs = skipped = already_held = 0
     for run in baseline:
         collected = {}
         try:
@@ -1300,6 +1353,15 @@ def main():
                 # it anyway rather than dropping data on the floor, with an empty dedupe map:
                 # the duplicate-timestamp rule keeps a re-read from doubling anything.
                 known[suite] = {}
+            if suite in windows and (run.get("created_at") or "")[:10] < _since(now, windows[suite]):
+                # This sweep spans the stalest suite's window, but known[suite] only covers
+                # this suite's own. Without this cut, one empty or rarely-run suite widens the
+                # sweep to 90 days and every other suite's older baseline jobs look new: they
+                # are re-downloaded every pass, dropped by Loki as duplicates, and use up the
+                # log budget before anything new is reached. Pass 2 already treats a suite's
+                # window as "everything older is held"; this applies the same rule here.
+                already_held += 1
+                continue
             budget = MAX_LOG_FETCHES - log_fetches
             verdict = _ingest_job(suite, run, job, known[suite], lines_cutoff,
                                   budget, collected, stats)
@@ -1307,13 +1369,16 @@ def main():
                 log_fetches += 1
             elif verdict == "deferred":
                 deferred += 1
+            elif verdict == "unreachable":
+                deferred += 1
+                log_fetches = MAX_LOG_FETCHES
             slot_jobs += 1
             if sum(len(v) for v in collected.values()) >= FLUSH_EVERY:
                 _flush(collected, stats, "baseline")
                 collected = {}
         _flush(collected, stats, "baseline")
     log(f"  baseline: window={days}d runs={len(baseline)} suite_jobs={slot_jobs} "
-        f"scaffolding_skipped={skipped}")
+        f"scaffolding_skipped={skipped} outside_suite_window={already_held}")
 
     # -- Pass 2: the per-suite `test-*` workflows (PR and dispatch runs). -------------------
     #
@@ -1347,6 +1412,13 @@ def main():
                     log_fetches += 1
                 elif verdict == "deferred":
                     deferred += 1
+                elif verdict == "unreachable":
+                    # Exhausting the budget, rather than retrying, because the throttle
+                    # observed here (Azure's per-account egress limit) does not clear in
+                    # seconds and every further request adds to it. Metadata-only jobs are
+                    # still recorded, so the rest of the pass is not wasted.
+                    deferred += 1
+                    log_fetches = MAX_LOG_FETCHES
                 if verdict != "known":
                     new += 1
                 if sum(len(v) for v in collected.values()) >= FLUSH_EVERY:
