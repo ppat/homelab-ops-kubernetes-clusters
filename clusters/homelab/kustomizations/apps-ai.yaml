@@ -10,7 +10,6 @@ spec:
   - ../../../components/sso
   - ../../../components/db-backups
   - ../../../components/db-restore
-  - ../../../components/db-longhorn-trim-daily
   dependsOn:
   - name: infra-security-extra
     namespace: flux-system
@@ -60,6 +59,23 @@ spec:
         path: /spec/affinity
         value:
           podAntiAffinityType: required
+    target:
+      group: postgresql.cnpg.io
+      kind: Cluster
+  # CloudNativePG copies inheritedMetadata labels onto every PVC it owns, existing ones included,
+  # which puts PGDATA volumes in Longhorn's daily trim group. No snapshot-ops or backup-ops:
+  # databases are backed up by CloudNativePG itself.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: irrelevant
+      spec:
+        inheritedMetadata:
+          labels:
+            recurring-job.longhorn.io/source: enabled
+            recurring-job-group.longhorn.io/trim-daily: enabled
     target:
       group: postgresql.cnpg.io
       kind: Cluster
