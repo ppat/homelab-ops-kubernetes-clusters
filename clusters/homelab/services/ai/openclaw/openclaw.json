@@ -38,6 +38,12 @@
   },
 
   "agents": {
+    // The schema requires at least one keyed agent, and every CLI command that validates the
+    // config (update status, doctor) warns until one exists. "main" is the agent the gateway
+    // already runs implicitly, so declaring it changes no routing.
+    "entries": {
+      "main": {}
+    },
     "defaults": {
       "bootstrapMaxChars": 20000,
       "bootstrapTotalMaxChars": 150000,
