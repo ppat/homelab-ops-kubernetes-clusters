@@ -150,6 +150,14 @@
     "mode": "local",
     "bind": "lan",
     "port": 18789,
+    // Requests carrying X-Forwarded-* headers are rejected ("proxy_attribution_required")
+    // unless they come from a listed proxy. Traefik is a DaemonSet on the pod network, so its
+    // source address is a pod IP that changes on every restart; the cluster pod CIDR is the
+    // narrowest stable range. Traefik has no forwardedHeaders.trustedIPs, so it replaces
+    // client-supplied X-Forwarded-* headers rather than passing them through. Trusting the pod
+    // CIDR lets any in-cluster pod set its own client attribution; that feeds rate limiting and
+    // audit records only, since the gateway token is still required.
+    "trustedProxies": ["10.42.0.0/16"],
     "auth": {
       "mode": "token",
       "token": "${OPENCLAW_GATEWAY_TOKEN}",
