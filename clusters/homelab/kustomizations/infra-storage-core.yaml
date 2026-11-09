@@ -73,6 +73,9 @@ spec:
         name: longhorn-release
         namespace: longhorn-system
       spec:
+        chart:
+          spec:
+            version: version: 1.12.1
         values:
           persistence:
             defaultClass: false
