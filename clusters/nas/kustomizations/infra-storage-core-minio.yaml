@@ -18,7 +18,7 @@ spec:
   prune: true
   sourceRef:
     kind: GitRepository
-    name: infra-storage-core
+    name: infra-storage-minio
     namespace: flux-system
   timeout: 2m0s
   wait: true
@@ -43,7 +43,16 @@ spec:
         namespace: minio
       spec:
         values:
+          consoleIngress:
+            annotations:
+              external-dns.kubernetes.io/hostname: minio-console.nas.nikara.net
+              traefik.ingress.kubernetes.io/router.entrypoints: websecure
+              traefik.ingress.kubernetes.io/router.tls: "true"
           ingress:
+            annotations:
+              external-dns.kubernetes.io/hostname: s3.nas.nikara.net
+              traefik.ingress.kubernetes.io/router.entrypoints: websecure
+              traefik.ingress.kubernetes.io/router.tls: "true"
             enabled: true
           persistence:
             enabled: true
