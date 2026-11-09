@@ -24,44 +24,6 @@ proxy_config:
     store_model_in_db: true
     store_prompts_in_spend_logs: true
   model_list:
-  - model_name: anthropic/claude-opus
-    litellm_params:
-      model: openrouter/~anthropic/claude-opus-latest
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000005
-      output_cost_per_token: 0.000025
-  - model_name: anthropic/claude-sonnet
-    litellm_params:
-      model: openrouter/~anthropic/claude-sonnet-latest
-      api_key: os.environ/OPENROUTER_API_KEY
-      # live intro pricing through 2026-08-31 ($2/$10 per 1M); sticker
-      # ($3/$15 per 1M) resumes after -- bump then.
-      input_cost_per_token: 0.000002
-      output_cost_per_token: 0.00001
-  - model_name: anthropic/claude-haiku
-    litellm_params:
-      model: openrouter/~anthropic/claude-haiku-latest
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000001
-      output_cost_per_token: 0.000005
-  - model_name: openai/gpt-5.6-sol
-    litellm_params:
-      model: openrouter/openai/gpt-5.6-sol
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000005
-      output_cost_per_token: 0.00003
-  - model_name: openai/gpt-5.6-terra
-    litellm_params:
-      model: openrouter/openai/gpt-5.6-terra
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.0000025
-      output_cost_per_token: 0.000015
-  - model_name: openai/gpt-5.6-luna
-    litellm_params:
-      model: openrouter/openai/gpt-5.6-luna
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000001
-      output_cost_per_token: 0.000006
   - model_name: openai/gpt-mini-latest
     litellm_params:
       model: openrouter/~openai/gpt-mini-latest
@@ -90,77 +52,6 @@ proxy_config:
       # $0.15 / $0.60per 1M
       input_cost_per_token: 0.00000015
       output_cost_per_token: 0.0000006
-  - model_name: google/gemini-pro-latest
-    litellm_params:
-      model: openrouter/~google/gemini-pro-latest
-      api_key: os.environ/OPENROUTER_API_KEY
-      # $2 / $12per 1M
-      input_cost_per_token: 0.000002
-      output_cost_per_token: 0.000012
-  - model_name: google/gemini-flash-latest
-    litellm_params:
-      model: openrouter/~google/gemini-flash-latest
-      api_key: os.environ/OPENROUTER_API_KEY
-      # $1.50 / $7.50per 1M
-      input_cost_per_token: 0.0000015
-      output_cost_per_token: 0.0000075
-  - model_name: google/gemini-3.5-flash-lite
-    litellm_params:
-      model: openrouter/google/gemini-3.5-flash-lite
-      api_key: os.environ/OPENROUTER_API_KEY
-      # $0.30 / $2.50per 1M
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000025
-  - model_name: x-ai/grok-latest
-    litellm_params:
-      model: openrouter/~x-ai/grok-latest
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000002
-      output_cost_per_token: 0.000006
-  - model_name: deepseek/deepseek-v4-pro
-    litellm_params:
-      model: openrouter/deepseek/deepseek-v4-pro
-      api_key: os.environ/OPENROUTER_API_KEY
-      # $0.435 / $0.87per 1M
-      input_cost_per_token: 0.000000435
-      output_cost_per_token: 0.00000087
-  - model_name: deepseek/deepseek-v4-flash
-    litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      # $0.09 / $0.18per 1M
-      input_cost_per_token: 0.00000009
-      output_cost_per_token: 0.00000018
-  - model_name: moonshotai/kimi-k3
-    litellm_params:
-      model: openrouter/moonshotai/kimi-k3
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000003
-      output_cost_per_token: 0.000015
-  - model_name: qwen
-    litellm_params:
-      model: openrouter/qwen/qwen3.7-max
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000001475
-      output_cost_per_token: 0.000004425
-  - model_name: llama
-    litellm_params:
-      model: openrouter/meta-llama/llama-4-maverick
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.0000002
-      output_cost_per_token: 0.0000008
-  - model_name: mistral
-    litellm_params:
-      model: openrouter/mistralai/mistral-large-2512
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.0000005
-      output_cost_per_token: 0.0000015
-  - model_name: glm
-    litellm_params:
-      model: openrouter/z-ai/glm-5.2
-      api_key: os.environ/OPENROUTER_API_KEY
-      input_cost_per_token: 0.000000805
-      output_cost_per_token: 0.00000253
   # --- wildcard catch-all (flat form only) ---
   - model_name: "openrouter/*"
     litellm_params:
@@ -171,12 +62,5 @@ proxy_config:
     routing_strategy: simple-shuffle
     allowed_fails: 3
     cooldown_time: 60
-    fallbacks:
-    - deepseek/deepseek-v4-pro:
-      - openai/gpt-mini-latest
-      - google/gemini-3.5-flash-lite
-    - deepseek/deepseek-v4-flash:
-      - openai/gpt-5-nano
-      - google/gemini-3.5-flash-lite
     model_group_alias:
       text-embedding-3-small: openai/text-embedding-3-small
