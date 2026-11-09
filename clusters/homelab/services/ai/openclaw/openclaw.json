@@ -288,8 +288,15 @@
       "lobster": {
         "enabled": true
       },
+      // autoRecall and autoCapture run through typed hooks that read conversation content.
+      // memory-lancedb is an npm install, not bundled, so the gateway blocks those hooks
+      // unless the grant below is set. The plugin still loads without it and both features
+      // silently do nothing.
       "memory-lancedb": {
         "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "autoCapture": true,
           "autoRecall": true,
