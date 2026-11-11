@@ -5,6 +5,8 @@ kind: Kustomization
 resources:
 - prometheusrule-nas-metrics.yaml
 - prometheusrule-synology.yaml
+- prometheusrule-unifi.yaml
+- configmap-loki-rule-unifi.yaml
 
 configMapGenerator:
 - name: grafana-extra-config
