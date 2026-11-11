@@ -77,16 +77,13 @@
         "${PERSONAL_WHATSAPP_NUMBER}"
       ],
       "selfChatMode": true,
-      // Group messages are admitted only from these senders. Without groupAllowFrom the
-      // plugin falls back to allowFrom, but it is spelled out so a later allowFrom change
-      // can't silently widen group access. Per-group `requireMention` lives under
-      // `channels.whatsapp.groups.<groupId>` (a map keyed by real group ID) -- there is no
-      // channel-wide requireMention toggle.
-      "groupPolicy": "allowlist",
-      "groupAllowFrom": [
-        "${OWNER_WHATSAPP_NUMBER}",
-        "${PERSONAL_WHATSAPP_NUMBER}"
-      ]
+      // Never takes part in groups: group messages are dropped whoever sends them, so the
+      // agent only ever talks in a 1:1 chat with one of the two numbers above.
+      "groupPolicy": "disabled",
+      // Target for outbound messages that name no recipient. Replies to an inbound message
+      // always go back to the chat it came from, so the owner number only hears from the
+      // agent when the operator writes from that number.
+      "defaultTo": "${PERSONAL_WHATSAPP_NUMBER}"
     }
   },
 
@@ -130,19 +127,36 @@
     }
   },
 
-  // Inbound point for n8n / Alertmanager relays (see n8n's notify-subworkflow.json).
-  // allowedAgentIds/defaultSessionKey per `openclaw security audit` findings
-  // hooks.allowed_agent_ids_unrestricted (CRITICAL) / hooks.default_session_key_unset (WARN):
-  // without an explicit allowlist, hook requests can target any agent; "main" is the
-  // gateway's only configured agent id (agents.defaults has no named agent map here).
+  // Inbound webhooks. `path` is a base path: endpoints live under it (/hooks/agent,
+  // /hooks/wake, /hooks/<mapping>), and a POST to the base path itself returns 404.
+  // A webhook with no explicit channel and recipient is not delivered anywhere, so the
+  // destination is fixed here rather than by the caller, and callers never carry phone
+  // numbers.
+  // allowedAgentIds/defaultSessionKey answer `openclaw security audit` findings
+  // hooks.allowed_agent_ids_unrestricted (CRITICAL) and hooks.default_session_key_unset (WARN).
   "hooks": {
     "enabled": true,
     "token": "${OPENCLAW_HOOKS_TOKEN}",
-    "path": "/hooks/agent",
+    "path": "/hooks",
     "allowedAgentIds": [
       "main"
     ],
-    "defaultSessionKey": "hook:ingress"
+    "defaultSessionKey": "hook:ingress",
+    "mappings": [
+      {
+        // POST /hooks/notify {"message": "..."}: n8n's Notify workflow. Each call is one
+        // isolated agent turn whose reply goes to the operator's personal number.
+        "id": "notify",
+        "match": {
+          "path": "notify"
+        },
+        "action": "agent",
+        "agentId": "main",
+        "messageTemplate": "Relay the notification below to the user word for word, with no commentary and no follow-up questions.\n\n{{message}}",
+        "channel": "whatsapp",
+        "to": "${PERSONAL_WHATSAPP_NUMBER}"
+      }
+    ]
   },
 
   // Jobs are not declared statically here -- `cron.jobs` isn't part of the config schema
