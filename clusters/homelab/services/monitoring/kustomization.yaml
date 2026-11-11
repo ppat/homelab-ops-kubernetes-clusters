@@ -4,6 +4,7 @@ kind: Kustomization
 
 resources:
 - prometheusrule-nas-metrics.yaml
+- prometheusrule-synology.yaml
 
 configMapGenerator:
 - name: grafana-extra-config

@@ -1,0 +1,163 @@
+---
+# Health of the Synology NAS (syn-rs1221), read over SNMP by the snmp-exporter in
+# observability-extra. It is the storage behind nas's PersistentVolumes and the target for
+# homelab's backups. Value meanings come from Synology's SYNOLOGY-RAID-MIB, SYNOLOGY-DISK-MIB
+# and SYNOLOGY-SYSTEM-MIB.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: synology
+  namespace: monitoring
+spec:
+  groups:
+  - name: synology
+    rules:
+    # raidStatus 11 is Degrade (a tolerable disk failure) and 12 is Crashed (read-only).
+    # 2 to 10 are maintenance states (repairing, syncing, parity checking, expanding and so on).
+    # Newer DSM releases report values above 12 for further maintenance states such as data
+    # scrubbing, so the match is exact rather than a threshold.
+    - alert: SynologyRaidDegraded
+      annotations:
+        summary: A Synology storage pool or volume is degraded or crashed.
+        description: >-
+          {{ $labels.raidName }} on {{ $labels.target }} reports raidStatus {{ $value }}
+          (11 degraded, 12 crashed).
+      expr: |
+        max by (k8s_cluster, target, raidName) (
+        raidStatus{target="syn-rs1221"} == 11 or raidStatus{target="syn-rs1221"} == 12
+        )
+      for: 10m
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: critical
+    # diskStatus 4 is SystemPartitionFailed and 5 is Crashed. 2 and 3 describe unused disks.
+    # diskHealthStatus 2, 3 and 4 are Warning, Critical and Failing.
+    - alert: SynologyDiskUnhealthy
+      annotations:
+        summary: A Synology disk reports a failed or unhealthy state.
+        description: >-
+          {{ $labels.diskID }} on {{ $labels.target }} reports a failed disk status or a health
+          status other than normal.
+      expr: |
+        max by (k8s_cluster, target, diskID) (diskStatus{target="syn-rs1221"}) >= 4
+        or
+        max by (k8s_cluster, target, diskID) (diskHealthStatus{target="syn-rs1221"}) >= 2
+      for: 15m
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: critical
+    # diskBadSector is -1 on disks that do not report it (the M.2 SSDs), so those are excluded
+    # before the comparison. The 24 hour window keeps one increase visible to a twice-daily check.
+    - alert: SynologyDiskBadSectorsIncreasing
+      annotations:
+        summary: A Synology disk is gaining bad sectors.
+        description: >-
+          {{ $labels.diskID }} on {{ $labels.target }} gained bad sectors in the last 24 hours.
+      expr: |
+        max by (k8s_cluster, target, diskID) (diskBadSector{target="syn-rs1221"} >= 0)
+        >
+        max by (k8s_cluster, target, diskID) (min_over_time(diskBadSector{target="syn-rs1221"}[24h]) >= 0)
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: warning
+    # Two thresholds by disk type, because the hard disks have peaked at 40 C and the M.2 SSDs
+    # at 60 C over 30 days. The Synology reports diskType "SSD" for the M.2 drives and "SATA"
+    # for the hard disks.
+    #   First branch:  disks whose type is SSD, above 70 C.
+    #   Second branch: every disk whose type is NOT SSD (the SATA hard disks, and any disk that
+    #                  reports no type), above 55 C. `unless` removes the SSDs from this branch.
+    - alert: SynologyDiskTemperatureHigh
+      annotations:
+        summary: A Synology disk is running hot.
+        description: >-
+          {{ $labels.diskID }} on {{ $labels.target }} has been at {{ $value }} C for 30 minutes.
+      expr: |
+        (
+        max by (k8s_cluster, target, diskID) (diskTemperature{target="syn-rs1221"}) > 70
+        and on (k8s_cluster, target, diskID)
+        max by (k8s_cluster, target, diskID) (diskType{target="syn-rs1221", diskType="SSD"})
+        )
+        or
+        (
+        max by (k8s_cluster, target, diskID) (diskTemperature{target="syn-rs1221"}) > 55
+        unless on (k8s_cluster, target, diskID)
+        max by (k8s_cluster, target, diskID) (diskType{target="syn-rs1221", diskType="SSD"})
+        )
+      for: 30m
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: warning
+    # diskRemainLife is a percentage on SSDs and -1 on disks that do not report it.
+    - alert: SynologyDiskWearHigh
+      annotations:
+        summary: A Synology SSD is near the end of its rated life.
+        description: >-
+          {{ $labels.diskID }} on {{ $labels.target }} has {{ $value }} percent of its
+          estimated life left.
+      expr: |
+        max by (k8s_cluster, target, diskID) (diskRemainLife{target="syn-rs1221"} >= 0) < 10
+      for: 1h
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: warning
+    # systemStatus 2 means a volume has crashed. powerStatus, systemFanStatus and cpuFanStatus 2
+    # mean a power supply or fan has failed.
+    - alert: SynologySystemFailed
+      annotations:
+        summary: The Synology NAS reports a system, power or fan failure.
+        description: >-
+          {{ $labels.target }} reports {{ $labels.component }} as failed.
+      expr: |
+        label_replace(
+        max by (k8s_cluster, target) (systemStatus{target="syn-rs1221"}) == 2,
+        "component", "system", "", ""
+        )
+        or
+        label_replace(
+        max by (k8s_cluster, target) (powerStatus{target="syn-rs1221"}) == 2,
+        "component", "power", "", ""
+        )
+        or
+        label_replace(
+        max by (k8s_cluster, target) (systemFanStatus{target="syn-rs1221"}) == 2,
+        "component", "fan", "", ""
+        )
+        or
+        label_replace(
+        max by (k8s_cluster, target) (cpuFanStatus{target="syn-rs1221"}) == 2,
+        "component", "cpu-fan", "", ""
+        )
+      for: 10m
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: critical
+    # Every rule above reads SNMP series, so all of them go quiet if the scrape stops.
+    - alert: SynologyMetricsAbsent
+      annotations:
+        summary: No SNMP metrics from the Synology NAS.
+        description: >-
+          No raidStatus series from syn-rs1221 for 30 minutes. The Synology alert rules cannot
+          fire.
+      expr: |
+        absent_over_time(raidStatus{target="syn-rs1221"}[30m])
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: warning
+    # Always firing. A consumer of Alertmanager's active alerts reads its absence as "these rules
+    # are not being evaluated", which an empty list of Synology alerts cannot tell apart from
+    # "the NAS is healthy".
+    - alert: CapabilityHeartbeat
+      annotations:
+        summary: The nas.host alert rules are being evaluated.
+      expr: vector(1)
+      labels:
+        capability: nas.host
+        tier: H1
+        severity: none

@@ -1,0 +1,204 @@
+---
+# promtool unit tests for prometheusrule-synology.yaml. Run with `promtool test rules` against
+# the manifest's `.spec` (promtool cannot read the PrometheusRule wrapper).
+rule_files:
+- prometheusrule-synology.yaml
+evaluation_interval: 1m
+tests:
+# A healthy NAS: nothing fires except the heartbeat. Values match a live snapshot.
+- interval: 1m
+  input_series:
+  - series: 'raidStatus{target="syn-rs1221", raidName="Volume 1", pod="p"}'
+    values: '1x120'
+  - series: 'raidStatus{target="syn-rs1221", raidName="Volume 2", pod="p"}'
+    values: '13x120'
+  - series: 'diskStatus{target="syn-rs1221", diskID="Disk 1", pod="p"}'
+    values: '1x120'
+  - series: 'diskStatus{target="syn-rs1221", diskID="Disk 3", pod="p"}'
+    values: '3x120'
+  - series: 'diskHealthStatus{target="syn-rs1221", diskID="Disk 1", pod="p"}'
+    values: '1x120'
+  - series: 'diskBadSector{target="syn-rs1221", diskID="Disk 1", pod="p"}'
+    values: '0x120'
+  - series: 'diskBadSector{target="syn-rs1221", diskID="M.2 Drive 1-1", pod="p"}'
+    values: '-1x120'
+  - series: 'diskTemperature{target="syn-rs1221", diskID="Disk 1", pod="p"}'
+    values: '40x120'
+  - series: 'diskTemperature{target="syn-rs1221", diskID="M.2 Drive 1-1", pod="p"}'
+    values: '60x120'
+  - series: 'diskType{target="syn-rs1221", diskID="Disk 1", diskType="SATA", pod="p"}'
+    values: '1x120'
+  - series: 'diskType{target="syn-rs1221", diskID="M.2 Drive 1-1", diskType="SSD", pod="p"}'
+    values: '1x120'
+  - series: 'diskRemainLife{target="syn-rs1221", diskID="Disk 1", pod="p"}'
+    values: '-1x120'
+  - series: 'diskRemainLife{target="syn-rs1221", diskID="M.2 Drive 1-1", pod="p"}'
+    values: '25x120'
+  - series: 'systemStatus{target="syn-rs1221", pod="p"}'
+    values: '1x120'
+  - series: 'powerStatus{target="syn-rs1221", pod="p"}'
+    values: '1x120'
+  - series: 'systemFanStatus{target="syn-rs1221", pod="p"}'
+    values: '1x120'
+  - series: 'cpuFanStatus{target="syn-rs1221", pod="p"}'
+    values: '1x120'
+  alert_rule_test:
+  - {eval_time: 90m, alertname: SynologyRaidDegraded, exp_alerts: []}
+  - {eval_time: 90m, alertname: SynologyDiskUnhealthy, exp_alerts: []}
+  - {eval_time: 90m, alertname: SynologyDiskBadSectorsIncreasing, exp_alerts: []}
+  - {eval_time: 90m, alertname: SynologyDiskTemperatureHigh, exp_alerts: []}
+  - {eval_time: 90m, alertname: SynologyDiskWearHigh, exp_alerts: []}
+  - {eval_time: 90m, alertname: SynologySystemFailed, exp_alerts: []}
+  - {eval_time: 90m, alertname: SynologyMetricsAbsent, exp_alerts: []}
+  - eval_time: 90m
+    alertname: CapabilityHeartbeat
+    exp_alerts:
+    - exp_labels: {capability: nas.host, tier: H1, severity: none}
+      exp_annotations:
+        summary: The nas.host alert rules are being evaluated.
+
+# Failures, one per rule.
+- interval: 1m
+  input_series:
+  - series: 'raidStatus{target="syn-rs1221", raidName="Volume 1", pod="p"}'
+    values: '11x120'
+  - series: 'raidStatus{target="syn-rs1221", raidName="Volume 2", pod="p"}'
+    values: '12x120'
+  - series: 'diskStatus{target="syn-rs1221", diskID="Disk 1", pod="p"}'
+    values: '5x120'
+  - series: 'diskHealthStatus{target="syn-rs1221", diskID="Disk 2", pod="p"}'
+    values: '2x120'
+  - series: 'diskBadSector{target="syn-rs1221", diskID="Disk 4", pod="p"}'
+    values: '0x30 3x90'
+  # A SATA hard disk at 58 C is over the 55 C hard-disk threshold.
+  - series: 'diskTemperature{target="syn-rs1221", diskID="Disk 5", pod="p"}'
+    values: '58x120'
+  - series: 'diskType{target="syn-rs1221", diskID="Disk 5", diskType="SATA", pod="p"}'
+    values: '1x120'
+  # A disk that reports no type gets the hard-disk threshold too.
+  - series: 'diskTemperature{target="syn-rs1221", diskID="Disk 9", pod="p"}'
+    values: '58x120'
+  # An SSD at 65 C is over the hard-disk threshold but under its own 70 C, so it stays silent.
+  - series: 'diskTemperature{target="syn-rs1221", diskID="M.2 Drive 1-1", pod="p"}'
+    values: '65x120'
+  - series: 'diskType{target="syn-rs1221", diskID="M.2 Drive 1-1", diskType="SSD", pod="p"}'
+    values: '1x120'
+  - series: 'diskTemperature{target="syn-rs1221", diskID="M.2 Drive 1-2", pod="p"}'
+    values: '72x120'
+  - series: 'diskType{target="syn-rs1221", diskID="M.2 Drive 1-2", diskType="SSD", pod="p"}'
+    values: '1x120'
+  - series: 'diskRemainLife{target="syn-rs1221", diskID="M.2 Drive 1-2", pod="p"}'
+    values: '8x120'
+  - series: 'powerStatus{target="syn-rs1221", pod="p"}'
+    values: '2x120'
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: SynologyRaidDegraded
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, raidName: Volume 1, capability: nas.host, tier: H1, severity: critical}
+      exp_annotations:
+        summary: A Synology storage pool or volume is degraded or crashed.
+        description: Volume 1 on syn-rs1221 reports raidStatus 11 (11 degraded, 12 crashed).
+    - exp_labels: {target: syn-rs1221, raidName: Volume 2, capability: nas.host, tier: H1, severity: critical}
+      exp_annotations:
+        summary: A Synology storage pool or volume is degraded or crashed.
+        description: Volume 2 on syn-rs1221 reports raidStatus 12 (11 degraded, 12 crashed).
+  - eval_time: 90m
+    alertname: SynologyDiskUnhealthy
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, diskID: Disk 1, capability: nas.host, tier: H1, severity: critical}
+      exp_annotations:
+        summary: A Synology disk reports a failed or unhealthy state.
+        description: >-
+          Disk 1 on syn-rs1221 reports a failed disk status or a health status other than normal.
+    - exp_labels: {target: syn-rs1221, diskID: Disk 2, capability: nas.host, tier: H1, severity: critical}
+      exp_annotations:
+        summary: A Synology disk reports a failed or unhealthy state.
+        description: >-
+          Disk 2 on syn-rs1221 reports a failed disk status or a health status other than normal.
+  - eval_time: 90m
+    alertname: SynologyDiskBadSectorsIncreasing
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, diskID: Disk 4, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A Synology disk is gaining bad sectors.
+        description: Disk 4 on syn-rs1221 gained bad sectors in the last 24 hours.
+  - eval_time: 90m
+    alertname: SynologyDiskTemperatureHigh
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, diskID: Disk 5, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A Synology disk is running hot.
+        description: Disk 5 on syn-rs1221 has been at 58 C for 30 minutes.
+    - exp_labels: {target: syn-rs1221, diskID: Disk 9, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A Synology disk is running hot.
+        description: Disk 9 on syn-rs1221 has been at 58 C for 30 minutes.
+    - exp_labels: {target: syn-rs1221, diskID: M.2 Drive 1-2, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A Synology disk is running hot.
+        description: M.2 Drive 1-2 on syn-rs1221 has been at 72 C for 30 minutes.
+  - eval_time: 90m
+    alertname: SynologyDiskWearHigh
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, diskID: M.2 Drive 1-2, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A Synology SSD is near the end of its rated life.
+        description: M.2 Drive 1-2 on syn-rs1221 has 8 percent of its estimated life left.
+  - eval_time: 90m
+    alertname: SynologySystemFailed
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, component: power, capability: nas.host, tier: H1, severity: critical}
+      exp_annotations:
+        summary: The Synology NAS reports a system, power or fan failure.
+        description: syn-rs1221 reports power as failed.
+  - eval_time: 90m
+    alertname: SynologyMetricsAbsent
+    exp_alerts: []
+
+# Bad sectors stop growing. The alert holds for 24 hours after the increase, then clears.
+- interval: 1m
+  input_series:
+  - series: 'diskBadSector{target="syn-rs1221", diskID="Disk 4", pod="p"}'
+    values: '0x60 3x1600'
+  alert_rule_test:
+  - eval_time: 20h
+    alertname: SynologyDiskBadSectorsIncreasing
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, diskID: Disk 4, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A Synology disk is gaining bad sectors.
+        description: Disk 4 on syn-rs1221 gained bad sectors in the last 24 hours.
+  - eval_time: 26h
+    alertname: SynologyDiskBadSectorsIncreasing
+    exp_alerts: []
+
+# A short hot spell and a brief maintenance-to-degrade flap stay silent.
+- interval: 1m
+  input_series:
+  - series: 'diskTemperature{target="syn-rs1221", diskID="Disk 5", pod="p"}'
+    values: '40x30 58x10 40x80'
+  - series: 'raidStatus{target="syn-rs1221", raidName="Volume 1", pod="p"}'
+    values: '1x30 11x5 1x85'
+  alert_rule_test:
+  - {eval_time: 45m, alertname: SynologyDiskTemperatureHigh, exp_alerts: []}
+  - {eval_time: 45m, alertname: SynologyRaidDegraded, exp_alerts: []}
+
+# The SNMP scrape stops: only raidStatus would show it, and it is gone.
+- interval: 1m
+  input_series:
+  - series: 'raidStatus{target="syn-rs1221", raidName="Volume 1", pod="p"}'
+    values: '1x10'
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: SynologyMetricsAbsent
+    exp_alerts: []
+  - eval_time: 60m
+    alertname: SynologyMetricsAbsent
+    exp_alerts:
+    - exp_labels: {target: syn-rs1221, capability: nas.host, tier: H1, severity: warning}
+      exp_annotations:
+        summary: No SNMP metrics from the Synology NAS.
+        description: >-
+          No raidStatus series from syn-rs1221 for 30 minutes. The Synology alert rules cannot
+          fire.
