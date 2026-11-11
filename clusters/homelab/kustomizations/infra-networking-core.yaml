@@ -6,7 +6,6 @@ metadata:
   namespace: flux-system
 spec:
   components:
-  - ../../../components/external-dns-provider/unifi
   - ../../../components/sso
   dependsOn:
   - name: infra-security-core
