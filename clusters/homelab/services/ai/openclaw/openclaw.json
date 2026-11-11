@@ -346,10 +346,13 @@
         "enabled": true
       }
     }
-    // No `bundledDiscovery` key: it moved into the gateway's SQLite state, and with no state
-    // row bundled plugins stay gated by `allow` above. Don't run `openclaw doctor --fix`
-    // against this file -- with no meta.lastTouchedVersion its migration writes "compat"
-    // into state, which lets bundled plugins bypass the allowlist.
+    // No `bundledDiscovery` key: it lives in the gateway's SQLite state (config_machine_state
+    // row `plugins.bundledDiscovery`), which must read "allowlist" for `allow` above to gate
+    // bundled plugins. Any `openclaw doctor` run, even without --fix, stores "compat" there when
+    // the row is missing, because this file has no meta.lastTouchedVersion. "compat" enables
+    // dozens of bundled provider plugins outside `allow`, and no CLI sets the row back, so check
+    // it after a doctor run. Once the row exists, doctor keeps its value. --fix also rewrites
+    // this file, replacing ${...} references with literals.
   },
 
   "skills": {
