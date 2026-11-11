@@ -9,6 +9,9 @@ resources:
 # Plugin credentials referenced only from openclaw.json, pulled into the container wholesale
 # via an envFrom patch in kustomizations/apps-ai.yaml so new keys need no apps-ai change.
 - openclaw/externalsecret-openclaw-plugin-secrets.yaml
+# Credentials for this cluster's n8n workflows, taken by the apps-ai n8n Deployment as an
+# optional envFrom.
+- n8n/externalsecret-n8n-workflow-secrets.yaml
 
 configMapGenerator:
 - name: litellm-model-config
