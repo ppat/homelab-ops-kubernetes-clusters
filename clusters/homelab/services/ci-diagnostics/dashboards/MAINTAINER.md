@@ -65,12 +65,10 @@ without one it errors. The failing mode is the safer one.
 decomposition stacks **means** for that reason.
 
 **A raw total tracks attention, not quality.** Suites are path-filtered on PR, so a suite's run
-count rises when someone works on it. Three panels shipped as counts and had to become shares
-or rates: mode share, latent risk, and container restarts. Two remain counts deliberately —
+count rises when someone works on it. Two panels shipped as counts and had to become shares
+or rates: latent risk and container restarts. Two remain counts deliberately —
 the liveness stats, where the question is binary rather than comparative, and the rate's
-denominator, which *is* the activity measure. The heatmap's colour is inherently a count, which
-is why its README entry says to compare distribution within a column rather than colour across
-columns.
+denominator, which *is* the activity measure.
 
 **A share introduces the opposite trap**: a week with two runs reads 50%. Small denominators
 are why the rate panel carries its denominator beside it.
@@ -183,6 +181,31 @@ it would mark noise daily and bury the three or four landings anyone cares about
 idempotent by construction — identical timestamp, line and metadata, which Loki drops as a
 duplicate.
 
+Removing a date from the CronJob stops it being pushed but does not remove it: the line already
+in Loki keeps rendering until retention deletes it. To retire one, also exclude it with a line
+filter in the annotation query, which is how the retired `MODE emitter` marker is hidden.
+
+## Why it is fast, and what makes it slow
+
+Measured 2026-11-11 over the 90-day default: about 47M lines scanned per full load, against
+roughly 180k lines that exist in `ready` over the same range.
+
+- **The step is not the cost.** Loki reads each chunk once per query split, not once per step,
+  so lines scanned barely move between a 2h and a 1d step. What a coarse step buys is payload:
+  a `6h` panel `interval` on the `[7d]`/`[28d]` panels returns about a tenth of the points, with
+  identical values at every shared timestamp. `6h` matches the four scheduled slots a day, so
+  nothing visible is lost and zooming into a week still has resolution. The restart timeline is
+  the exception and keeps no `interval`, because its window *is* `$__interval` and a floor on it
+  would widen what each cell means.
+- **The cost is overlapping chunks.** One hour of one `ready` stream 45 days back is covered by
+  about 60 chunks, and `split_queries_by_interval` is 15m, so every chunk is decoded again by
+  every 15-minute split it overlaps. Scanned-to-returned ratios run from 1x on day-old data to
+  over 3000x at 45 days. How the chunks came to overlap is not established, and nothing in this
+  JSON can change it.
+- **So rows 2 to 4 open collapsed.** Their panels hold about two thirds of the scanned lines, and
+  a collapsed row runs no queries until it is expanded. The liveness stats and row 1 stay open,
+  because they are what someone opens the page for.
+
 ## Shipping it through GitOps
 
 `configMapGenerator` in this directory's parent `kustomization.yaml`, with:
@@ -228,8 +251,9 @@ could read the page regardless.
   point is n≈112, where a true 10% rate has a 95% interval of roughly 5–17%.
 - **`T0` is not the suite start**, so `READY` offsets compare between runs of one suite and not
   against job duration. The decomposition panel is the only place clocks are reconciled.
-- **The grammar records objects, not step names, and carries no budgets.** So `UNCENSORED` can
-  rank what needed time; it cannot say which assertion is closest to expiring.
+- **The grammar records objects and carries no budgets.** The only step name stored is the
+  failing one, on a failing run's `OUTCOME`. So `UNCENSORED` can rank what needed time; it cannot
+  say which assertion is closest to expiring.
 - **`cpu_model` is unformatted across the fleet** — `INTEL_XEON_PLATINUM_8573C` versus
   `Intel_Xeon_Platinum_8370C_2.80GHz`. Fine for identity, since distinct is still distinct, but
   not groupable by family. A small share of runs record `?`, where `/proc/cpuinfo` carried no

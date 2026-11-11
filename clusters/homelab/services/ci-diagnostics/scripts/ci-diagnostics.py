@@ -4,8 +4,8 @@
 WHY THIS EXISTS
 ---------------
 `ppat/homelab-ops-kubernetes-apps` runs sixteen chainsaw suites in GitHub Actions.
-Every run emits a published, greppable diagnostics grammar -- READY, MODE, PULL,
-CONTENTION, RESTART, ESOCERT, ESOLOG, UNCENSORED and friends -- documented in that
+Every run emits a published, greppable diagnostics grammar -- READY, PULL, CONTENTION,
+RESTART, UNCENSORED and friends -- documented in that
 repo's TESTING.md under "What Every Run Emits, and How to Read It".
 
 Those lines live in job logs, and **job logs expire at exactly 90 days** (measured
@@ -30,7 +30,7 @@ Two things go in, in one pass:
 The second is not redundant with the GitHub API even though the API keeps it forever,
 because **Grafana cannot query the GitHub API**. Durability is not accessibility. If the
 verdict is not in Loki beside the lines, the interesting questions become unaskable in a
-single query -- "were the slow-MODE draws the ones that failed?", "do PULL times degrade
+single query -- "were the runs with restarts the ones that failed?", "do PULL times degrade
 on runs that later go red?". Those are joins, and there is nothing to join to.
 
 It also supplies the *denominator*. A job killed at the `timeout-minutes` ceiling emits
@@ -320,6 +320,28 @@ def p_uncensored(body: str) -> dict:
     return out
 
 
+# Chainsaw's own report row for each operation:
+#   sink.go:61: | <time> | <test> | <step> | <operation> | <status> | <target>
+# A failed operation has status ERROR, e.g.
+#   sink.go:61: | 19:09:34 | apps-ai | Verify mcp-kubernetes-sandbox write boundary | SCRIPT | ERROR |
+# Not grammar: it is what names the failing step, which no grammar line carries. Two traps:
+# chainsaw's `error` operation (an expected-error assertion) puts ERROR in the operation
+# column with status RUN/DONE on passing runs, so only the status column counts; and the
+# prefix is padded with backspace characters that the ANSI strip leaves in place.
+# The suites run failFast, so the first failed row is the failure; later ones come from the catch.
+SINK_ROW_RE = re.compile(r"sink\.go:\d+:[\s\x08]*\|")
+
+
+def p_sink_error(body: str) -> dict:
+    cells = [c.strip() for c in body.replace("\x08", "").split("|")]
+    if len(cells) < 6 or cells[5] != "ERROR":
+        return {}
+    out = {"failed_step": cells[3], "failed_op": cells[4]}
+    if len(cells) > 6 and cells[6]:
+        out["failed_target"] = cells[6]
+    return out
+
+
 def p_kv_only(body: str) -> dict:
     return _kv(body)
 
@@ -332,6 +354,10 @@ def p_uncensored_pending(body: str) -> dict:
 
 # Order matters: the first matching prefix wins, so UNCENSORED-* must precede UNCENSORED
 # and PULL-CACHED must precede PULL.
+#
+# MODE, ESOCERT and ESOLOG are no longer emitted. They stay listed so that job logs from before
+# their removal, which GitHub keeps for 90 days, still ingest completely if a pass reaches them.
+# Remove them once no retained job log can carry them.
 GRAMMAR = [
     ("UNCENSORED-SUMMARY", "uncensored_summary", p_kv_only),
     ("UNCENSORED-SNAPSHOT", "uncensored_snapshot", p_kv_only),
@@ -1048,6 +1074,7 @@ def collect_job(suite, run, job, fetch_log, stats):
 
     parsed = unparsed = 0
     seen_instruments = set()
+    failed = {}
     # Absolute clocks for the phase decomposition, collected as the log is parsed.
     marks = {}
     instr = "not-fetched"
@@ -1069,6 +1096,12 @@ def collect_job(suite, run, job, fetch_log, stats):
                       continue
                   ts_text, body = match.group(1), match.group(2).strip()
                   if not body:
+                      continue
+                  if not failed and SINK_ROW_RE.match(body):
+                      try:
+                          failed = p_sink_error(body)
+                      except Exception:  # noqa: BLE001 - a parse failure costs the field only
+                          failed = {}
                       continue
                   instrument, parser, rest = classify(body)
                   if instrument is None:
@@ -1122,6 +1155,7 @@ def collect_job(suite, run, job, fetch_log, stats):
             "instrumentation": instr,
         }
     )
+    meta.update(failed)
     line = (
         f"OUTCOME suite={suite} conclusion={base['conclusion'] or 'none'} "
         f"outcome={base.get('outcome', 'none')} attempt={base['run_attempt']} "
@@ -1130,6 +1164,11 @@ def collect_job(suite, run, job, fetch_log, stats):
         f"instrumentation={instr} lines={parsed + unparsed} unparsed={unparsed} "
         f"run_id={base['run_id']} job_id={base['job_id']}"
     )
+    # Last, and the step quoted, because a step name carries spaces.
+    if failed:
+        line += (f" failed_op={failed['failed_op']}"
+                 f" failed_target={failed.get('failed_target', '-').replace(' ', '')}"
+                 f" failed_step=\"{failed['failed_step']}\"")
     anchor = completed or started or run.get("created_at")
     out.setdefault((suite, INSTRUMENT_OUTCOME), []).append((iso_to_ns(anchor), line, meta))
 

@@ -16,12 +16,12 @@ otherwise be gone**: *we changed something in July — did it help?*
 
 It is not for watching CI today. For that, look at the run itself.
 
-## Read this first — five terms the panels assume
+## Read this first — four terms the panels assume
 
 Nothing on the page makes sense without these, and they are not obvious.
 
 **Instrument lines.** Each suite prints machine-readable lines about its own run: `READY`,
-`PULL`, `MODE`, `CONTENTION`, `RESTART`, `UNCENSORED`. Every panel here is an aggregate over one
+`PULL`, `CONTENTION`, `RESTART`, `UNCENSORED`. Every panel here is an aggregate over one
 of those. When a panel says "one entry per pulled image", that is a `PULL` line.
 
 **A suite run has three nested phases.** `setup` (checkout, creating the kind cluster,
@@ -37,20 +37,14 @@ came up while the cluster was still being created. So **`T0+` offsets compare be
 the same suite, and cannot be subtracted from job duration.** Only the *Where a job's time goes*
 panel reconciles clocks properly, and it does so outside of Grafana.
 
-**"The two bands."** One step in the prerequisite phase — external-secrets waiting for its own
-webhook — takes either about 20–26 seconds or about 75–97 seconds, **and nothing in between,
-across every run ever recorded.** A resource shortage produces a smooth spread, so two clean
-bands with an empty gap mean something is *timing out and retrying on a fixed timer*: lose the
-race by two seconds, pay a whole quantum. The slow band is a flake source, because it can run
-long enough to exhaust a budget.
-
 **"Budget" means an assertion's timeout.** Each check in a suite waits up to some number of
 seconds for a thing to become ready. Too tight and the suite flakes; too loose and it cannot
 detect a regression. Sizing them is what half the panels here are ultimately for.
 
 ## What each row answers, and how to read it
 
-Rows are named after questions and are in priority order. Work top to bottom.
+Rows are named after questions and are in priority order. Work top to bottom. Rows 2 to 4 open
+collapsed, so their queries run only when you expand one.
 
 **Is this page telling the truth?** Four stats that ignore every filter. Check them first —
 **every other panel on this page looks identical whether CI was quiet or the ingester died**,
@@ -66,7 +60,8 @@ height. The pull panel is read as a *gap* between two lines rather than as eithe
 **2. It got worse — when did it start, and what moved?** *Where a job's time goes* localises a
 regression to a phase; *Time-to-ready by component* then names the component. Use them in that
 order — phase first, component second. The failure rate is here for correlation on a shared
-axis, not for precision.
+axis, not for precision. *Which step failing runs failed at* says whether a rate rise is one
+cause or several; it only covers jobs ingested after the field was added.
 
 **3. What is about to break?** The only leading indicators. *Latent risk* fires while runs are
 still **passing**; the `UNCENSORED` table only contains things that have already failed. The
@@ -84,8 +79,7 @@ rises when someone is working on it. Every aggregate here is therefore a rate, a
 quantile or a mean — never a raw total — because a total would move with attention rather than
 with reliability. The two exceptions are deliberate: the liveness stats (where the question is
 just "is anything arriving?") and the rate's denominator panel (which *is* the activity
-measure). **The heatmap is the case to watch**: its colour is a count, so a busy week is a hot
-week — compare the distribution *within* a column, not colour *across* columns.
+measure).
 
 **The pull panel is about the gap, not the lines.** Two numbers are recorded per image: how long
 the download took, and how long it took *including* waiting in a queue behind other downloads.
@@ -127,8 +121,8 @@ which is why it sits in the liveness row rather than further down.
 
 ## What it cannot tell you
 
-- **Which assertion is closest to expiring.** The lines record *objects*, not step names, and
-  carry no budgets — those live in the suite YAML. `UNCENSORED` ranks what needed time; matching
+- **Which assertion is closest to expiring.** The lines carry no budgets — those live in the
+  suite YAML — and only a failing run's step is recorded. `UNCENSORED` ranks what needed time; matching
   that to a specific check is manual.
 - **Whether two runs are truly comparable.** `Distinct host CPUs` catches a hardware change; it
   cannot catch two different hosts of the same model, or a runner-image change.

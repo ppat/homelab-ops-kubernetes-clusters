@@ -97,8 +97,8 @@ API when needed.
 
 That conflates durability with accessibility. **Grafana cannot query the GitHub API.** If the
 conclusion is not in Loki beside the lines, the most valuable questions become unaskable in a
-single query, because they are joins: were the slow-`MODE` draws the ones that failed; do
-`PULL` times degrade on runs that later go red; is a rate change explained by contention.
+single query, because they are joins: were the runs with container restarts the ones that
+failed; do `PULL` times degrade on runs that later go red; is a rate change explained by contention.
 
 It also supplies the denominator. A job killed at its `timeout-minutes` ceiling emits none of
 the grammar at all -- chainsaw buffers a script's stdout until the script exits -- so a
@@ -118,7 +118,7 @@ convenience, not the record.
 | tier | fields |
 | --- | --- |
 | stream labels | `job="ci-diagnostics"`, `repo`, `suite`, `instrument` |
-| structured metadata | `run_id`, `run_attempt`, `job_id`, `sha`, `branch`, `gh_event`, `conclusion`, `outcome`, `topology`, plus the parsed fields for that prefix |
+| structured metadata | `run_id`, `run_attempt`, `job_id`, `sha`, `branch`, `gh_event`, `conclusion`, `outcome`, `topology`, plus the parsed fields for that prefix. A failing job's `OUTCOME` also carries `failed_step`, `failed_op` and `failed_target`, read from chainsaw's own `\| ERROR \|` report row, which is not grammar |
 | line | the grammar line, verbatim |
 
 The rule that generated it: **a label describes where a stream came from; anything describing
@@ -127,8 +127,7 @@ something we control, and be what a query selects on.
 
 That gives 4 labels and **at most** ~240 streams (17 suites x 14 prefixes), against a
 `max_global_streams_per_user` of 5000 with ~1263 already in use. At most, not roughly: a suite
-with no external-secrets fixture never emits `ESOCERT`/`ESOLOG`, and a suite that never fails
-never emits any `UNCENSORED` variant, so the populated count is materially lower and grows only
+that never fails never emits any `UNCENSORED` variant, so the populated count is materially lower and grows only
 as suites find new ways to go wrong.
 
 What was deliberately kept out of the labels, because it is where Loki deployments go wrong:
@@ -141,7 +140,7 @@ What was deliberately kept out of the labels, because it is where Loki deploymen
   carry two random suffixes.
 - **`conclusion`** (only 4 values, so "safe") -- it describes the run, not the source, and it
   would quadruple the stream count while splitting each suite across four streams.
-- **`mode` and `topology`** (2-4 values each) -- they are present on only *some* entries within
+- **`topology`** (2 values) -- they are present on only *some* entries within
   a selector, and a label missing from some streams silently splits every aggregation over it.
 
 `service_name="ci-diagnostics"` is derived by Loki from the `job` label automatically, and is
