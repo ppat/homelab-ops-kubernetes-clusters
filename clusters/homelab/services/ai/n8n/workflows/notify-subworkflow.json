@@ -1,4 +1,5 @@
 {
+  "id": "NotifyWhatsApp01",
   "name": "Notify",
   "nodes": [
     {
@@ -18,7 +19,10 @@
       "name": "Workflow Input",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
@@ -33,7 +37,11 @@
       "name": "Send Email - Maddy",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [500, 220],
+      "position": [
+        500,
+        220
+      ],
+      "onError": "continueRegularOutput",
       "credentials": {
         "smtp": {
           "id": "maddy-smtp",
@@ -44,22 +52,30 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://openclaw.openclaw.svc.cluster.local:18789/hooks/agent",
+        "url": "http://openclaw.openclaw.svc.cluster.local:18789/hooks/notify",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ \"source\": \"n8n\", \"message\": $json.subject + ': ' + $json.message }) }}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ source: 'n8n', message: $json.subject + ': ' + $json.message }) }}",
+        "options": {
+          "timeout": 30000
+        }
       },
       "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000103",
-      "name": "OpenClaw - Relay to WhatsApp",
+      "name": "OpenClaw - Notify",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [500, 380],
+      "typeVersion": 4.5,
+      "position": [
+        500,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "openclaw-hooks-auth",
+        "httpBearerAuth": {
+          "id": "openclaw-hooks",
           "name": "OpenClaw Hooks Token"
         }
       }
@@ -75,7 +91,7 @@
             "index": 0
           },
           {
-            "node": "OpenClaw - Relay to WhatsApp",
+            "node": "OpenClaw - Notify",
             "type": "main",
             "index": 0
           }
@@ -88,10 +104,7 @@
     "executionOrder": "v1"
   },
   "meta": {
-    "templateCredsSetupCompleted": false
+    "templateCredsSetupCompleted": true
   },
-  "tags": [
-    "shared",
-    "notify"
-  ]
+  "tags": []
 }
