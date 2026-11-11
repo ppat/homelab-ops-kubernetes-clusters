@@ -19,12 +19,12 @@
           "uid": "$datasource"
         },
         "enable": true,
-        "expr": "{job=\"ci-diagnostics\", instrument=\"marker\"}",
+        "expr": "{job=\"ci-diagnostics\", instrument=\"marker\"} != \"MODE emitter\"",
         "hide": false,
         "iconColor": "purple",
         "name": "Changes that landed",
         "target": {
-          "expr": "{job=\"ci-diagnostics\", instrument=\"marker\"}",
+          "expr": "{job=\"ci-diagnostics\", instrument=\"marker\"} != \"MODE emitter\"",
           "queryType": "range",
           "refId": "Anno"
         },
@@ -70,7 +70,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "### If a run failed tonight, this is the wrong page -- go and look at the run.\n\nThis is an **archive**, built to answer *\"we changed something months ago, did it help?\"* The\nsource logs are deleted by GitHub after 90 days; a CronJob copies the diagnostic lines here\nfirst. Every panel is a weekly or 28-day aggregate.\n\n**Five things that make the rest make sense:**\n\n1. Each Kubernetes module is tested by a **suite** -- assertions run against a throwaway kind\n   cluster in GitHub Actions. Every assertion has a **budget**: a timeout, in the suite's YAML,\n   that decides whether waiting for something is a pass or a failure.\n2. Each CI job prints structured lines. Loki tags them `instrument`, lower-case:\n   `outcome`, `phase`, `ready`, `pull`, `mode`, `contention`, `restart`, `uncensored`, plus\n   `marker` for the purple \"landed\" verticals that mark when a change merged. **Every panel here\n   is those lines aggregated -- so if the scraper stops, the whole page renders as \"fine\".** That\n   is what the stats below are for. Two field names appear in panels: `t0_s` is seconds from the\n   first thing in a run becoming Ready, and `extra_s` is seconds a wait needed beyond its timeout.\n3. The three failures this page catches: something took **longer** than its budget (a red run);\n   something took **nearly** as long (a future red run -- the leading indicators in row 3); and\n   something **never came up at all and nothing asserted on it** (a coverage gap).\n4. Only `schedule` runs are a controlled sample -- 17 suites rotated across 4 fixed slots a day,\n   always `main`. Most suites land in one slot per day; two historically flaky ones ride every slot.\n   PR runs execute branch code *and* only fire for suites someone touched, so their volume rises\n   with attention. **That is why nothing here is a raw count.**\n5. GitHub's runners are silently mixed -- five CPU models in six hours, all reporting 4 cores. So\n   single-digit-percent differences across a range spanning that are not real.\n\n**Suite names look like `apps-ai`, `infra-security`, `apps-bitwarden`.** Two repos are referred to:\nthe **apps repo** holds the modules and their suites, the **clusters repo** holds this dashboard and\nthe scraper. **`phase` and `contention`'s CPU fields only exist for runs after 2026-08-17** -- on\nthose panels a flat left edge is absence, not health.\n\nGuide: `dashboards/README.md` in the clusters repo. Why it is built this way: `MAINTAINER.md`.",
+        "content": "### If a run failed tonight, this is the wrong page -- go and look at the run.\n\nThis is an **archive**, built to answer *\"we changed something months ago, did it help?\"* The\nsource logs are deleted by GitHub after 90 days; a CronJob copies the diagnostic lines here\nfirst. Every panel is a weekly or 28-day aggregate.\n\n**Five things that make the rest make sense:**\n\n1. Each Kubernetes module is tested by a **suite** -- assertions run against a throwaway kind\n   cluster in GitHub Actions. Every assertion has a **budget**: a timeout, in the suite's YAML,\n   that decides whether waiting for something is a pass or a failure.\n2. Each CI job prints structured lines. Loki tags them `instrument`, lower-case:\n   `outcome`, `phase`, `ready`, `pull`, `contention`, `restart`, `uncensored`, plus\n   `marker` for the purple \"landed\" verticals that mark when a change merged. **Every panel here\n   is those lines aggregated -- so if the scraper stops, the whole page renders as \"fine\".** That\n   is what the stats below are for. Two field names appear in panels: `t0_s` is seconds from the\n   first thing in a run becoming Ready, and `extra_s` is seconds a wait needed beyond its timeout.\n3. The three failures this page catches: something took **longer** than its budget (a red run);\n   something took **nearly** as long (a future red run -- the leading indicators in row 3); and\n   something **never came up at all and nothing asserted on it** (a coverage gap).\n4. Only `schedule` runs are a controlled sample -- 17 suites rotated across 4 fixed slots a day,\n   always `main`. Most suites land in one slot per day; two historically flaky ones ride every slot.\n   PR runs execute branch code *and* only fire for suites someone touched, so their volume rises\n   with attention. **That is why nothing here is a raw count.**\n5. GitHub's runners are silently mixed -- five CPU models in six hours, all reporting 4 cores. So\n   single-digit-percent differences across a range spanning that are not real.\n\n**Suite names look like `apps-ai`, `infra-security`, `apps-bitwarden`.** Two repos are referred to:\nthe **apps repo** holds the modules and their suites, the **clusters repo** holds this dashboard and\nthe scraper. **`phase` and `contention`'s CPU fields only exist for runs after 2026-08-17** -- on\nthose panels a flat left edge is absence, not health.\n\nGuide: `dashboards/README.md` in the clusters repo. Why it is built this way: `MAINTAINER.md`.",
         "mode": "markdown"
       },
       "pluginVersion": "13.1.3",
@@ -488,7 +488,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 18
       },
@@ -537,1175 +537,1002 @@
         }
       ],
       "title": "Image pull cost: is queueing still the bottleneck?",
-      "type": "timeseries"
+      "type": "timeseries",
+      "interval": "6h"
     },
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "During setup, the external-secrets controller waits for its **own** admission webhook to come up. Across the stored history that wait falls in one of two bands -- **0-33s** or **70-105s** -- with a single observation between them at 40s. Colour is how many runs landed in each 5-second band, one column per day.\n\n**One low band is the healthy picture here, not a broken instrument.** The fast band sits that low because the shared external-secrets fixture drops the webhook's `readinessProbe.initialDelaySeconds` to 1; `infra-security` deploys the real module, keeps the chart's 20, and sits at the top of the band. The slow band is empty because the kubelet re-sync interval on the kind nodes is 10s rather than the stock 60s, which is what the band was made of.\n\nA shortage of CPU or network gives a smooth spread. Two clean bands with an empty gap mean something is **timing out and retrying on a fixed clock**: lose the race by a second, wait a whole interval. The slow band is a flake source, because it can outlast an assertion's budget.\n\n**Act** if the slow band reappears or thickens -- the panel below measures that directly and is the one to read for it. For the gap between bands, read the counter beside this heatmap: it counts every observation there exactly, whereas this heatmap keeps only the slowest run per suite per column and would hide an intermediate that shared a column with a slower one. The one 40s observation had a late cert-controller rather than a late remount, and that counter carries its identity.\n\nSo read this for **shape** -- where the bands sit and how they move -- and not as a run count. Colour is the number of surviving points after that reduction, so a busy week is a hot week.",
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "scaleDistribution": {
-              "type": "linear"
-            }
-          }
-        },
-        "overrides": []
-      },
+      "collapsed": true,
       "gridPos": {
-        "h": 9,
-        "w": 9,
-        "x": 12,
-        "y": 18
-      },
-      "id": 9,
-      "options": {
-        "calculate": true,
-        "calculation": {
-          "xBuckets": {
-            "mode": "size",
-            "value": "1d"
-          },
-          "yBuckets": {
-            "mode": "size",
-            "value": "5"
-          }
-        },
-        "cellGap": 1,
-        "cellValues": {
-          "unit": "short"
-        },
-        "color": {
-          "exponent": 0.5,
-          "fill": "dark-orange",
-          "mode": "scheme",
-          "reverse": false,
-          "scale": "exponential",
-          "scheme": "Turbo",
-          "steps": 64
-        },
-        "exemplars": {
-          "color": "rgba(255,0,255,0.7)"
-        },
-        "filterValues": {
-          "le": 1e-09
-        },
-        "legend": {
-          "show": true
-        },
-        "rowsFrame": {
-          "layout": "auto",
-          "value": "runs"
-        },
-        "showValue": "never",
-        "tooltip": {
-          "mode": "single",
-          "showColorScale": false,
-          "yHistogram": true
-        },
-        "yAxis": {
-          "axisPlacement": "left",
-          "reverse": false,
-          "unit": "s"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "max_over_time({job=\"ci-diagnostics\", instrument=\"mode\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | mode != \"none\" | ctrl_webhook_gap_s != \"-\" | unwrap ctrl_webhook_gap_s [$__interval]) by (suite)",
-          "legendFormat": "{{suite}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Is the external-secrets webhook wait still bimodal?",
-      "type": "heatmap"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "How many runs landed between 45s and 60s in the selected range. **This should be 0.**\n\n**Why those edges.** The kind nodes run a kubelet re-sync interval of 10s, so one remount of the webhook's TLS secret costs `15 + 15 + 10 + probe` -- up to about 45s with the fixture's 1s webhook probe. 60s is the floor of one remount at the stock interval. So the band between them is reachable by **one** remount at neither setting, which is what makes a run there worth stopping for.\n\n**It is not unreachable in general, and a non-zero value means ruling these out first, in order:**\n\n- **Two remounts at the 10s interval** reach roughly 55s. The band set is cut for one re-sync; it never claimed two are impossible.\n- **`infra-security` plus one remount.** It deploys the real module and keeps the chart's 20s webhook probe instead of the fixture's 1s, which puts its own single-remount ceiling nearer 60 than 45.\n\nOnly once both are excluded does a run here mean the re-sync model is wrong.\n\n**What this band does not see.** A gap in the high 30s or low 40s is a legitimate single remount at the current interval, so it sits below the band deliberately. One observation in the stored history lives there and is *not* a remount -- `apps-downloaders`, gap 40s, run_id 32414960534, `ctrl=T0+65 webhook=T0+105 certctrl=T0+105`, a single `invalid certs. retrying...` line against the 9-10 a remount forces. Its cert-controller was itself the laggard, which is a mechanism outside the re-sync model entirely. **Nothing on this page counts that class, and this band is not where to look for it.**\n\nCounted directly rather than read off the heatmap, because that heatmap reduces to one value per suite per column and could hide exactly this.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 3,
-        "x": 21,
-        "y": 18
-      },
-      "id": 10,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum(count_over_time({job=\"ci-diagnostics\", instrument=\"mode\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | mode != \"none\" | ctrl_webhook_gap_s != \"-\" | ctrl_webhook_gap_s > 45 | ctrl_webhook_gap_s < 60 [$__range])) or vector(0)",
-          "instant": true,
-          "queryType": "instant",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Runs in the impossible band",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "What fraction of **external-secrets-bearing** runs hit the slow branch of the webhook wait above. `fast` is under 35s, `slow` is 60s or more, `intermediate` is between.\n\n**Runs with no external-secrets fixture are excluded from both sides of the ratio** -- they cannot hit the wait at all, so including them would answer a different question than the title asks and dilute the rate by their share of the fleet, which is about 30%. The exclusion is also structurally required, the stack being normalised to 1.\n\n**The figure depends on the population, and this panel defaults to `schedule`.** At the stock 60s kubelet re-sync interval the rate was **16.8%** on `schedule` and **13.9%** across all populations. Quote the one matching the filter you have set.\n\n**A rising `slow` share means more flake exposure**, because the slow branch can outlast an assertion's budget and turn a passing suite red.\n\n**At the 10s interval these nodes now run, `slow` does not occur** -- 0 in 663 classified runs. It does not draw a flat zero: `count_over_time` emits no series for a label value with no entries, so **`slow` is absent from the legend entirely, and its absence is the reading.** A `slow` series appearing means the interval has reverted; check the kind configs still carry `syncFrequency: 10s`.\n\n**A single remount prints as `intermediate`, not as `fast`** -- it costs roughly 28-45s at this interval. So `intermediate` is the expected home of a lost cert race and is not alarming on its own; the counter beside this panel is the falsifier. One `intermediate` appears in the 60s-interval census, and that run had a late cert-controller rather than a late remount.\n\nA share, not a count: a count would rise simply because someone was working on a suite. The trade-off is that a week with two runs can read 50%, so cross-check the heatmap where a thin column is visibly thin. Runs before 2026-08-17 have no data here -- the measurement did not exist yet, so a flat left edge is absence, not health.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 25,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "noValue": "No data. Runs before 2026-08-17 do not carry this measurement.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
+        "h": 1,
         "w": 24,
         "x": 0,
         "y": 27
       },
-      "id": 11,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
+      "id": 12,
+      "panels": [
         {
           "datasource": {
             "type": "loki",
             "uid": "$datasource"
           },
-          "editorMode": "code",
-          "expr": "sum by (mode) (count_over_time({job=\"ci-diagnostics\", instrument=\"mode\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | mode != \"none\" [7d])) / on() group_left sum(count_over_time({job=\"ci-diagnostics\", instrument=\"mode\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | mode != \"none\" [7d]))",
-          "legendFormat": "{{mode}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
+          "description": "Which stage of a run is responsible for its length? The bands stack to the job's wall clock, so the height is the whole run.\n\n**The band that grew tells you which repo to open.** `setup` is checkout, creating the kind cluster and installing Flux -- none of it in this repo. `prerequisite` is the shared fixtures every suite installs first. `validates` is the suite's own assertions. `teardown` should be seconds.\n\n**Act** on the band that grew. If it is `prerequisite` or `validates`, the panel beside this one shows which namespace inside the cluster slowed down -- it has no phase dimension, so use it as a second, independent view rather than a drill-down.\n\nPrerequisite normally dominates, because everything deploys at once and whatever is checked first absorbs the wait -- so a small `validates` figure does not mean the assertions are cheap. All four series require all four stages to have been measurable, so they cover the same runs and the bands genuinely sum; a run that ended early is left out entirely rather than counted as zero. Currently that is a minority of runs, so read the shape rather than the absolute height.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 25,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "No phase data yet -- this is computed at collection time and only exists for runs gathered after 2026-08-17.",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 28
+          },
+          "id": 13,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap setup_s [7d]) by ()",
+              "legendFormat": "setup",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap prerequisite_s [7d]) by ()",
+              "legendFormat": "prerequisite (shared fixtures)",
+              "queryType": "range",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap validates_s [7d]) by ()",
+              "legendFormat": "validates (the suite's own checks)",
+              "queryType": "range",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap teardown_s [7d]) by ()",
+              "legendFormat": "teardown",
+              "queryType": "range",
+              "range": true,
+              "refId": "D"
+            }
+          ],
+          "title": "Where a job's time goes",
+          "type": "timeseries",
+          "interval": "6h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "**Set `suite` to a single value before reading this** -- with all suites selected it is dozens of overlapping series.\n\nWhich part of the cluster is taking longer to come up, per week -- the 90th percentile of `t0_s`, seconds from the first thing in a run becoming Ready.\n\n**One namespace stepping up while the others stay flat is that component getting heavier** -- usually a chart or image bump. Everything rising together is the runner or the network.\n\n**Act** on a namespace that steps up and stays up: check what changed in that component's chart version. This moves before any timeout is exceeded and long before anything fails, which is why it is worth watching.\n\nGrouped by namespace rather than by object, so a namespace running several components shows whichever is slowest. Absolute values are only comparable between runs of the same suite.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "No readiness data in range.",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 28
+          },
+          "id": 14,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | unwrap t0_s [7d]) by (kind, namespace)",
+              "legendFormat": "{{kind}}/{{namespace}}",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Which namespace got slower",
+          "type": "timeseries",
+          "interval": "6h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "Is a suite failing more than it used to?\n\n**Only a level that holds for months means anything, and for most suites not even that.** Two suites ride every slot and reach about 112 runs per point; the other 14 get **26-27**, which is below the 30-run floor the panel beside this one sets -- so **for those, read direction only and never a number.** At 27 runs a true 10% rate has a 95% interval of roughly 2-26%.\n\n**Act** on a shift that persists for weeks. Under the default `Runs = schedule` most suites get about one run per day and the two weighted ones get four, so each suite's denominator should be flat -- if it is not, collection dropped runs and the rate moved for that reason. Widen `Runs` to include PR runs and the denominator moves with whoever is working on a suite, which is its own trap.\n\nFor an exact number, `ci/scripts/baseline-census.sh` in the apps repo is authoritative -- it reads job metadata rather than logs. This panel exists so a rate change can be lined up against everything else on the same time axis.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "max": 1,
+              "min": 0,
+              "noValue": "No outcome data in range.",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 18,
+            "x": 0,
+            "y": 37
+          },
+          "id": 15,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome != \"success\" [28d])) / sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [28d]))",
+              "legendFormat": "{{suite}}",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Failure rate by suite (28-day rolling)",
+          "type": "timeseries",
+          "interval": "6h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "How many runs the rate beside this one is computed from.\n\n**A rate that moved together with its denominator moved because sampling changed, not because quality did.**\n\n**Act** by treating any such rate movement as unproven. Below about 30 runs, read the rate as a direction rather than a number.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "No outcome data in range.",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "none"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 37
+          },
+          "id": 16,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [28d]))",
+              "legendFormat": "{{suite}}",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Runs behind each rate point",
+          "type": "timeseries",
+          "interval": "6h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "One row per suite, failing chainsaw step and operation, counted over the selected range. Read it next to the failure rate: a rate rise that concentrates on one step is one cause, one spread across many steps is not.\n\n`failed_step` comes from chainsaw's own `| ERROR |` row in the job log, so it exists only for jobs ingested after it was added and cannot be backfilled. Failures are mostly PR runs, so set `population` to `pull_request` to see most of them; those execute branch code, so a step that fails only there may be the branch's own change.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": false,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Value"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "failed jobs"
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 45
+          },
+          "id": 23,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "failed jobs"
+              }
+            ]
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "sum by (suite, failed_op, failed_step) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | failed_step != \"\" [$__range]))",
+              "instant": true,
+              "queryType": "instant",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Which step failing runs failed at",
+          "type": "table"
         }
       ],
-      "title": "How often the slow path is taken",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 35
-      },
-      "id": 12,
-      "panels": [],
       "title": "2. It got worse -- when did it start, and what moved?",
       "type": "row"
     },
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "Which stage of a run is responsible for its length? The bands stack to the job's wall clock, so the height is the whole run.\n\n**The band that grew tells you which repo to open.** `setup` is checkout, creating the kind cluster and installing Flux -- none of it in this repo. `prerequisite` is the shared fixtures every suite installs first. `validates` is the suite's own assertions. `teardown` should be seconds.\n\n**Act** on the band that grew. If it is `prerequisite` or `validates`, the panel beside this one shows which namespace inside the cluster slowed down -- it has no phase dimension, so use it as a second, independent view rather than a drill-down.\n\nPrerequisite normally dominates, because everything deploys at once and whatever is checked first absorbs the wait -- so a small `validates` figure does not mean the assertions are cheap. All four series require all four stages to have been measurable, so they cover the same runs and the bands genuinely sum; a run that ended early is left out entirely rather than counted as zero. Currently that is a minority of runs, so read the shape rather than the absolute height.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 25,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No phase data yet -- this is computed at collection time and only exists for runs gathered after 2026-08-17.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 36
-      },
-      "id": 13,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap setup_s [7d]) by ()",
-          "legendFormat": "setup",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap prerequisite_s [7d]) by ()",
-          "legendFormat": "prerequisite (shared fixtures)",
-          "queryType": "range",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap validates_s [7d]) by ()",
-          "legendFormat": "validates (the suite's own checks)",
-          "queryType": "range",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "avg_over_time({job=\"ci-diagnostics\", instrument=\"phase\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | setup_s != \"\" | prerequisite_s != \"\" | validates_s != \"\" | teardown_s != \"\" | unwrap teardown_s [7d]) by ()",
-          "legendFormat": "teardown",
-          "queryType": "range",
-          "range": true,
-          "refId": "D"
-        }
-      ],
-      "title": "Where a job's time goes",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "**Set `suite` to a single value before reading this** -- with all suites selected it is dozens of overlapping series.\n\nWhich part of the cluster is taking longer to come up, per week -- the 90th percentile of `t0_s`, seconds from the first thing in a run becoming Ready.\n\n**One namespace stepping up while the others stay flat is that component getting heavier** -- usually a chart or image bump. Everything rising together is the runner or the network.\n\n**Act** on a namespace that steps up and stays up: check what changed in that component's chart version. This moves before any timeout is exceeded and long before anything fails, which is why it is worth watching.\n\nGrouped by namespace rather than by object, so a namespace running several components shows whichever is slowest. Absolute values are only comparable between runs of the same suite.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No readiness data in range.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 36
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | unwrap t0_s [7d]) by (kind, namespace)",
-          "legendFormat": "{{kind}}/{{namespace}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Which namespace got slower",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "Is a suite failing more than it used to?\n\n**Only a level that holds for months means anything, and for most suites not even that.** Two suites ride every slot and reach about 112 runs per point; the other 14 get **26-27**, which is below the 30-run floor the panel beside this one sets -- so **for those, read direction only and never a number.** At 27 runs a true 10% rate has a 95% interval of roughly 2-26%.\n\n**Act** on a shift that persists for weeks. Under the default `Runs = schedule` most suites get about one run per day and the two weighted ones get four, so each suite's denominator should be flat -- if it is not, collection dropped runs and the rate moved for that reason. Widen `Runs` to include PR runs and the denominator moves with whoever is working on a suite, which is its own trap.\n\nFor an exact number, `ci/scripts/baseline-census.sh` in the apps repo is authoritative -- it reads job metadata rather than logs. This panel exists so a rate change can be lined up against everything else on the same time axis.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "noValue": "No outcome data in range.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 0,
-        "y": 45
-      },
-      "id": 15,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome != \"success\" [28d])) / sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [28d]))",
-          "legendFormat": "{{suite}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Failure rate by suite (28-day rolling)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "How many runs the rate beside this one is computed from.\n\n**A rate that moved together with its denominator moved because sampling changed, not because quality did.**\n\n**Act** by treating any such rate movement as unproven. Below about 30 runs, read the rate as a direction rather than a number.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No outcome data in range.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 45
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"outcome\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" [28d]))",
-          "legendFormat": "{{suite}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Runs behind each rate point",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 45
       },
       "id": 17,
-      "panels": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "What share of the objects a suite reports on were **not** confirmed Ready, on runs that passed. Split by `ready_state` so the two causes are visible in the chart. **Normalised within each suite**, so 0.03 means 3% of that suite's own reported objects -- which may be one object in every run -- and a suite's value does not move when an unrelated suite's volume changes.\n\n**`Unknown` means it was still coming up when the suite stopped looking** -- an assertion passed on timing it barely had. **`False` means it actively failed** and nothing asserted on it, which is a coverage gap: nothing will ever catch a regression there.\n\n**Act** on a rising share, or on a series appearing that was not there before. For `Unknown`, the budget for that check is too tight. For `False`, search the suite's `validate-*.yaml` for the object -- if it is not named, that is the gap to close.\n\nThis is the **earliest** of the three signals in this row: it fires while runs are green and before any timeout is close. Everything in the table beside it has already failed.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "Nothing was left un-Ready on a passing run -- good news, provided the stats at the top are non-zero.",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 46
+          },
+          "id": 18,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "sum by (suite, ready_state) (count_over_time({job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" | ready_state != \"True\" [7d])) / on(suite) group_left sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" [7d]))",
+              "legendFormat": "{{suite}} {{ready_state}}",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Objects not confirmed Ready, on runs that passed",
+          "type": "timeseries",
+          "interval": "6h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "When a suite fails on a timeout, the failure tells you nothing about what the wait needed -- it was cut off at its own limit. So after the failure, a watcher keeps observing and records **how many more seconds each object took to become Ready.** This table ranks that, worst first. Values are seconds.\n\n**A value means that check's timeout was too short by roughly that much. It does not mean the component is broken.** Something genuinely broken leaves different evidence: `CrashLoopBackOff`, restarts, `Helm install failed`. If none of that is present, the timeout is the fault.\n\n**Act** by finding the assertion for that object in the suite's `ci/test/<suite>/validate-*.yaml` and raising its timeout by the observed figure. This is the only evidence-based way to size one; everything else is guesswork with a safety multiplier.\n\nObjects that *never* became Ready are not in this table -- they carry no number to rank. Use the Explore link for those.\n\nRows are one per **object across the whole range**, not one per run. A generated pod name carries a per-run suffix, which is normalised away before grouping -- `pihole-6dc956c49d-7hbhl` and `pihole-6dc956c49d-2c2q7` are the single row `pihole`, carrying the worst figure either of them recorded. So a component that is late on every run is one row worth acting on, rather than a run's worth of individually unremarkable ones.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": false,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Value"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "displayName",
+                    "value": "extra seconds needed"
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 46
+          },
+          "id": 19,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Value"
+              }
+            ]
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "topk(20, max by (suite, kind, namespace, name) (max_over_time({job=\"ci-diagnostics\", instrument=\"uncensored\", suite=~\"^(${suite:regex})$\"} | extra_s != \"\" | label_format name=`{{ regexReplaceAll \"(-[bcdfghjklmnpqrstvwxz2456789]{5,10})?-[bcdfghjklmnpqrstvwxz2456789]{5}$\" .name \"\" }}` | unwrap extra_s [$__range])))",
+              "instant": true,
+              "queryType": "instant",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "How many extra seconds a failed wait actually needed",
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
+          },
+          "description": "Which containers crashed and restarted **during** a test run, without failing it. One row per container, one cell per week it happened in. **Only runs that passed are counted** -- that is what makes \"without failing it\" true, and without it a failing run's higher count could own a cell, since every cell is a maximum.\n\nEvery cell is a real restart count, and the highest seen in that cell's window. These lines are only printed when a container actually restarted -- the smallest value ever recorded is 1 -- so a row cannot appear for a healthy container, and a gap is genuinely no crash.\n\n**Act on a row that starts partway through the range** -- that is something that did not used to crash and now does, and it is invisible everywhere else because the suite still passes and the pod still reports Ready. A row present across the whole range is a long-standing crash loop that has been accepted; darker colour on one means it is getting worse.\n\nA timeline rather than a graph because the signal is a **new row**, not a number: a total would rise simply because someone was working on a suite, and a new series is far easier to see as a row than as another line in a legend. Cells are one panel step wide, so onset is dated to about that resolution. Grouped by container name, so two components using the same name would merge.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "continuous-YlOrRd"
+              },
+              "custom": {
+                "fillOpacity": 85,
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineWidth": 0,
+                "spanNulls": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 55
+          },
+          "id": 20,
+          "options": {
+            "alignValue": "left",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": false
+            },
+            "mergeValues": false,
+            "rowHeight": 0.9,
+            "showValue": "auto",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "max by (container) (max_over_time({job=\"ci-diagnostics\", instrument=\"restart\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" | container != \"\" | unwrap restarts [$__interval]))",
+              "legendFormat": "{{container}}",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Containers that crashed mid-run -- watch for a row that starts partway across",
+          "type": "state-timeline"
+        }
+      ],
       "title": "3. What is about to break? (leading indicators)",
       "type": "row"
     },
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "What share of the objects a suite reports on were **not** confirmed Ready, on runs that passed. Split by `ready_state` so the two causes are visible in the chart. **Normalised within each suite**, so 0.03 means 3% of that suite's own reported objects -- which may be one object in every run -- and a suite's value does not move when an unrelated suite's volume changes.\n\n**`Unknown` means it was still coming up when the suite stopped looking** -- an assertion passed on timing it barely had. **`False` means it actively failed** and nothing asserted on it, which is a coverage gap: nothing will ever catch a regression there.\n\n**Act** on a rising share, or on a series appearing that was not there before. For `Unknown`, the budget for that check is too tight. For `False`, search the suite's `validate-*.yaml` for the object -- if it is not named, that is the gap to close.\n\nThis is the **earliest** of the three signals in this row: it fires while runs are green and before any timeout is close. Everything in the table beside it has already failed.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "Nothing was left un-Ready on a passing run -- good news, provided the stats at the top are non-zero.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 54
-      },
-      "id": 18,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "sum by (suite, ready_state) (count_over_time({job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" | ready_state != \"True\" [7d])) / on(suite) group_left sum by (suite) (count_over_time({job=\"ci-diagnostics\", instrument=\"ready\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" [7d]))",
-          "legendFormat": "{{suite}} {{ready_state}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Objects not confirmed Ready, on runs that passed",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "When a suite fails on a timeout, the failure tells you nothing about what the wait needed -- it was cut off at its own limit. So after the failure, a watcher keeps observing and records **how many more seconds each object took to become Ready.** This table ranks that, worst first. Values are seconds.\n\n**A value means that check's timeout was too short by roughly that much. It does not mean the component is broken.** Something genuinely broken leaves different evidence: `CrashLoopBackOff`, restarts, `Helm install failed`. If none of that is present, the timeout is the fault.\n\n**Act** by finding the assertion for that object in the suite's `ci/test/<suite>/validate-*.yaml` and raising its timeout by the observed figure. This is the only evidence-based way to size one; everything else is guesswork with a safety multiplier.\n\nObjects that *never* became Ready are not in this table -- they carry no number to rank. Use the Explore link for those.\n\nRows are one per **object across the whole range**, not one per run. A generated pod name carries a per-run suffix, which is normalised away before grouping -- `pihole-6dc956c49d-7hbhl` and `pihole-6dc956c49d-2c2q7` are the single row `pihole`, carrying the worst figure either of them recorded. So a component that is late on every run is one row worth acting on, rather than a run's worth of individually unremarkable ones.",
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": false,
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Value"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              },
-              {
-                "id": "displayName",
-                "value": "extra seconds needed"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 54
-      },
-      "id": 19,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Value"
-          }
-        ]
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "topk(20, max by (suite, kind, namespace, name) (max_over_time({job=\"ci-diagnostics\", instrument=\"uncensored\", suite=~\"^(${suite:regex})$\"} | extra_s != \"\" | label_format name=`{{ regexReplaceAll \"(-[bcdfghjklmnpqrstvwxz2456789]{5,10})?-[bcdfghjklmnpqrstvwxz2456789]{5}$\" .name \"\" }}` | unwrap extra_s [$__range])))",
-          "instant": true,
-          "queryType": "instant",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "How many extra seconds a failed wait actually needed",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "Which containers crashed and restarted **during** a test run, without failing it. One row per container, one cell per week it happened in. **Only runs that passed are counted** -- that is what makes \"without failing it\" true, and without it a failing run's higher count could own a cell, since every cell is a maximum.\n\nEvery cell is a real restart count, and the highest seen in that cell's window. These lines are only printed when a container actually restarted -- the smallest value ever recorded is 1 -- so a row cannot appear for a healthy container, and a gap is genuinely no crash.\n\n**Act on a row that starts partway through the range** -- that is something that did not used to crash and now does, and it is invisible everywhere else because the suite still passes and the pod still reports Ready. A row present across the whole range is a long-standing crash loop that has been accepted; darker colour on one means it is getting worse.\n\nA timeline rather than a graph because the signal is a **new row**, not a number: a total would rise simply because someone was working on a suite, and a new series is far easier to see as a row than as another line in a legend. Cells are one panel step wide, so onset is dated to about that resolution. Grouped by container name, so two components using the same name would merge.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "continuous-YlOrRd"
-          },
-          "custom": {
-            "fillOpacity": 85,
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 63
-      },
-      "id": 20,
-      "options": {
-        "alignValue": "left",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "mergeValues": false,
-        "rowHeight": 0.9,
-        "showValue": "auto",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "max by (container) (max_over_time({job=\"ci-diagnostics\", instrument=\"restart\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | outcome=\"success\" | container != \"\" | unwrap restarts [$__interval]))",
-          "legendFormat": "{{container}}",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Containers that crashed mid-run -- watch for a row that starts partway across",
-      "type": "state-timeline"
-    },
-    {
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 65
       },
       "id": 21,
-      "panels": [],
-      "title": "4. Can I trust a comparison across this range?",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "$datasource"
-      },
-      "description": "Was the CI machine itself unusually bad this week? **Use this to discount other panels, never to act.**\n\nNetwork throughput is the axis that has been shown to matter: on a test harness, shaping the link to 150mbit made suites fail on assertion timeouts 6 times out of 6, while halving the cluster's CPU changed nothing. **A collapse in the throughput floor means a bad week on the fleet, not a regression in your code** -- so if a rise above coincides with a dip here, you have not found a regression.\n\n**Act** only by re-reading the other panels with that week discounted, or by narrowing the range to exclude it.\n\nDisk latency is recorded and plotted for reference only -- it has never been shown to affect anything, and is kept because it is the leading untested explanation for the bimodal wait in row 1. Ignore it unless throughput is flat and you need somewhere else to look.\n\nThis does **not** establish that runs are comparable -- it describes conditions, not hardware. The CPU stat at the top of the page is what does that.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
+      "panels": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "$datasource"
           },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No runner condition data in range.",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "disk latency, reference only"
-            },
-            "properties": [
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
+          "description": "Was the CI machine itself unusually bad this week? **Use this to discount other panels, never to act.**\n\nNetwork throughput is the axis that has been shown to matter: on a test harness, shaping the link to 150mbit made suites fail on assertion timeouts 6 times out of 6, while halving the cluster's CPU changed nothing. **A collapse in the throughput floor means a bad week on the fleet, not a regression in your code** -- so if a rise above coincides with a dip here, you have not found a regression.\n\n**Act** only by re-reading the other panels with that week discounted, or by narrowing the range to exclude it.\n\nDisk latency is recorded and plotted for reference only -- it has never been shown to affect anything, and is kept because it is the leading untested explanation for the bimodal wait in row 1. Ignore it unless throughput is flat and you need somewhere else to look.\n\nThis does **not** establish that runs are comparable -- it describes conditions, not hardware. The CPU stat at the top of the page is what does that.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
               },
-              {
-                "id": "unit",
-                "value": "\u00b5s"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#8e8e8e",
-                  "mode": "fixed"
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
                 }
               },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "network floor (weekly p10)"
+              "mappings": [],
+              "min": 0,
+              "noValue": "No runner condition data in range.",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "none"
             },
-            "properties": [
+            "overrides": [
               {
-                "id": "unit",
-                "value": "Mbits"
+                "matcher": {
+                  "id": "byName",
+                  "options": "disk latency, reference only"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "unit",
+                    "value": "µs"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#8e8e8e",
+                      "mode": "fixed"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "network floor (weekly p10)"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "Mbits"
+                  }
+                ]
               }
             ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 24,
-        "x": 0,
-        "y": 74
-      },
-      "id": 22,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 66
+          },
+          "id": 22,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "13.1.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "quantile_over_time(0.1, {job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | net_mbps =~ \"[0-9].*\" | unwrap net_mbps [7d]) by ()",
+              "legendFormat": "network floor (weekly p10)",
+              "queryType": "range",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "$datasource"
+              },
+              "editorMode": "code",
+              "expr": "quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | fsync_us =~ \"[0-9].*\" | unwrap fsync_us [7d]) by ()",
+              "legendFormat": "disk latency, reference only",
+              "queryType": "range",
+              "range": true,
+              "refId": "B"
+            }
           ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "13.1.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "quantile_over_time(0.1, {job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | net_mbps =~ \"[0-9].*\" | unwrap net_mbps [7d]) by ()",
-          "legendFormat": "network floor (weekly p10)",
-          "queryType": "range",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "$datasource"
-          },
-          "editorMode": "code",
-          "expr": "quantile_over_time(0.9, {job=\"ci-diagnostics\", instrument=\"contention\", suite=~\"^(${suite:regex})$\"} | gh_event=~\"^(${population:regex})$\" | fsync_us =~ \"[0-9].*\" | unwrap fsync_us [7d]) by ()",
-          "legendFormat": "disk latency, reference only",
-          "queryType": "range",
-          "range": true,
-          "refId": "B"
+          "title": "Runner network and disk, weekly",
+          "type": "timeseries",
+          "interval": "6h"
         }
       ],
-      "title": "Runner network and disk, weekly",
-      "type": "timeseries"
+      "title": "4. Can I trust a comparison across this range?",
+      "type": "row"
     }
   ],
   "preload": false,
