@@ -1,0 +1,46 @@
+---
+# promtool unit tests for prometheusrule-nas-metrics.yaml. Run with `promtool test rules` against
+# the manifest's `.spec` (promtool cannot read the PrometheusRule wrapper).
+rule_files:
+- prometheusrule-nas-metrics.yaml
+evaluation_interval: 1m
+tests:
+# nas remote write stops after 30 minutes. homelab's own kube-state-metrics keeps reporting.
+- interval: 1m
+  input_series:
+  - series: 'up{k8s_cluster="nas", job="kube-state-metrics", instance="10.42.0.19:8080"}'
+    values: '1x30'
+  - series: 'up{job="kube-state-metrics", instance="10.42.3.237:8080"}'
+    values: '1x90'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: NasMetricsStale
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: NasMetricsStale
+    exp_alerts: []
+  - eval_time: 50m
+    alertname: NasMetricsStale
+    exp_alerts:
+    - exp_labels: {k8s_cluster: nas, job: kube-state-metrics, capability: obs.metrics, tier: H1, severity: critical}
+      exp_annotations:
+        summary: No metrics have arrived from the nas cluster for 15 minutes.
+        description: >-
+          No kube-state-metrics scrape result from nas has arrived for 15 minutes. Every alert
+          rule over nas series is blind until it resumes.
+  - eval_time: 50m
+    alertname: CapabilityHeartbeat
+    exp_alerts:
+    - exp_labels: {capability: obs.metrics, tier: M2, severity: none}
+      exp_annotations:
+        summary: The obs.metrics alert rules are being evaluated.
+
+# A 10 minute gap, shorter than the window, stays silent.
+- interval: 1m
+  input_series:
+  - series: 'up{k8s_cluster="nas", job="kube-state-metrics", instance="10.42.0.19:8080"}'
+    values: '1x30 _x10 1x50'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: NasMetricsStale
+    exp_alerts: []

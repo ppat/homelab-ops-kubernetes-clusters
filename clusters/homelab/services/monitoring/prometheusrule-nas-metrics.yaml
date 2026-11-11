@@ -1,0 +1,37 @@
+---
+# nas runs no rule evaluator of its own. Its metrics reach homelab by remote write, and every
+# rule over nas series is evaluated here. When that stream stops, those rules go quiet instead
+# of firing, so this rule watches the stream itself.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nas-metrics
+  namespace: monitoring
+spec:
+  groups:
+  - name: nas-metrics
+    rules:
+    # The tier is that of the most important capability it hides. nas hosts storage and
+    # database backups (H1).
+    - alert: NasMetricsStale
+      annotations:
+        summary: No metrics have arrived from the nas cluster for 15 minutes.
+        description: >-
+          No kube-state-metrics scrape result from nas has arrived for 15 minutes. Every alert
+          rule over nas series is blind until it resumes.
+      expr: |
+        absent_over_time(up{k8s_cluster="nas", job="kube-state-metrics"}[15m])
+      labels:
+        capability: obs.metrics
+        tier: H1
+        severity: critical
+    # Always firing. A consumer of Alertmanager's active alerts reads its absence as "these rules
+    # are not being evaluated".
+    - alert: CapabilityHeartbeat
+      annotations:
+        summary: The obs.metrics alert rules are being evaluated.
+      expr: vector(1)
+      labels:
+        capability: obs.metrics
+        tier: M2
+        severity: none

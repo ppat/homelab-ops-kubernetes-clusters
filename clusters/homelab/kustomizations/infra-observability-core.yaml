@@ -110,9 +110,6 @@ spec:
   - patch: |
       - op: add
         path: /subsets/0/addresses/-
-        value: {ip: 192.168.8.64}
-      - op: add
-        path: /subsets/0/addresses/-
         value: {ip: 192.168.8.65}
       - op: add
         path: /subsets/0/addresses/-
