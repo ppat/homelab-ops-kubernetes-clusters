@@ -156,13 +156,21 @@ spec:
       kind: HelmRelease
       name: loki-release
       namespace: logging
-  # Route alerts to n8n's Alertmanager-intake webhook (apps-ai's alertmanager-receiver
-  # workflow) instead of the chart's default null receiver -- Alertmanager otherwise has
-  # zero receivers configured. Watchdog stays routed to 'null' so the dead-man's-switch
-  # heartbeat doesn't spam the webhook. Inert until that n8n workflow is manually imported
-  # and activated (clusters#740) -- until then this just posts to a 404.
+  # Alertmanager routing. Alerts are read from Alertmanager's API by the twice-daily triage
+  # workflow, so the default route sends nothing. The one exception is alerts labelled
+  # notify="immediate" (for example UnifiWanOnBackup), which go to n8n's alertmanager-immediate
+  # workflow and from there through its Notify workflow, both when they fire and when they
+  # resolve. Notify applies the operator's quiet hours, so this route has none of its own. Their
+  # debounce lives in the rules themselves (`for` and `keep_firing_for`), so group_wait is short
+  # and repeat_interval is long enough that a long-lasting condition is announced only once.
+  # The bearer token is mounted from the alertmanager-n8n-webhook Secret (services/monitoring),
+  # the same token n8n's workflow credentials are built from.
   # yamllint disable-line rule:indentation
   - patch: |
+      - op: add
+        path: /spec/values/alertmanager/alertmanagerSpec/secrets
+        value:
+        - alertmanager-n8n-webhook
       - op: add
         path: /spec/values/alertmanager/config
         value:
@@ -196,16 +204,26 @@ spec:
             group_wait: 30s
             group_interval: 5m
             repeat_interval: 12h
-            receiver: 'n8n-webhook'
+            receiver: 'null'
             routes:
-            - receiver: 'null'
+            - receiver: 'n8n-immediate'
               matchers:
-              - alertname = "Watchdog"
+              - notify = "immediate"
+              group_by: ['alertname']
+              group_wait: 10s
+              group_interval: 1m
+              repeat_interval: 168h
           receivers:
           - name: 'null'
-          - name: 'n8n-webhook'
+          - name: 'n8n-immediate'
             webhook_configs:
-            - url: 'http://n8n.n8n.svc.cluster.local:5678/webhook/alertmanager'
+            - url: 'http://n8n.n8n.svc.cluster.local:5678/webhook/alertmanager-immediate'
+              send_resolved: true
+              max_alerts: 5
+              http_config:
+                authorization:
+                  type: Bearer
+                  credentials_file: /etc/alertmanager/secrets/alertmanager-n8n-webhook/token
           templates:
           - '/etc/alertmanager/config/*.tmpl'
     target:
