@@ -6,6 +6,8 @@ resources:
 - externalsecret-alertmanager-n8n-webhook.yaml
 - prometheusrule-nas-metrics.yaml
 - prometheusrule-synology.yaml
+- prometheusrule-unifi.yaml
+- configmap-loki-rule-unifi.yaml
 
 configMapGenerator:
 - name: grafana-extra-config
