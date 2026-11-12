@@ -19,5 +19,6 @@ resources:
 - config-storage-versitygw.yaml
 - config-services.yaml
 - infra-observability-alloy.yaml
+- infra-observability-health-canaries.yaml
 - policy-baseline-pss.yaml
 - policy-best-practices.yaml

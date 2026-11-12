@@ -1,0 +1,23 @@
+---
+# Storage canary twin of sc-longhorn-replicated.yaml. Keep provisioner and parameters
+# identical to it; only two fields differ, and both are why this class exists:
+#  - reclaimPolicy Delete: the canary creates a PVC per run and deletes it with the run's pod.
+#    On the Retain original every run would leave a Released PV and a Longhorn volume behind
+#    (CanaryVolumeLeftBehind fires on that).
+#  - recurringJobSelector names a group that has no recurring jobs, so a canary volume never
+#    collects snapshots, and never lands a backup in the real target if the original's
+#    groups gain a backup job.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-health-canary-longhorn-replicated
+allowVolumeExpansion: true
+parameters:
+  fsType: ext4
+  staleReplicaTimeout: "30"
+  dataLocality: "best-effort"
+  numberOfReplicas: "2"
+  recurringJobSelector: '[{"name":"health-canary", "isGroup":true}]'
+provisioner: driver.longhorn.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer

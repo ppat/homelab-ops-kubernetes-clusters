@@ -1,0 +1,123 @@
+---
+# The health-canaries subpath of observability-extra: namespace, netcheck canary, scripts
+# and the canary alert rules. nas does not consume the module root, the same way it takes only
+# alloy from observability-core. The rules are not evaluated here (no evaluator on this cluster);
+# homelab's copy evaluates this cluster's canaries through the remote-written kube-state-metrics
+# series, which carry k8s_cluster="nas".
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-observability-health-canaries
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: config-services
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+---
+# The static NFS export the nfs-share canary mounts. Needs the health-canary namespace.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-health-canary
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-health-canaries
+    namespace: flux-system
+  interval: 15m0s
+  path: ./clusters/nas/services/health-canary
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+---
+# Delete twin of sc-nfs-dynamic-share (storage/infra/sc/).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-nfs-nfs-dynamic-share
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-health-canaries
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  patches:
+  # The Synology grants write on the kubernetes-* shares to group 65539, the same group every
+  # other NFS consumer on these shares writes through. NFS ignores fsGroup, so the canary
+  # joins it as a supplemental group.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext/supplementalGroups
+        value: [65539]
+    target:
+      kind: CronJob
+  postBuild:
+    substitute:
+      storage_canary_name: nfs-dynamic-share
+      storage_canary_kind: nfs
+      storage_canary_class: sc-health-canary-nfs-dynamic-share
+      storage_canary_access_mode: ReadWriteMany
+---
+# sc-nfs-share is only consumed through static PVs, so its canary mounts a static export.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-nfs-nfs-share
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-health-canaries
+    namespace: flux-system
+  - name: config-services-health-canary
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage-claim
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  patches:
+  # The Synology grants write on the kubernetes-* shares to group 65539, the same group every
+  # other NFS consumer on these shares writes through. NFS ignores fsGroup, so the canary
+  # joins it as a supplemental group.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext/supplementalGroups
+        value: [65539]
+    target:
+      kind: CronJob
+  postBuild:
+    substitute:
+      storage_canary_name: nfs-share
+      storage_canary_kind: nfs
+      storage_canary_claim: nfs-canary-nfs-share
