@@ -1,0 +1,631 @@
+{
+  "id": "HealthDiagnose01",
+  "name": "Health Diagnose",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "fingerprint"
+            },
+            {
+              "name": "max_tool_calls"
+            },
+            {
+              "name": "dependencies_json"
+            }
+          ]
+        }
+      },
+      "name": "Diagnose Request",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070001"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Model, data sources and gateway for diagnosis. Limits are in DIAGNOSIS_LIMITS (Prepare node).\n// The models are openclaw's (agents.defaults.model in openclaw.json, without its litellm/ provider\n// prefix). Keep the two equal. LiteLLM retries on the fallbacks when the primary call fails.\nreturn [{ json: {\n  model: 'openrouter/deepseek/deepseek-v4-flash-0731',\n  fallbacks: ['openrouter/z-ai/glm-5.3-flash'],\n  litellm_url: 'http://litellm.ai.svc.cluster.local:4000',\n  prometheus_uid: 'prometheus',\n  loki_uid: 'loki',\n} }];\n"
+      },
+      "name": "Settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070002"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Investigation playbooks per capability: what functioning means, the ordered checks, how known failure\n// modes differ, and the concrete selectors for today's tools. Edit here and re-import the workflow.\nconst playbooks = {\n  default: `1. Read the alert's labels and annotations; find the object it is about (namespace, workload, node).\n2. Check that object's status and recent events (k8s_get, k8s_events).\n3. Check the owning controller's logs if the object is managed (pod_logs, tail 100).\n4. Check whether any upstream capability in the evidence pack is firing; if so, say the cause is there.\nNever: list without a namespace and selector; query logs without a selective stream selector.`,\n  'storage.block': `Functioning: Longhorn volumes attach, replicate and report health; Prometheus scrapes longhorn-manager on :9500.\nChecks: 1) up{job=\"longhorn-backend\"} and count by node vs kube_node_info. 2) If targets are down: NetworkPolicies in\nlonghorn-system selecting app=longhorn-manager (k8s_list networking.k8s.io/v1 NetworkPolicy, labelSelector or fieldSelector),\nand whether any allows ingress from namespace monitoring. 3) longhorn_volume_robustness (1 healthy, 2 degraded, 3 faulted).\n4) Longhorn events in longhorn-system.\nTells apart: scrape blocked (pods Running, up=0, policy without a monitoring rule) vs manager down (pods not Ready) vs\nvolume degraded (robustness 2/3 with up=1).\nBindings: namespace longhorn-system; job longhorn-backend; pods label app=longhorn-manager.`,\n  'backup.db': `Functioning: each CloudNativePG Cluster archives WAL and takes scheduled base backups through the barman-cloud plugin.\nChecks: 1) cnpg_collector_up and barman_cloud_cloudnative_pg_io_* series for the namespace. 2) The Cluster object\n(postgresql.cnpg.io/v1 Cluster) status: conditions ContinuousArchiving and LastBackupSucceeded, spec.plugins.\n3) ScheduledBackup and Backup objects in the namespace. 4) Plugin sidecar logs (container plugin-barman-cloud).\nTells apart: no plugin configured (spec.plugins empty: backups were never set up) vs archiving failing (condition False,\nS3 errors in logs; check storage.object) vs schedule missing (no ScheduledBackup).\nBindings: CNPG metrics carry namespace; Cluster names end in -db-v<date>.`,\n  'backup.volume': `Functioning: Longhorn recurring backups land in the backup target, and the weekly restore verification passes.\nChecks: 1) kube_job_failed / kube_cronjob_status_last_successful_time for namespace backup-verification.\n2) That Job's pod logs. 3) Longhorn BackupTarget status (longhorn.io/v1beta2 BackupTarget in longhorn-system).\nBindings: namespace backup-verification; backup targets live on the nas (MinIO, versitygw).`,\n  'storage.object': `Functioning: S3 endpoints (MinIO, Garage on homelab; MinIO, versitygw on nas) accept PUT/GET/LIST/DELETE.\nChecks: 1) the health-canary CronJob results in namespace health-canary. 2) The endpoint's pods and events.\n3) Its logs for auth or disk errors. Tells apart: endpoint down vs credentials revoked vs bucket missing.`,\n  'storage.nfs': `Functioning: NFS-backed PVCs mount and accept writes. Checks: 1) health-canary storage canary for the NFS class.\n2) csi-driver-nfs pods and events. 3) nas.host health (Synology) if the export itself is failing.`,\n  'nas.host': `Functioning: the Synology RS1221 serves its RAID volumes with healthy disks.\nChecks: 1) raidStatus, diskStatus, diskHealthStatus, diskTemperature series (job prometheus-snmp-exporter, module synology).\n2) Synology journal: loki {host=\"syn-rs1221\"}. Never suggest disk operations; report the disk and slot.`,\n  'dns.cluster': `Functioning: CoreDNS resolves in-cluster names on every node. Checks: 1) probe_success for the CoreDNS blackbox probe.\n2) CoreDNS pods in kube-system (labelSelector k8s-app=kube-dns), restarts and logs. 3) coredns_* error rates.\nTells apart: CoreDNS down vs pod networking broken (check net.pod) vs upstream resolver failing (SERVFAIL in logs).`,\n  'gitops': `Functioning: Flux Kustomizations and HelmReleases reconcile to Ready. Checks: 1) gotk_resource_info{ready=\"False\"}.\n2) The failing object's status conditions (kustomize.toolkit.fluxcd.io/v1 Kustomization or helm.toolkit.fluxcd.io/v2\nHelmRelease in flux-system or its namespace). 3) Its source's status (GitRepository/OCIRepository).\nTells apart: build error (message names a file) vs dependency not ready vs source fetch failure vs Helm install timeout.`,\n  'cp.api': `Functioning: the apiserver serves requests. Checks: 1) apiserver_request_total error ratio and latency.\n2) k3s.service journal for the node: loki {systemd_unit=\"k3s.service\", host=\"<node>\"}. 3) cp.datastore status.`,\n  'cp.datastore': `Functioning: embedded etcd has a leader and fsyncs quickly. Checks: 1) etcd_server_has_leader,\netcd_disk_wal_fsync_duration_seconds. 2) k3s.service journal for slow fdatasync or leader changes. 3) node.disk on that node.`,\n  'node.disk': `Functioning: node disks report healthy SMART data and no I/O errors. Checks: 1) smartctl_* series for the device.\n2) Kernel journal on the node: loki {syslog_identifier=\"kernel\", host=\"<node>\"} |~ \"I/O error|nvme|ata\". Report device and node.`,\n  'node.resources': `Functioning: nodes are not under memory, disk or PID pressure. Checks: 1) kube_node_status_condition for pressure.\n2) node_memory_MemAvailable_bytes, top pods by memory on the node. 3) Kernel journal for oom-kill on that host.`,\n  'node.kubelet-runtime': `Functioning: kubelet is Ready and runs pods. Checks: 1) kube_node_status_condition{condition=\"Ready\"}.\n2) Node object conditions (v1 Node). 3) k3s.service journal for PLEG or container runtime errors.`,\n  'obs.alerting': `Functioning: rules evaluate and reach Alertmanager. Checks: 1) prometheus_rule_evaluation_failures_total,\nprometheus_notifications_errors_total. 2) Alertmanager and Prometheus pods in monitoring.`,\n};\n\nreturn [{ json: { playbooks } }];\n"
+      },
+      "name": "Playbooks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "notes": "Per-capability investigation outline and the selectors for today's tools.",
+      "notesInFlow": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070003"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_issues"
+        },
+        "returnAll": true
+      },
+      "name": "Get Issues",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        300
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070004"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_events"
+        },
+        "returnAll": true,
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "fingerprint",
+              "condition": "eq",
+              "keyValue": "={{ $('Diagnose Request').first().json.fingerprint }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Events",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        300
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070005"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health diagnosis: an LLM investigates one issue through read-only tools under hard budgets that\n// this code enforces. The LLM never decides whether something is wrong or who is told; it explains\n// why, and every claim it makes is checked against the tool calls that actually ran.\n\nconst DIAGNOSIS_LIMITS = {\n  max_tool_calls: 8, max_input_tokens: 120000, max_seconds: 300, max_result_chars: 16000,\n  max_turns: 12, max_loki_minutes: 720, max_range_minutes: 360, max_log_lines: 200,\n};\nconst CONFIDENCE = ['confirmed', 'likely', 'unknown'];\n\nconst TOOLS = [\n  ['prometheus_query', 'Instant PromQL query against the homelab Prometheus (both clusters; nas series carry k8s_cluster=\"nas\").',\n    { query: { type: 'string' } }, ['query']],\n  ['prometheus_range', 'Range PromQL query. minutes <= 360.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, step_seconds: { type: 'integer' } }, ['query', 'minutes']],\n  ['loki_query', 'LogQL query over the last `minutes` (<= 720), at most `limit` (<= 100) lines. The stream selector must pin namespace, host, pod, app, job, systemd_unit or syslog_identifier with an exact match.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, limit: { type: 'integer' } }, ['query', 'minutes']],\n  ['k8s_get', 'Get one Kubernetes object.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, name: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind', 'name']],\n  ['k8s_list', 'List Kubernetes objects. Requires a namespace (except for cluster-scoped kinds) and a labelSelector or fieldSelector.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, labelSelector: { type: 'string' }, fieldSelector: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind']],\n  ['k8s_events', 'Kubernetes events in one namespace.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' } }, ['cluster', 'namespace']],\n  ['pod_logs', 'Last lines (tail <= 200) of one container of one pod.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' }, name: { type: 'string' }, container: { type: 'string' }, tail: { type: 'integer' } },\n    ['cluster', 'namespace', 'name']],\n].map(([name, description, properties, required]) => ({\n  type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } },\n}));\n\nconst CLUSTER_SCOPED = new Set(['Node', 'Namespace', 'PersistentVolume', 'StorageClass', 'ClusterRole', 'ClusterRoleBinding',\n  'CustomResourceDefinition', 'IngressClass', 'PriorityClass']);\nconst SELECTIVE_LABELS = /(namespace|host|pod|app|job|systemd_unit|syslog_identifier|container)\\s*=\\s*\"[^\"*]+\"/;\n\n// Maps a model-facing call to an MCP call through LiteLLM, or refuses it with a reason the model sees.\nfunction toMcp(name, a, cfg, nowIso) {\n  const minutesAgo = (m) => DateTime.fromISO(nowIso).minus({ minutes: m }).toUTC().toISO();\n  const clamp = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : d));\n  const k8s = (cluster) => (cluster === 'nas' ? 'kubernetes_nas_mcp' : cluster === 'homelab' ? 'kubernetes_homelab_mcp' : null);\n  switch (name) {\n    case 'prometheus_query':\n      if (!a.query) return { refused: 'query is required' };\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'instant', endTime: 'now' } };\n    case 'prometheus_range': {\n      if (!a.query) return { refused: 'query is required' };\n      const minutes = clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_range_minutes, 60);\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'range',\n        startTime: `now-${minutes}m`, endTime: 'now', stepSeconds: clamp(a.step_seconds, 30, 3600, Math.max(60, minutes)) } };\n    }\n    case 'loki_query': {\n      const selector = String(a.query || '').split('}')[0];\n      if (!SELECTIVE_LABELS.test(selector)) return { refused: 'the stream selector must pin namespace, host, pod, app, job, container, systemd_unit or syslog_identifier with an exact match' };\n      return { server_id: 'grafana_mcp', name: 'query_loki_logs', arguments: { datasourceUid: cfg.loki_uid, logql: a.query,\n        startRfc3339: minutesAgo(clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_loki_minutes, 60)), limit: clamp(a.limit, 1, 100, 50) } };\n    }\n    case 'k8s_get':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'resources_get', arguments: { apiVersion: a.apiVersion, kind: a.kind, name: a.name, ...(a.namespace ? { namespace: a.namespace } : {}) } };\n    case 'k8s_list': {\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace && !CLUSTER_SCOPED.has(a.kind)) return { refused: 'a namespace is required' };\n      if (!a.labelSelector && !a.fieldSelector) return { refused: 'a labelSelector or fieldSelector is required; unbounded lists are not allowed' };\n      const args = { apiVersion: a.apiVersion, kind: a.kind };\n      for (const k of ['namespace', 'labelSelector', 'fieldSelector']) if (a[k]) args[k] = a[k];\n      return { server_id: k8s(a.cluster), name: 'resources_list', arguments: args };\n    }\n    case 'k8s_events':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace) return { refused: 'a namespace is required' };\n      return { server_id: k8s(a.cluster), name: 'events_list', arguments: { namespace: a.namespace } };\n    case 'pod_logs':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'pods_log', arguments: { namespace: a.namespace, name: a.name,\n        tail: clamp(a.tail, 1, DIAGNOSIS_LIMITS.max_log_lines, 100), ...(a.container ? { container: a.container } : {}) } };\n    default:\n      return { refused: `unknown tool ${name}` };\n  }\n}\n\nconst OUTPUT_SHAPE = `{\"summary\": \"one line\",\n \"impact\": {\"capabilities\": [\"...\"], \"blast_radius\": \"...\"},\n \"root_cause\": {\"statement\": \"...\", \"confidence\": \"confirmed|likely|unknown\", \"capability\": \"...\"},\n \"evidence\": [{\"call_id\": \"<id of the tool call>\", \"tool\": \"<tool name>\", \"args\": \"...\", \"excerpt\": \"<text copied exactly from that call's result>\", \"kind\": \"observed|inferred\"}],\n \"ruled_out\": [{\"hypothesis\": \"...\", \"refuted_by\": \"...\"}],\n \"unexplained_alerts\": [\"...\"],\n \"fix\": {\"where\": \"repository and path, or the object to change\", \"steps\": [\"...\"], \"is_manifest_change\": true},\n \"verify_after_fix\": \"...\"}`;\n\nfunction prepare({ cfg, issue, issues, events, playbooks, nowIso, maxToolCalls }) {\n  const open = issues.filter((r) => r.status === 'open' && r.fingerprint !== issue.fingerprint);\n  const attached = open.filter((r) => r.root_cause_fp === issue.fingerprint);\n  const sameArea = open.filter((r) => r.cluster === issue.cluster && r.root_cause_fp !== issue.fingerprint\n    && (r.capability === issue.capability || (issue.subject && r.subject === issue.subject))).slice(0, 15);\n  const upstream = Object.entries(cfg.dependencies || {}).filter(([, downs]) => downs.includes(issue.capability)).map(([u]) => u);\n  const upstreamStatus = upstream.map((u) => `${u}: ${open.some((r) => r.cluster === issue.cluster && r.capability === u) ? 'FIRING' : 'not firing'}`);\n  const brief = (r) => ({ tier: r.tier, alertname: r.alertname, title: r.title, subject: r.subject, severity: r.severity,\n    first_seen: r.first_seen, labels: JSON.parse(r.labels_json || '{}'), annotations: JSON.parse(r.annotations_json || '{}') });\n  const pack = {\n    issue: { ...brief(issue), capability: issue.capability, cluster: issue.cluster, status: issue.status, recurrences: issue.recurrences },\n    attached_downstream_issues: attached.map(brief),\n    other_open_issues_same_area: sameArea.map(brief),\n    upstream_capabilities: upstreamStatus,\n    history: events.slice(-20).map((e) => `${e.ts} ${e.transition} ${e.detail}`),\n  };\n  const playbook = playbooks[issue.capability] || playbooks.default;\n  const system = [\n    'You diagnose one problem in a two-cluster Kubernetes homelab (clusters homelab and nas). You have read-only tools.',\n    'The alerting system has already decided this problem is real. Your job is only to find why, and how to fix it.',\n    `Budget: at most ${maxToolCalls} tool calls. Results longer than about 4k tokens are cut. Lists need a namespace and a selector.`,\n    'Method: 1) state 1 to 4 hypotheses, each with what it predicts and the single most discriminating tool call;',\n    '2) run the most discriminating call first and update; 3) before calling anything \"confirmed\", run two checks as tool calls:',\n    'something the hypothesis must leave behind is present, and something that would be seen if it were false is absent.',\n    'Stop at a confirmed hypothesis, when the cause is in another capability, or when two calls in a row add nothing.',\n    'Evidence: cite the call_id of the tool call and copy the excerpt exactly from its result. Anything not from a tool result is kind \"inferred\".',\n    `Answer with JSON only, no prose and no code fence, in this shape:\\n${OUTPUT_SHAPE}`,\n    `Playbook for ${issue.capability || 'this alert'}:\\n${playbook}`,\n  ].join('\\n');\n  return {\n    model: cfg.model, fallbacks: cfg.fallbacks,\n    messages: [{ role: 'system', content: system }, { role: 'user', content: `Evidence pack:\\n${JSON.stringify(pack, null, 1)}` }],\n    calls: 0, max_tool_calls: maxToolCalls, tokens_in: 0, tokens_out: 0, turns: 0, started: nowIso,\n    log: [], final_turn: false, end_reason: '',\n  };\n}\n\nfunction step(state, resp, nowIso, cfg) {\n  const s = JSON.parse(JSON.stringify(state));\n  const done = (reason, content) => ({ kind: 'done', state: { ...s, end_reason: reason }, content: content || '' });\n  if (!resp || resp.error || !Array.isArray(resp.choices)) {\n    return done('error', `model call failed: ${JSON.stringify((resp && resp.error) || resp).slice(0, 300)}`);\n  }\n  s.turns += 1;\n  s.tokens_in += (resp.usage && resp.usage.prompt_tokens) || 0;\n  s.tokens_out += (resp.usage && resp.usage.completion_tokens) || 0;\n  const msg = resp.choices[0].message || {};\n  const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];\n  if (!calls.length) return done(s.final_turn ? s.end_reason || 'budget' : 'answered', msg.content || '');\n  s.messages.push({ role: 'assistant', content: msg.content || null, tool_calls: calls });\n  if (s.tokens_in > DIAGNOSIS_LIMITS.max_input_tokens) return done('token budget');\n  if (DateTime.fromISO(nowIso).diff(DateTime.fromISO(s.started), 'seconds').seconds > DIAGNOSIS_LIMITS.max_seconds) return done('time budget');\n  if (s.turns >= DIAGNOSIS_LIMITS.max_turns || s.final_turn) return done(s.end_reason || 'turn budget');\n  const run = [];\n  for (const c of calls) {\n    let args = {};\n    try { args = JSON.parse(c.function.arguments || '{}'); } catch (e) { args = null; }\n    let reply = null;\n    if (args === null) reply = 'refused: arguments are not valid JSON';\n    else if (s.calls >= s.max_tool_calls) { reply = 'refused: tool call budget exhausted'; s.end_reason = 'tool call budget'; }\n    else {\n      const mcp = toMcp(c.function.name, args, cfg, nowIso);\n      if (mcp.refused) reply = `refused: ${mcp.refused}`;\n      else {\n        s.calls += 1;\n        run.push({ call_id: c.id, tool: c.function.name, args, mcp });\n      }\n    }\n    if (reply) {\n      s.messages.push({ role: 'tool', tool_call_id: c.id, content: reply });\n      s.log.push({ call_id: c.id, tool: c.function.name, args, ok: false, text: reply });\n    }\n  }\n  if (s.end_reason === 'tool call budget' && !run.length) {\n    s.final_turn = true;\n    s.messages.push({ role: 'user', content: 'The tool budget is used up. Answer now with the JSON, from what you have.' });\n  }\n  return run.length ? { kind: 'tools', state: s, calls: run } : { kind: 'continue', state: s };\n}\n\nfunction mcpText(body) {\n  if (!body) return { ok: false, text: 'no response' };\n  if (body.error) return { ok: false, text: `error: ${String(body.error.message || JSON.stringify(body.error)).slice(0, 500)}` };\n  const content = Array.isArray(body) ? body : body.content;\n  const text = Array.isArray(content) ? content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\\n') : JSON.stringify(body);\n  return { ok: !body.isError, text: body.isError ? `error: ${text}` : text };\n}\n\nfunction toolResults(state, calls, bodies) {\n  const s = JSON.parse(JSON.stringify(state));\n  calls.forEach((c, i) => {\n    let { ok, text } = mcpText(bodies[i]);\n    if (text.length > DIAGNOSIS_LIMITS.max_result_chars) {\n      text = `${text.slice(0, DIAGNOSIS_LIMITS.max_result_chars)}\\n[cut: ${text.length - DIAGNOSIS_LIMITS.max_result_chars} more characters; narrow the query]`;\n    }\n    s.messages.push({ role: 'tool', tool_call_id: c.call_id, content: text });\n    s.log.push({ call_id: c.call_id, tool: c.tool, args: c.args, ok, text });\n  });\n  if (s.calls >= s.max_tool_calls) {\n    s.final_turn = true;\n    s.end_reason = 'tool call budget';\n    s.messages.push({ role: 'user', content: 'That was the last tool call allowed. Answer now with the JSON, from what you have.' });\n  }\n  return s;\n}\n\nconst norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();\n\nfunction validate(state, content) {\n  const out = { status: 'ok', problems: [] };\n  let d = null;\n  const raw = String(content || '').trim().replace(/^```(json)?\\s*/, '').replace(/```$/, '');\n  try { d = JSON.parse(raw); } catch (e) { out.problems.push('answer is not JSON'); }\n  const isStr = (v) => typeof v === 'string' && v.length > 0;\n  if (d) {\n    if (!isStr(d.summary)) out.problems.push('summary missing');\n    if (!d.root_cause || !isStr(d.root_cause.statement)) out.problems.push('root_cause.statement missing');\n    if (!d.root_cause || !CONFIDENCE.includes(d.root_cause.confidence)) out.problems.push('root_cause.confidence invalid');\n    if (!Array.isArray(d.evidence)) out.problems.push('evidence is not a list');\n    if (!d.fix || !Array.isArray(d.fix.steps)) out.problems.push('fix.steps is not a list');\n  }\n  if (!d || out.problems.length) {\n    const status = state.end_reason === 'answered' ? 'invalid' : state.end_reason === 'error' ? 'error' : 'inconclusive';\n    const summary = { invalid: 'Diagnosis output failed validation', error: `Diagnosis failed: ${raw.slice(0, 200)}`,\n      inconclusive: `Inconclusive: ${state.end_reason}` }[status];\n    return { status, diagnosis: {\n      summary,\n      root_cause: { statement: '', confidence: 'unknown', capability: '' }, evidence: [], ruled_out: [], unexplained_alerts: [],\n      fix: { where: '', steps: [], is_manifest_change: false }, verify_after_fix: '',\n      validation: out.problems, raw: raw.slice(0, 2000), tokens: { in: state.tokens_in, out: state.tokens_out },\n      tool_calls: state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok })) } };\n  }\n  const byId = new Map(state.log.filter((l) => l.ok).map((l) => [l.call_id, l]));\n  d.evidence = d.evidence.slice(0, 20).map((e) => {\n    const call = byId.get(e && e.call_id);\n    const quoted = call && norm(e.excerpt).length >= 3 && norm(call.text).includes(norm(e.excerpt));\n    const ev = { call_id: String((e && e.call_id) || ''), tool: call ? call.tool : String((e && e.tool) || ''),\n      args: call ? JSON.stringify(call.args) : String((e && e.args) || ''), excerpt: String((e && e.excerpt) || '').slice(0, 600),\n      kind: quoted ? 'observed' : 'inferred' };\n    if (!quoted && e && e.kind === 'observed') {\n      ev.note = call ? 'downgraded: excerpt not found in that call\\'s result' : 'downgraded: no tool call with that id ran';\n    }\n    return ev;\n  });\n  const observed = d.evidence.filter((e) => e.kind === 'observed').length;\n  let status = 'ok';\n  if (state.end_reason !== 'answered') {\n    status = 'inconclusive';\n    d.root_cause.confidence = 'unknown';\n    d.summary = `Inconclusive (${state.end_reason}): ${d.summary}`;\n  } else if (d.root_cause.confidence === 'confirmed' && observed === 0) {\n    d.root_cause.confidence = 'likely';\n    d.root_cause.note = 'downgraded from confirmed: no evidence item quotes a tool result';\n  }\n  d.tokens = { in: state.tokens_in, out: state.tokens_out };\n  d.tool_calls = state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok }));\n  return { status, diagnosis: d };\n}\n\n\nconst input = $('Diagnose Request').first().json;\nconst cfg = { ...$('Settings').first().json, dependencies: JSON.parse(input.dependencies_json || '{}') };\nconst issues = $('Get Issues').all().map((i) => i.json).filter((r) => r.fingerprint);\nconst issue = issues.find((r) => r.fingerprint === input.fingerprint);\nif (!issue) return [{ json: { kind: 'missing', fingerprint: input.fingerprint } }];\nconst events = $('Get Events').all().map((i) => i.json).filter((e) => e.fingerprint === issue.fingerprint);\nconst maxToolCalls = Math.max(1, Math.min(DIAGNOSIS_LIMITS.max_tool_calls, Number(input.max_tool_calls) || DIAGNOSIS_LIMITS.max_tool_calls));\nconst state = prepare({ cfg, issue, issues, events, playbooks: $('Playbooks').first().json.playbooks,\n  nowIso: DateTime.now().toUTC().toISO(), maxToolCalls });\nstate.tools = TOOLS;\nstate.signature = issue.signature;\nreturn [{ json: { kind: 'start', state } }];\n"
+      },
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070006"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.kind }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "start",
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-00090040"
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "name": "Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1150,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070007"
+    },
+    {
+      "parameters": {},
+      "name": "Next Turn",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070008"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.litellm_url }}/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.state.model, fallbacks: $json.state.fallbacks, messages: $json.state.messages, temperature: 0, ...($json.state.final_turn ? {} : { tools: $json.state.tools }) }) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "name": "Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "litellm-health-triage",
+          "name": "LiteLLM Health Triage"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070009"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health diagnosis: an LLM investigates one issue through read-only tools under hard budgets that\n// this code enforces. The LLM never decides whether something is wrong or who is told; it explains\n// why, and every claim it makes is checked against the tool calls that actually ran.\n\nconst DIAGNOSIS_LIMITS = {\n  max_tool_calls: 8, max_input_tokens: 120000, max_seconds: 300, max_result_chars: 16000,\n  max_turns: 12, max_loki_minutes: 720, max_range_minutes: 360, max_log_lines: 200,\n};\nconst CONFIDENCE = ['confirmed', 'likely', 'unknown'];\n\nconst TOOLS = [\n  ['prometheus_query', 'Instant PromQL query against the homelab Prometheus (both clusters; nas series carry k8s_cluster=\"nas\").',\n    { query: { type: 'string' } }, ['query']],\n  ['prometheus_range', 'Range PromQL query. minutes <= 360.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, step_seconds: { type: 'integer' } }, ['query', 'minutes']],\n  ['loki_query', 'LogQL query over the last `minutes` (<= 720), at most `limit` (<= 100) lines. The stream selector must pin namespace, host, pod, app, job, systemd_unit or syslog_identifier with an exact match.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, limit: { type: 'integer' } }, ['query', 'minutes']],\n  ['k8s_get', 'Get one Kubernetes object.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, name: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind', 'name']],\n  ['k8s_list', 'List Kubernetes objects. Requires a namespace (except for cluster-scoped kinds) and a labelSelector or fieldSelector.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, labelSelector: { type: 'string' }, fieldSelector: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind']],\n  ['k8s_events', 'Kubernetes events in one namespace.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' } }, ['cluster', 'namespace']],\n  ['pod_logs', 'Last lines (tail <= 200) of one container of one pod.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' }, name: { type: 'string' }, container: { type: 'string' }, tail: { type: 'integer' } },\n    ['cluster', 'namespace', 'name']],\n].map(([name, description, properties, required]) => ({\n  type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } },\n}));\n\nconst CLUSTER_SCOPED = new Set(['Node', 'Namespace', 'PersistentVolume', 'StorageClass', 'ClusterRole', 'ClusterRoleBinding',\n  'CustomResourceDefinition', 'IngressClass', 'PriorityClass']);\nconst SELECTIVE_LABELS = /(namespace|host|pod|app|job|systemd_unit|syslog_identifier|container)\\s*=\\s*\"[^\"*]+\"/;\n\n// Maps a model-facing call to an MCP call through LiteLLM, or refuses it with a reason the model sees.\nfunction toMcp(name, a, cfg, nowIso) {\n  const minutesAgo = (m) => DateTime.fromISO(nowIso).minus({ minutes: m }).toUTC().toISO();\n  const clamp = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : d));\n  const k8s = (cluster) => (cluster === 'nas' ? 'kubernetes_nas_mcp' : cluster === 'homelab' ? 'kubernetes_homelab_mcp' : null);\n  switch (name) {\n    case 'prometheus_query':\n      if (!a.query) return { refused: 'query is required' };\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'instant', endTime: 'now' } };\n    case 'prometheus_range': {\n      if (!a.query) return { refused: 'query is required' };\n      const minutes = clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_range_minutes, 60);\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'range',\n        startTime: `now-${minutes}m`, endTime: 'now', stepSeconds: clamp(a.step_seconds, 30, 3600, Math.max(60, minutes)) } };\n    }\n    case 'loki_query': {\n      const selector = String(a.query || '').split('}')[0];\n      if (!SELECTIVE_LABELS.test(selector)) return { refused: 'the stream selector must pin namespace, host, pod, app, job, container, systemd_unit or syslog_identifier with an exact match' };\n      return { server_id: 'grafana_mcp', name: 'query_loki_logs', arguments: { datasourceUid: cfg.loki_uid, logql: a.query,\n        startRfc3339: minutesAgo(clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_loki_minutes, 60)), limit: clamp(a.limit, 1, 100, 50) } };\n    }\n    case 'k8s_get':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'resources_get', arguments: { apiVersion: a.apiVersion, kind: a.kind, name: a.name, ...(a.namespace ? { namespace: a.namespace } : {}) } };\n    case 'k8s_list': {\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace && !CLUSTER_SCOPED.has(a.kind)) return { refused: 'a namespace is required' };\n      if (!a.labelSelector && !a.fieldSelector) return { refused: 'a labelSelector or fieldSelector is required; unbounded lists are not allowed' };\n      const args = { apiVersion: a.apiVersion, kind: a.kind };\n      for (const k of ['namespace', 'labelSelector', 'fieldSelector']) if (a[k]) args[k] = a[k];\n      return { server_id: k8s(a.cluster), name: 'resources_list', arguments: args };\n    }\n    case 'k8s_events':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace) return { refused: 'a namespace is required' };\n      return { server_id: k8s(a.cluster), name: 'events_list', arguments: { namespace: a.namespace } };\n    case 'pod_logs':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'pods_log', arguments: { namespace: a.namespace, name: a.name,\n        tail: clamp(a.tail, 1, DIAGNOSIS_LIMITS.max_log_lines, 100), ...(a.container ? { container: a.container } : {}) } };\n    default:\n      return { refused: `unknown tool ${name}` };\n  }\n}\n\nconst OUTPUT_SHAPE = `{\"summary\": \"one line\",\n \"impact\": {\"capabilities\": [\"...\"], \"blast_radius\": \"...\"},\n \"root_cause\": {\"statement\": \"...\", \"confidence\": \"confirmed|likely|unknown\", \"capability\": \"...\"},\n \"evidence\": [{\"call_id\": \"<id of the tool call>\", \"tool\": \"<tool name>\", \"args\": \"...\", \"excerpt\": \"<text copied exactly from that call's result>\", \"kind\": \"observed|inferred\"}],\n \"ruled_out\": [{\"hypothesis\": \"...\", \"refuted_by\": \"...\"}],\n \"unexplained_alerts\": [\"...\"],\n \"fix\": {\"where\": \"repository and path, or the object to change\", \"steps\": [\"...\"], \"is_manifest_change\": true},\n \"verify_after_fix\": \"...\"}`;\n\nfunction prepare({ cfg, issue, issues, events, playbooks, nowIso, maxToolCalls }) {\n  const open = issues.filter((r) => r.status === 'open' && r.fingerprint !== issue.fingerprint);\n  const attached = open.filter((r) => r.root_cause_fp === issue.fingerprint);\n  const sameArea = open.filter((r) => r.cluster === issue.cluster && r.root_cause_fp !== issue.fingerprint\n    && (r.capability === issue.capability || (issue.subject && r.subject === issue.subject))).slice(0, 15);\n  const upstream = Object.entries(cfg.dependencies || {}).filter(([, downs]) => downs.includes(issue.capability)).map(([u]) => u);\n  const upstreamStatus = upstream.map((u) => `${u}: ${open.some((r) => r.cluster === issue.cluster && r.capability === u) ? 'FIRING' : 'not firing'}`);\n  const brief = (r) => ({ tier: r.tier, alertname: r.alertname, title: r.title, subject: r.subject, severity: r.severity,\n    first_seen: r.first_seen, labels: JSON.parse(r.labels_json || '{}'), annotations: JSON.parse(r.annotations_json || '{}') });\n  const pack = {\n    issue: { ...brief(issue), capability: issue.capability, cluster: issue.cluster, status: issue.status, recurrences: issue.recurrences },\n    attached_downstream_issues: attached.map(brief),\n    other_open_issues_same_area: sameArea.map(brief),\n    upstream_capabilities: upstreamStatus,\n    history: events.slice(-20).map((e) => `${e.ts} ${e.transition} ${e.detail}`),\n  };\n  const playbook = playbooks[issue.capability] || playbooks.default;\n  const system = [\n    'You diagnose one problem in a two-cluster Kubernetes homelab (clusters homelab and nas). You have read-only tools.',\n    'The alerting system has already decided this problem is real. Your job is only to find why, and how to fix it.',\n    `Budget: at most ${maxToolCalls} tool calls. Results longer than about 4k tokens are cut. Lists need a namespace and a selector.`,\n    'Method: 1) state 1 to 4 hypotheses, each with what it predicts and the single most discriminating tool call;',\n    '2) run the most discriminating call first and update; 3) before calling anything \"confirmed\", run two checks as tool calls:',\n    'something the hypothesis must leave behind is present, and something that would be seen if it were false is absent.',\n    'Stop at a confirmed hypothesis, when the cause is in another capability, or when two calls in a row add nothing.',\n    'Evidence: cite the call_id of the tool call and copy the excerpt exactly from its result. Anything not from a tool result is kind \"inferred\".',\n    `Answer with JSON only, no prose and no code fence, in this shape:\\n${OUTPUT_SHAPE}`,\n    `Playbook for ${issue.capability || 'this alert'}:\\n${playbook}`,\n  ].join('\\n');\n  return {\n    model: cfg.model, fallbacks: cfg.fallbacks,\n    messages: [{ role: 'system', content: system }, { role: 'user', content: `Evidence pack:\\n${JSON.stringify(pack, null, 1)}` }],\n    calls: 0, max_tool_calls: maxToolCalls, tokens_in: 0, tokens_out: 0, turns: 0, started: nowIso,\n    log: [], final_turn: false, end_reason: '',\n  };\n}\n\nfunction step(state, resp, nowIso, cfg) {\n  const s = JSON.parse(JSON.stringify(state));\n  const done = (reason, content) => ({ kind: 'done', state: { ...s, end_reason: reason }, content: content || '' });\n  if (!resp || resp.error || !Array.isArray(resp.choices)) {\n    return done('error', `model call failed: ${JSON.stringify((resp && resp.error) || resp).slice(0, 300)}`);\n  }\n  s.turns += 1;\n  s.tokens_in += (resp.usage && resp.usage.prompt_tokens) || 0;\n  s.tokens_out += (resp.usage && resp.usage.completion_tokens) || 0;\n  const msg = resp.choices[0].message || {};\n  const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];\n  if (!calls.length) return done(s.final_turn ? s.end_reason || 'budget' : 'answered', msg.content || '');\n  s.messages.push({ role: 'assistant', content: msg.content || null, tool_calls: calls });\n  if (s.tokens_in > DIAGNOSIS_LIMITS.max_input_tokens) return done('token budget');\n  if (DateTime.fromISO(nowIso).diff(DateTime.fromISO(s.started), 'seconds').seconds > DIAGNOSIS_LIMITS.max_seconds) return done('time budget');\n  if (s.turns >= DIAGNOSIS_LIMITS.max_turns || s.final_turn) return done(s.end_reason || 'turn budget');\n  const run = [];\n  for (const c of calls) {\n    let args = {};\n    try { args = JSON.parse(c.function.arguments || '{}'); } catch (e) { args = null; }\n    let reply = null;\n    if (args === null) reply = 'refused: arguments are not valid JSON';\n    else if (s.calls >= s.max_tool_calls) { reply = 'refused: tool call budget exhausted'; s.end_reason = 'tool call budget'; }\n    else {\n      const mcp = toMcp(c.function.name, args, cfg, nowIso);\n      if (mcp.refused) reply = `refused: ${mcp.refused}`;\n      else {\n        s.calls += 1;\n        run.push({ call_id: c.id, tool: c.function.name, args, mcp });\n      }\n    }\n    if (reply) {\n      s.messages.push({ role: 'tool', tool_call_id: c.id, content: reply });\n      s.log.push({ call_id: c.id, tool: c.function.name, args, ok: false, text: reply });\n    }\n  }\n  if (s.end_reason === 'tool call budget' && !run.length) {\n    s.final_turn = true;\n    s.messages.push({ role: 'user', content: 'The tool budget is used up. Answer now with the JSON, from what you have.' });\n  }\n  return run.length ? { kind: 'tools', state: s, calls: run } : { kind: 'continue', state: s };\n}\n\nfunction mcpText(body) {\n  if (!body) return { ok: false, text: 'no response' };\n  if (body.error) return { ok: false, text: `error: ${String(body.error.message || JSON.stringify(body.error)).slice(0, 500)}` };\n  const content = Array.isArray(body) ? body : body.content;\n  const text = Array.isArray(content) ? content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\\n') : JSON.stringify(body);\n  return { ok: !body.isError, text: body.isError ? `error: ${text}` : text };\n}\n\nfunction toolResults(state, calls, bodies) {\n  const s = JSON.parse(JSON.stringify(state));\n  calls.forEach((c, i) => {\n    let { ok, text } = mcpText(bodies[i]);\n    if (text.length > DIAGNOSIS_LIMITS.max_result_chars) {\n      text = `${text.slice(0, DIAGNOSIS_LIMITS.max_result_chars)}\\n[cut: ${text.length - DIAGNOSIS_LIMITS.max_result_chars} more characters; narrow the query]`;\n    }\n    s.messages.push({ role: 'tool', tool_call_id: c.call_id, content: text });\n    s.log.push({ call_id: c.call_id, tool: c.tool, args: c.args, ok, text });\n  });\n  if (s.calls >= s.max_tool_calls) {\n    s.final_turn = true;\n    s.end_reason = 'tool call budget';\n    s.messages.push({ role: 'user', content: 'That was the last tool call allowed. Answer now with the JSON, from what you have.' });\n  }\n  return s;\n}\n\nconst norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();\n\nfunction validate(state, content) {\n  const out = { status: 'ok', problems: [] };\n  let d = null;\n  const raw = String(content || '').trim().replace(/^```(json)?\\s*/, '').replace(/```$/, '');\n  try { d = JSON.parse(raw); } catch (e) { out.problems.push('answer is not JSON'); }\n  const isStr = (v) => typeof v === 'string' && v.length > 0;\n  if (d) {\n    if (!isStr(d.summary)) out.problems.push('summary missing');\n    if (!d.root_cause || !isStr(d.root_cause.statement)) out.problems.push('root_cause.statement missing');\n    if (!d.root_cause || !CONFIDENCE.includes(d.root_cause.confidence)) out.problems.push('root_cause.confidence invalid');\n    if (!Array.isArray(d.evidence)) out.problems.push('evidence is not a list');\n    if (!d.fix || !Array.isArray(d.fix.steps)) out.problems.push('fix.steps is not a list');\n  }\n  if (!d || out.problems.length) {\n    const status = state.end_reason === 'answered' ? 'invalid' : state.end_reason === 'error' ? 'error' : 'inconclusive';\n    const summary = { invalid: 'Diagnosis output failed validation', error: `Diagnosis failed: ${raw.slice(0, 200)}`,\n      inconclusive: `Inconclusive: ${state.end_reason}` }[status];\n    return { status, diagnosis: {\n      summary,\n      root_cause: { statement: '', confidence: 'unknown', capability: '' }, evidence: [], ruled_out: [], unexplained_alerts: [],\n      fix: { where: '', steps: [], is_manifest_change: false }, verify_after_fix: '',\n      validation: out.problems, raw: raw.slice(0, 2000), tokens: { in: state.tokens_in, out: state.tokens_out },\n      tool_calls: state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok })) } };\n  }\n  const byId = new Map(state.log.filter((l) => l.ok).map((l) => [l.call_id, l]));\n  d.evidence = d.evidence.slice(0, 20).map((e) => {\n    const call = byId.get(e && e.call_id);\n    const quoted = call && norm(e.excerpt).length >= 3 && norm(call.text).includes(norm(e.excerpt));\n    const ev = { call_id: String((e && e.call_id) || ''), tool: call ? call.tool : String((e && e.tool) || ''),\n      args: call ? JSON.stringify(call.args) : String((e && e.args) || ''), excerpt: String((e && e.excerpt) || '').slice(0, 600),\n      kind: quoted ? 'observed' : 'inferred' };\n    if (!quoted && e && e.kind === 'observed') {\n      ev.note = call ? 'downgraded: excerpt not found in that call\\'s result' : 'downgraded: no tool call with that id ran';\n    }\n    return ev;\n  });\n  const observed = d.evidence.filter((e) => e.kind === 'observed').length;\n  let status = 'ok';\n  if (state.end_reason !== 'answered') {\n    status = 'inconclusive';\n    d.root_cause.confidence = 'unknown';\n    d.summary = `Inconclusive (${state.end_reason}): ${d.summary}`;\n  } else if (d.root_cause.confidence === 'confirmed' && observed === 0) {\n    d.root_cause.confidence = 'likely';\n    d.root_cause.note = 'downgraded from confirmed: no evidence item quotes a tool result';\n  }\n  d.tokens = { in: state.tokens_in, out: state.tokens_out };\n  d.tool_calls = state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok }));\n  return { status, diagnosis: d };\n}\n\n\n// The state sent to the model is the input of this loop turn.\nconst state = $('Next Turn').first().json.state;\nconst r = step(state, $input.first().json, DateTime.now().toUTC().toISO(), $('Settings').first().json);\n// The request body is built here: n8n expressions refuse to read a property named `arguments`.\nif (r.kind === 'tools') {\n  return r.calls.map((call) => ({ json: { kind: 'tools', call, state: r.state,\n    body: JSON.stringify({ server_id: call.mcp.server_id, name: call.mcp.name, arguments: call.mcp.arguments }) } }));\n}\nreturn [{ json: r }];\n"
+      },
+      "name": "Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        300
+      ],
+      "notes": "Counts tokens and tool calls, refuses unbounded calls, and ends the loop on any budget.",
+      "notesInFlow": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070010"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "5f6a1e10-1a2b-4c3d-9e0f-00090900",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "tools",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "tools"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "5f6a1e10-1a2b-4c3d-9e0f-00090901",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "continue",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "continue"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "5f6a1e10-1a2b-4c3d-9e0f-00090902",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "done",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "done"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1900,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070011"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.litellm_url }}/mcp-rest/tools/call",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "MCP Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2100,
+        150
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "litellm-health-triage",
+          "name": "LiteLLM Health Triage"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Read-only MCP servers through LiteLLM, scoped by the health-triage virtual key.",
+      "notesInFlow": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070012"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health diagnosis: an LLM investigates one issue through read-only tools under hard budgets that\n// this code enforces. The LLM never decides whether something is wrong or who is told; it explains\n// why, and every claim it makes is checked against the tool calls that actually ran.\n\nconst DIAGNOSIS_LIMITS = {\n  max_tool_calls: 8, max_input_tokens: 120000, max_seconds: 300, max_result_chars: 16000,\n  max_turns: 12, max_loki_minutes: 720, max_range_minutes: 360, max_log_lines: 200,\n};\nconst CONFIDENCE = ['confirmed', 'likely', 'unknown'];\n\nconst TOOLS = [\n  ['prometheus_query', 'Instant PromQL query against the homelab Prometheus (both clusters; nas series carry k8s_cluster=\"nas\").',\n    { query: { type: 'string' } }, ['query']],\n  ['prometheus_range', 'Range PromQL query. minutes <= 360.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, step_seconds: { type: 'integer' } }, ['query', 'minutes']],\n  ['loki_query', 'LogQL query over the last `minutes` (<= 720), at most `limit` (<= 100) lines. The stream selector must pin namespace, host, pod, app, job, systemd_unit or syslog_identifier with an exact match.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, limit: { type: 'integer' } }, ['query', 'minutes']],\n  ['k8s_get', 'Get one Kubernetes object.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, name: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind', 'name']],\n  ['k8s_list', 'List Kubernetes objects. Requires a namespace (except for cluster-scoped kinds) and a labelSelector or fieldSelector.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, labelSelector: { type: 'string' }, fieldSelector: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind']],\n  ['k8s_events', 'Kubernetes events in one namespace.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' } }, ['cluster', 'namespace']],\n  ['pod_logs', 'Last lines (tail <= 200) of one container of one pod.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' }, name: { type: 'string' }, container: { type: 'string' }, tail: { type: 'integer' } },\n    ['cluster', 'namespace', 'name']],\n].map(([name, description, properties, required]) => ({\n  type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } },\n}));\n\nconst CLUSTER_SCOPED = new Set(['Node', 'Namespace', 'PersistentVolume', 'StorageClass', 'ClusterRole', 'ClusterRoleBinding',\n  'CustomResourceDefinition', 'IngressClass', 'PriorityClass']);\nconst SELECTIVE_LABELS = /(namespace|host|pod|app|job|systemd_unit|syslog_identifier|container)\\s*=\\s*\"[^\"*]+\"/;\n\n// Maps a model-facing call to an MCP call through LiteLLM, or refuses it with a reason the model sees.\nfunction toMcp(name, a, cfg, nowIso) {\n  const minutesAgo = (m) => DateTime.fromISO(nowIso).minus({ minutes: m }).toUTC().toISO();\n  const clamp = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : d));\n  const k8s = (cluster) => (cluster === 'nas' ? 'kubernetes_nas_mcp' : cluster === 'homelab' ? 'kubernetes_homelab_mcp' : null);\n  switch (name) {\n    case 'prometheus_query':\n      if (!a.query) return { refused: 'query is required' };\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'instant', endTime: 'now' } };\n    case 'prometheus_range': {\n      if (!a.query) return { refused: 'query is required' };\n      const minutes = clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_range_minutes, 60);\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'range',\n        startTime: `now-${minutes}m`, endTime: 'now', stepSeconds: clamp(a.step_seconds, 30, 3600, Math.max(60, minutes)) } };\n    }\n    case 'loki_query': {\n      const selector = String(a.query || '').split('}')[0];\n      if (!SELECTIVE_LABELS.test(selector)) return { refused: 'the stream selector must pin namespace, host, pod, app, job, container, systemd_unit or syslog_identifier with an exact match' };\n      return { server_id: 'grafana_mcp', name: 'query_loki_logs', arguments: { datasourceUid: cfg.loki_uid, logql: a.query,\n        startRfc3339: minutesAgo(clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_loki_minutes, 60)), limit: clamp(a.limit, 1, 100, 50) } };\n    }\n    case 'k8s_get':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'resources_get', arguments: { apiVersion: a.apiVersion, kind: a.kind, name: a.name, ...(a.namespace ? { namespace: a.namespace } : {}) } };\n    case 'k8s_list': {\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace && !CLUSTER_SCOPED.has(a.kind)) return { refused: 'a namespace is required' };\n      if (!a.labelSelector && !a.fieldSelector) return { refused: 'a labelSelector or fieldSelector is required; unbounded lists are not allowed' };\n      const args = { apiVersion: a.apiVersion, kind: a.kind };\n      for (const k of ['namespace', 'labelSelector', 'fieldSelector']) if (a[k]) args[k] = a[k];\n      return { server_id: k8s(a.cluster), name: 'resources_list', arguments: args };\n    }\n    case 'k8s_events':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace) return { refused: 'a namespace is required' };\n      return { server_id: k8s(a.cluster), name: 'events_list', arguments: { namespace: a.namespace } };\n    case 'pod_logs':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'pods_log', arguments: { namespace: a.namespace, name: a.name,\n        tail: clamp(a.tail, 1, DIAGNOSIS_LIMITS.max_log_lines, 100), ...(a.container ? { container: a.container } : {}) } };\n    default:\n      return { refused: `unknown tool ${name}` };\n  }\n}\n\nconst OUTPUT_SHAPE = `{\"summary\": \"one line\",\n \"impact\": {\"capabilities\": [\"...\"], \"blast_radius\": \"...\"},\n \"root_cause\": {\"statement\": \"...\", \"confidence\": \"confirmed|likely|unknown\", \"capability\": \"...\"},\n \"evidence\": [{\"call_id\": \"<id of the tool call>\", \"tool\": \"<tool name>\", \"args\": \"...\", \"excerpt\": \"<text copied exactly from that call's result>\", \"kind\": \"observed|inferred\"}],\n \"ruled_out\": [{\"hypothesis\": \"...\", \"refuted_by\": \"...\"}],\n \"unexplained_alerts\": [\"...\"],\n \"fix\": {\"where\": \"repository and path, or the object to change\", \"steps\": [\"...\"], \"is_manifest_change\": true},\n \"verify_after_fix\": \"...\"}`;\n\nfunction prepare({ cfg, issue, issues, events, playbooks, nowIso, maxToolCalls }) {\n  const open = issues.filter((r) => r.status === 'open' && r.fingerprint !== issue.fingerprint);\n  const attached = open.filter((r) => r.root_cause_fp === issue.fingerprint);\n  const sameArea = open.filter((r) => r.cluster === issue.cluster && r.root_cause_fp !== issue.fingerprint\n    && (r.capability === issue.capability || (issue.subject && r.subject === issue.subject))).slice(0, 15);\n  const upstream = Object.entries(cfg.dependencies || {}).filter(([, downs]) => downs.includes(issue.capability)).map(([u]) => u);\n  const upstreamStatus = upstream.map((u) => `${u}: ${open.some((r) => r.cluster === issue.cluster && r.capability === u) ? 'FIRING' : 'not firing'}`);\n  const brief = (r) => ({ tier: r.tier, alertname: r.alertname, title: r.title, subject: r.subject, severity: r.severity,\n    first_seen: r.first_seen, labels: JSON.parse(r.labels_json || '{}'), annotations: JSON.parse(r.annotations_json || '{}') });\n  const pack = {\n    issue: { ...brief(issue), capability: issue.capability, cluster: issue.cluster, status: issue.status, recurrences: issue.recurrences },\n    attached_downstream_issues: attached.map(brief),\n    other_open_issues_same_area: sameArea.map(brief),\n    upstream_capabilities: upstreamStatus,\n    history: events.slice(-20).map((e) => `${e.ts} ${e.transition} ${e.detail}`),\n  };\n  const playbook = playbooks[issue.capability] || playbooks.default;\n  const system = [\n    'You diagnose one problem in a two-cluster Kubernetes homelab (clusters homelab and nas). You have read-only tools.',\n    'The alerting system has already decided this problem is real. Your job is only to find why, and how to fix it.',\n    `Budget: at most ${maxToolCalls} tool calls. Results longer than about 4k tokens are cut. Lists need a namespace and a selector.`,\n    'Method: 1) state 1 to 4 hypotheses, each with what it predicts and the single most discriminating tool call;',\n    '2) run the most discriminating call first and update; 3) before calling anything \"confirmed\", run two checks as tool calls:',\n    'something the hypothesis must leave behind is present, and something that would be seen if it were false is absent.',\n    'Stop at a confirmed hypothesis, when the cause is in another capability, or when two calls in a row add nothing.',\n    'Evidence: cite the call_id of the tool call and copy the excerpt exactly from its result. Anything not from a tool result is kind \"inferred\".',\n    `Answer with JSON only, no prose and no code fence, in this shape:\\n${OUTPUT_SHAPE}`,\n    `Playbook for ${issue.capability || 'this alert'}:\\n${playbook}`,\n  ].join('\\n');\n  return {\n    model: cfg.model, fallbacks: cfg.fallbacks,\n    messages: [{ role: 'system', content: system }, { role: 'user', content: `Evidence pack:\\n${JSON.stringify(pack, null, 1)}` }],\n    calls: 0, max_tool_calls: maxToolCalls, tokens_in: 0, tokens_out: 0, turns: 0, started: nowIso,\n    log: [], final_turn: false, end_reason: '',\n  };\n}\n\nfunction step(state, resp, nowIso, cfg) {\n  const s = JSON.parse(JSON.stringify(state));\n  const done = (reason, content) => ({ kind: 'done', state: { ...s, end_reason: reason }, content: content || '' });\n  if (!resp || resp.error || !Array.isArray(resp.choices)) {\n    return done('error', `model call failed: ${JSON.stringify((resp && resp.error) || resp).slice(0, 300)}`);\n  }\n  s.turns += 1;\n  s.tokens_in += (resp.usage && resp.usage.prompt_tokens) || 0;\n  s.tokens_out += (resp.usage && resp.usage.completion_tokens) || 0;\n  const msg = resp.choices[0].message || {};\n  const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];\n  if (!calls.length) return done(s.final_turn ? s.end_reason || 'budget' : 'answered', msg.content || '');\n  s.messages.push({ role: 'assistant', content: msg.content || null, tool_calls: calls });\n  if (s.tokens_in > DIAGNOSIS_LIMITS.max_input_tokens) return done('token budget');\n  if (DateTime.fromISO(nowIso).diff(DateTime.fromISO(s.started), 'seconds').seconds > DIAGNOSIS_LIMITS.max_seconds) return done('time budget');\n  if (s.turns >= DIAGNOSIS_LIMITS.max_turns || s.final_turn) return done(s.end_reason || 'turn budget');\n  const run = [];\n  for (const c of calls) {\n    let args = {};\n    try { args = JSON.parse(c.function.arguments || '{}'); } catch (e) { args = null; }\n    let reply = null;\n    if (args === null) reply = 'refused: arguments are not valid JSON';\n    else if (s.calls >= s.max_tool_calls) { reply = 'refused: tool call budget exhausted'; s.end_reason = 'tool call budget'; }\n    else {\n      const mcp = toMcp(c.function.name, args, cfg, nowIso);\n      if (mcp.refused) reply = `refused: ${mcp.refused}`;\n      else {\n        s.calls += 1;\n        run.push({ call_id: c.id, tool: c.function.name, args, mcp });\n      }\n    }\n    if (reply) {\n      s.messages.push({ role: 'tool', tool_call_id: c.id, content: reply });\n      s.log.push({ call_id: c.id, tool: c.function.name, args, ok: false, text: reply });\n    }\n  }\n  if (s.end_reason === 'tool call budget' && !run.length) {\n    s.final_turn = true;\n    s.messages.push({ role: 'user', content: 'The tool budget is used up. Answer now with the JSON, from what you have.' });\n  }\n  return run.length ? { kind: 'tools', state: s, calls: run } : { kind: 'continue', state: s };\n}\n\nfunction mcpText(body) {\n  if (!body) return { ok: false, text: 'no response' };\n  if (body.error) return { ok: false, text: `error: ${String(body.error.message || JSON.stringify(body.error)).slice(0, 500)}` };\n  const content = Array.isArray(body) ? body : body.content;\n  const text = Array.isArray(content) ? content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\\n') : JSON.stringify(body);\n  return { ok: !body.isError, text: body.isError ? `error: ${text}` : text };\n}\n\nfunction toolResults(state, calls, bodies) {\n  const s = JSON.parse(JSON.stringify(state));\n  calls.forEach((c, i) => {\n    let { ok, text } = mcpText(bodies[i]);\n    if (text.length > DIAGNOSIS_LIMITS.max_result_chars) {\n      text = `${text.slice(0, DIAGNOSIS_LIMITS.max_result_chars)}\\n[cut: ${text.length - DIAGNOSIS_LIMITS.max_result_chars} more characters; narrow the query]`;\n    }\n    s.messages.push({ role: 'tool', tool_call_id: c.call_id, content: text });\n    s.log.push({ call_id: c.call_id, tool: c.tool, args: c.args, ok, text });\n  });\n  if (s.calls >= s.max_tool_calls) {\n    s.final_turn = true;\n    s.end_reason = 'tool call budget';\n    s.messages.push({ role: 'user', content: 'That was the last tool call allowed. Answer now with the JSON, from what you have.' });\n  }\n  return s;\n}\n\nconst norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();\n\nfunction validate(state, content) {\n  const out = { status: 'ok', problems: [] };\n  let d = null;\n  const raw = String(content || '').trim().replace(/^```(json)?\\s*/, '').replace(/```$/, '');\n  try { d = JSON.parse(raw); } catch (e) { out.problems.push('answer is not JSON'); }\n  const isStr = (v) => typeof v === 'string' && v.length > 0;\n  if (d) {\n    if (!isStr(d.summary)) out.problems.push('summary missing');\n    if (!d.root_cause || !isStr(d.root_cause.statement)) out.problems.push('root_cause.statement missing');\n    if (!d.root_cause || !CONFIDENCE.includes(d.root_cause.confidence)) out.problems.push('root_cause.confidence invalid');\n    if (!Array.isArray(d.evidence)) out.problems.push('evidence is not a list');\n    if (!d.fix || !Array.isArray(d.fix.steps)) out.problems.push('fix.steps is not a list');\n  }\n  if (!d || out.problems.length) {\n    const status = state.end_reason === 'answered' ? 'invalid' : state.end_reason === 'error' ? 'error' : 'inconclusive';\n    const summary = { invalid: 'Diagnosis output failed validation', error: `Diagnosis failed: ${raw.slice(0, 200)}`,\n      inconclusive: `Inconclusive: ${state.end_reason}` }[status];\n    return { status, diagnosis: {\n      summary,\n      root_cause: { statement: '', confidence: 'unknown', capability: '' }, evidence: [], ruled_out: [], unexplained_alerts: [],\n      fix: { where: '', steps: [], is_manifest_change: false }, verify_after_fix: '',\n      validation: out.problems, raw: raw.slice(0, 2000), tokens: { in: state.tokens_in, out: state.tokens_out },\n      tool_calls: state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok })) } };\n  }\n  const byId = new Map(state.log.filter((l) => l.ok).map((l) => [l.call_id, l]));\n  d.evidence = d.evidence.slice(0, 20).map((e) => {\n    const call = byId.get(e && e.call_id);\n    const quoted = call && norm(e.excerpt).length >= 3 && norm(call.text).includes(norm(e.excerpt));\n    const ev = { call_id: String((e && e.call_id) || ''), tool: call ? call.tool : String((e && e.tool) || ''),\n      args: call ? JSON.stringify(call.args) : String((e && e.args) || ''), excerpt: String((e && e.excerpt) || '').slice(0, 600),\n      kind: quoted ? 'observed' : 'inferred' };\n    if (!quoted && e && e.kind === 'observed') {\n      ev.note = call ? 'downgraded: excerpt not found in that call\\'s result' : 'downgraded: no tool call with that id ran';\n    }\n    return ev;\n  });\n  const observed = d.evidence.filter((e) => e.kind === 'observed').length;\n  let status = 'ok';\n  if (state.end_reason !== 'answered') {\n    status = 'inconclusive';\n    d.root_cause.confidence = 'unknown';\n    d.summary = `Inconclusive (${state.end_reason}): ${d.summary}`;\n  } else if (d.root_cause.confidence === 'confirmed' && observed === 0) {\n    d.root_cause.confidence = 'likely';\n    d.root_cause.note = 'downgraded from confirmed: no evidence item quotes a tool result';\n  }\n  d.tokens = { in: state.tokens_in, out: state.tokens_out };\n  d.tool_calls = state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok }));\n  return { status, diagnosis: d };\n}\n\n\nconst items = $('Route').all().map((i) => i.json).filter((j) => j.kind === 'tools');\nconst state = toolResults(items[0].state, items.map((j) => j.call), $input.all().map((i) => i.json));\nreturn [{ json: { kind: 'turn', state } }];\n"
+      },
+      "name": "Tool Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2300,
+        150
+      ],
+      "notes": "Cuts each result to about 4k tokens and records every call for the evidence check.",
+      "notesInFlow": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070013"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health diagnosis: an LLM investigates one issue through read-only tools under hard budgets that\n// this code enforces. The LLM never decides whether something is wrong or who is told; it explains\n// why, and every claim it makes is checked against the tool calls that actually ran.\n\nconst DIAGNOSIS_LIMITS = {\n  max_tool_calls: 8, max_input_tokens: 120000, max_seconds: 300, max_result_chars: 16000,\n  max_turns: 12, max_loki_minutes: 720, max_range_minutes: 360, max_log_lines: 200,\n};\nconst CONFIDENCE = ['confirmed', 'likely', 'unknown'];\n\nconst TOOLS = [\n  ['prometheus_query', 'Instant PromQL query against the homelab Prometheus (both clusters; nas series carry k8s_cluster=\"nas\").',\n    { query: { type: 'string' } }, ['query']],\n  ['prometheus_range', 'Range PromQL query. minutes <= 360.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, step_seconds: { type: 'integer' } }, ['query', 'minutes']],\n  ['loki_query', 'LogQL query over the last `minutes` (<= 720), at most `limit` (<= 100) lines. The stream selector must pin namespace, host, pod, app, job, systemd_unit or syslog_identifier with an exact match.',\n    { query: { type: 'string' }, minutes: { type: 'integer' }, limit: { type: 'integer' } }, ['query', 'minutes']],\n  ['k8s_get', 'Get one Kubernetes object.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, name: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind', 'name']],\n  ['k8s_list', 'List Kubernetes objects. Requires a namespace (except for cluster-scoped kinds) and a labelSelector or fieldSelector.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, apiVersion: { type: 'string' }, kind: { type: 'string' }, namespace: { type: 'string' }, labelSelector: { type: 'string' }, fieldSelector: { type: 'string' } },\n    ['cluster', 'apiVersion', 'kind']],\n  ['k8s_events', 'Kubernetes events in one namespace.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' } }, ['cluster', 'namespace']],\n  ['pod_logs', 'Last lines (tail <= 200) of one container of one pod.',\n    { cluster: { type: 'string', enum: ['homelab', 'nas'] }, namespace: { type: 'string' }, name: { type: 'string' }, container: { type: 'string' }, tail: { type: 'integer' } },\n    ['cluster', 'namespace', 'name']],\n].map(([name, description, properties, required]) => ({\n  type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } },\n}));\n\nconst CLUSTER_SCOPED = new Set(['Node', 'Namespace', 'PersistentVolume', 'StorageClass', 'ClusterRole', 'ClusterRoleBinding',\n  'CustomResourceDefinition', 'IngressClass', 'PriorityClass']);\nconst SELECTIVE_LABELS = /(namespace|host|pod|app|job|systemd_unit|syslog_identifier|container)\\s*=\\s*\"[^\"*]+\"/;\n\n// Maps a model-facing call to an MCP call through LiteLLM, or refuses it with a reason the model sees.\nfunction toMcp(name, a, cfg, nowIso) {\n  const minutesAgo = (m) => DateTime.fromISO(nowIso).minus({ minutes: m }).toUTC().toISO();\n  const clamp = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : d));\n  const k8s = (cluster) => (cluster === 'nas' ? 'kubernetes_nas_mcp' : cluster === 'homelab' ? 'kubernetes_homelab_mcp' : null);\n  switch (name) {\n    case 'prometheus_query':\n      if (!a.query) return { refused: 'query is required' };\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'instant', endTime: 'now' } };\n    case 'prometheus_range': {\n      if (!a.query) return { refused: 'query is required' };\n      const minutes = clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_range_minutes, 60);\n      return { server_id: 'grafana_mcp', name: 'query_prometheus', arguments: { datasourceUid: cfg.prometheus_uid, expr: a.query, queryType: 'range',\n        startTime: `now-${minutes}m`, endTime: 'now', stepSeconds: clamp(a.step_seconds, 30, 3600, Math.max(60, minutes)) } };\n    }\n    case 'loki_query': {\n      const selector = String(a.query || '').split('}')[0];\n      if (!SELECTIVE_LABELS.test(selector)) return { refused: 'the stream selector must pin namespace, host, pod, app, job, container, systemd_unit or syslog_identifier with an exact match' };\n      return { server_id: 'grafana_mcp', name: 'query_loki_logs', arguments: { datasourceUid: cfg.loki_uid, logql: a.query,\n        startRfc3339: minutesAgo(clamp(a.minutes, 1, DIAGNOSIS_LIMITS.max_loki_minutes, 60)), limit: clamp(a.limit, 1, 100, 50) } };\n    }\n    case 'k8s_get':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'resources_get', arguments: { apiVersion: a.apiVersion, kind: a.kind, name: a.name, ...(a.namespace ? { namespace: a.namespace } : {}) } };\n    case 'k8s_list': {\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace && !CLUSTER_SCOPED.has(a.kind)) return { refused: 'a namespace is required' };\n      if (!a.labelSelector && !a.fieldSelector) return { refused: 'a labelSelector or fieldSelector is required; unbounded lists are not allowed' };\n      const args = { apiVersion: a.apiVersion, kind: a.kind };\n      for (const k of ['namespace', 'labelSelector', 'fieldSelector']) if (a[k]) args[k] = a[k];\n      return { server_id: k8s(a.cluster), name: 'resources_list', arguments: args };\n    }\n    case 'k8s_events':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      if (!a.namespace) return { refused: 'a namespace is required' };\n      return { server_id: k8s(a.cluster), name: 'events_list', arguments: { namespace: a.namespace } };\n    case 'pod_logs':\n      if (!k8s(a.cluster)) return { refused: 'cluster must be homelab or nas' };\n      return { server_id: k8s(a.cluster), name: 'pods_log', arguments: { namespace: a.namespace, name: a.name,\n        tail: clamp(a.tail, 1, DIAGNOSIS_LIMITS.max_log_lines, 100), ...(a.container ? { container: a.container } : {}) } };\n    default:\n      return { refused: `unknown tool ${name}` };\n  }\n}\n\nconst OUTPUT_SHAPE = `{\"summary\": \"one line\",\n \"impact\": {\"capabilities\": [\"...\"], \"blast_radius\": \"...\"},\n \"root_cause\": {\"statement\": \"...\", \"confidence\": \"confirmed|likely|unknown\", \"capability\": \"...\"},\n \"evidence\": [{\"call_id\": \"<id of the tool call>\", \"tool\": \"<tool name>\", \"args\": \"...\", \"excerpt\": \"<text copied exactly from that call's result>\", \"kind\": \"observed|inferred\"}],\n \"ruled_out\": [{\"hypothesis\": \"...\", \"refuted_by\": \"...\"}],\n \"unexplained_alerts\": [\"...\"],\n \"fix\": {\"where\": \"repository and path, or the object to change\", \"steps\": [\"...\"], \"is_manifest_change\": true},\n \"verify_after_fix\": \"...\"}`;\n\nfunction prepare({ cfg, issue, issues, events, playbooks, nowIso, maxToolCalls }) {\n  const open = issues.filter((r) => r.status === 'open' && r.fingerprint !== issue.fingerprint);\n  const attached = open.filter((r) => r.root_cause_fp === issue.fingerprint);\n  const sameArea = open.filter((r) => r.cluster === issue.cluster && r.root_cause_fp !== issue.fingerprint\n    && (r.capability === issue.capability || (issue.subject && r.subject === issue.subject))).slice(0, 15);\n  const upstream = Object.entries(cfg.dependencies || {}).filter(([, downs]) => downs.includes(issue.capability)).map(([u]) => u);\n  const upstreamStatus = upstream.map((u) => `${u}: ${open.some((r) => r.cluster === issue.cluster && r.capability === u) ? 'FIRING' : 'not firing'}`);\n  const brief = (r) => ({ tier: r.tier, alertname: r.alertname, title: r.title, subject: r.subject, severity: r.severity,\n    first_seen: r.first_seen, labels: JSON.parse(r.labels_json || '{}'), annotations: JSON.parse(r.annotations_json || '{}') });\n  const pack = {\n    issue: { ...brief(issue), capability: issue.capability, cluster: issue.cluster, status: issue.status, recurrences: issue.recurrences },\n    attached_downstream_issues: attached.map(brief),\n    other_open_issues_same_area: sameArea.map(brief),\n    upstream_capabilities: upstreamStatus,\n    history: events.slice(-20).map((e) => `${e.ts} ${e.transition} ${e.detail}`),\n  };\n  const playbook = playbooks[issue.capability] || playbooks.default;\n  const system = [\n    'You diagnose one problem in a two-cluster Kubernetes homelab (clusters homelab and nas). You have read-only tools.',\n    'The alerting system has already decided this problem is real. Your job is only to find why, and how to fix it.',\n    `Budget: at most ${maxToolCalls} tool calls. Results longer than about 4k tokens are cut. Lists need a namespace and a selector.`,\n    'Method: 1) state 1 to 4 hypotheses, each with what it predicts and the single most discriminating tool call;',\n    '2) run the most discriminating call first and update; 3) before calling anything \"confirmed\", run two checks as tool calls:',\n    'something the hypothesis must leave behind is present, and something that would be seen if it were false is absent.',\n    'Stop at a confirmed hypothesis, when the cause is in another capability, or when two calls in a row add nothing.',\n    'Evidence: cite the call_id of the tool call and copy the excerpt exactly from its result. Anything not from a tool result is kind \"inferred\".',\n    `Answer with JSON only, no prose and no code fence, in this shape:\\n${OUTPUT_SHAPE}`,\n    `Playbook for ${issue.capability || 'this alert'}:\\n${playbook}`,\n  ].join('\\n');\n  return {\n    model: cfg.model, fallbacks: cfg.fallbacks,\n    messages: [{ role: 'system', content: system }, { role: 'user', content: `Evidence pack:\\n${JSON.stringify(pack, null, 1)}` }],\n    calls: 0, max_tool_calls: maxToolCalls, tokens_in: 0, tokens_out: 0, turns: 0, started: nowIso,\n    log: [], final_turn: false, end_reason: '',\n  };\n}\n\nfunction step(state, resp, nowIso, cfg) {\n  const s = JSON.parse(JSON.stringify(state));\n  const done = (reason, content) => ({ kind: 'done', state: { ...s, end_reason: reason }, content: content || '' });\n  if (!resp || resp.error || !Array.isArray(resp.choices)) {\n    return done('error', `model call failed: ${JSON.stringify((resp && resp.error) || resp).slice(0, 300)}`);\n  }\n  s.turns += 1;\n  s.tokens_in += (resp.usage && resp.usage.prompt_tokens) || 0;\n  s.tokens_out += (resp.usage && resp.usage.completion_tokens) || 0;\n  const msg = resp.choices[0].message || {};\n  const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];\n  if (!calls.length) return done(s.final_turn ? s.end_reason || 'budget' : 'answered', msg.content || '');\n  s.messages.push({ role: 'assistant', content: msg.content || null, tool_calls: calls });\n  if (s.tokens_in > DIAGNOSIS_LIMITS.max_input_tokens) return done('token budget');\n  if (DateTime.fromISO(nowIso).diff(DateTime.fromISO(s.started), 'seconds').seconds > DIAGNOSIS_LIMITS.max_seconds) return done('time budget');\n  if (s.turns >= DIAGNOSIS_LIMITS.max_turns || s.final_turn) return done(s.end_reason || 'turn budget');\n  const run = [];\n  for (const c of calls) {\n    let args = {};\n    try { args = JSON.parse(c.function.arguments || '{}'); } catch (e) { args = null; }\n    let reply = null;\n    if (args === null) reply = 'refused: arguments are not valid JSON';\n    else if (s.calls >= s.max_tool_calls) { reply = 'refused: tool call budget exhausted'; s.end_reason = 'tool call budget'; }\n    else {\n      const mcp = toMcp(c.function.name, args, cfg, nowIso);\n      if (mcp.refused) reply = `refused: ${mcp.refused}`;\n      else {\n        s.calls += 1;\n        run.push({ call_id: c.id, tool: c.function.name, args, mcp });\n      }\n    }\n    if (reply) {\n      s.messages.push({ role: 'tool', tool_call_id: c.id, content: reply });\n      s.log.push({ call_id: c.id, tool: c.function.name, args, ok: false, text: reply });\n    }\n  }\n  if (s.end_reason === 'tool call budget' && !run.length) {\n    s.final_turn = true;\n    s.messages.push({ role: 'user', content: 'The tool budget is used up. Answer now with the JSON, from what you have.' });\n  }\n  return run.length ? { kind: 'tools', state: s, calls: run } : { kind: 'continue', state: s };\n}\n\nfunction mcpText(body) {\n  if (!body) return { ok: false, text: 'no response' };\n  if (body.error) return { ok: false, text: `error: ${String(body.error.message || JSON.stringify(body.error)).slice(0, 500)}` };\n  const content = Array.isArray(body) ? body : body.content;\n  const text = Array.isArray(content) ? content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\\n') : JSON.stringify(body);\n  return { ok: !body.isError, text: body.isError ? `error: ${text}` : text };\n}\n\nfunction toolResults(state, calls, bodies) {\n  const s = JSON.parse(JSON.stringify(state));\n  calls.forEach((c, i) => {\n    let { ok, text } = mcpText(bodies[i]);\n    if (text.length > DIAGNOSIS_LIMITS.max_result_chars) {\n      text = `${text.slice(0, DIAGNOSIS_LIMITS.max_result_chars)}\\n[cut: ${text.length - DIAGNOSIS_LIMITS.max_result_chars} more characters; narrow the query]`;\n    }\n    s.messages.push({ role: 'tool', tool_call_id: c.call_id, content: text });\n    s.log.push({ call_id: c.call_id, tool: c.tool, args: c.args, ok, text });\n  });\n  if (s.calls >= s.max_tool_calls) {\n    s.final_turn = true;\n    s.end_reason = 'tool call budget';\n    s.messages.push({ role: 'user', content: 'That was the last tool call allowed. Answer now with the JSON, from what you have.' });\n  }\n  return s;\n}\n\nconst norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();\n\nfunction validate(state, content) {\n  const out = { status: 'ok', problems: [] };\n  let d = null;\n  const raw = String(content || '').trim().replace(/^```(json)?\\s*/, '').replace(/```$/, '');\n  try { d = JSON.parse(raw); } catch (e) { out.problems.push('answer is not JSON'); }\n  const isStr = (v) => typeof v === 'string' && v.length > 0;\n  if (d) {\n    if (!isStr(d.summary)) out.problems.push('summary missing');\n    if (!d.root_cause || !isStr(d.root_cause.statement)) out.problems.push('root_cause.statement missing');\n    if (!d.root_cause || !CONFIDENCE.includes(d.root_cause.confidence)) out.problems.push('root_cause.confidence invalid');\n    if (!Array.isArray(d.evidence)) out.problems.push('evidence is not a list');\n    if (!d.fix || !Array.isArray(d.fix.steps)) out.problems.push('fix.steps is not a list');\n  }\n  if (!d || out.problems.length) {\n    const status = state.end_reason === 'answered' ? 'invalid' : state.end_reason === 'error' ? 'error' : 'inconclusive';\n    const summary = { invalid: 'Diagnosis output failed validation', error: `Diagnosis failed: ${raw.slice(0, 200)}`,\n      inconclusive: `Inconclusive: ${state.end_reason}` }[status];\n    return { status, diagnosis: {\n      summary,\n      root_cause: { statement: '', confidence: 'unknown', capability: '' }, evidence: [], ruled_out: [], unexplained_alerts: [],\n      fix: { where: '', steps: [], is_manifest_change: false }, verify_after_fix: '',\n      validation: out.problems, raw: raw.slice(0, 2000), tokens: { in: state.tokens_in, out: state.tokens_out },\n      tool_calls: state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok })) } };\n  }\n  const byId = new Map(state.log.filter((l) => l.ok).map((l) => [l.call_id, l]));\n  d.evidence = d.evidence.slice(0, 20).map((e) => {\n    const call = byId.get(e && e.call_id);\n    const quoted = call && norm(e.excerpt).length >= 3 && norm(call.text).includes(norm(e.excerpt));\n    const ev = { call_id: String((e && e.call_id) || ''), tool: call ? call.tool : String((e && e.tool) || ''),\n      args: call ? JSON.stringify(call.args) : String((e && e.args) || ''), excerpt: String((e && e.excerpt) || '').slice(0, 600),\n      kind: quoted ? 'observed' : 'inferred' };\n    if (!quoted && e && e.kind === 'observed') {\n      ev.note = call ? 'downgraded: excerpt not found in that call\\'s result' : 'downgraded: no tool call with that id ran';\n    }\n    return ev;\n  });\n  const observed = d.evidence.filter((e) => e.kind === 'observed').length;\n  let status = 'ok';\n  if (state.end_reason !== 'answered') {\n    status = 'inconclusive';\n    d.root_cause.confidence = 'unknown';\n    d.summary = `Inconclusive (${state.end_reason}): ${d.summary}`;\n  } else if (d.root_cause.confidence === 'confirmed' && observed === 0) {\n    d.root_cause.confidence = 'likely';\n    d.root_cause.note = 'downgraded from confirmed: no evidence item quotes a tool result';\n  }\n  d.tokens = { in: state.tokens_in, out: state.tokens_out };\n  d.tool_calls = state.log.map((l) => ({ call_id: l.call_id, tool: l.tool, args: JSON.stringify(l.args), ok: l.ok }));\n  return { status, diagnosis: d };\n}\n\n\nconst r = $input.first().json;\nconst result = validate(r.state, r.content);\nreturn [{ json: { fingerprint: $('Diagnose Request').first().json.fingerprint, signature: r.state.signature,\n  status: result.status, diagnosis_json: JSON.stringify(result.diagnosis).slice(0, 60000),\n  summary: result.diagnosis.summary, at: DateTime.now().toUTC().toISO() } }];\n"
+      },
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        450
+      ],
+      "notes": "Schema check. Evidence that does not quote a tool result from this session becomes 'inferred'.",
+      "notesInFlow": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070014"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_issues"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "fingerprint",
+              "condition": "eq",
+              "keyValue": "={{ $json.fingerprint }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "diagnosis_json": "={{ $json.diagnosis_json }}",
+            "diagnosis_status": "={{ $json.status }}",
+            "diagnosis_signature": "={{ $json.signature }}",
+            "diagnosed_at": "={{ $json.at }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "name": "Save Diagnosis",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2300,
+        450
+      ],
+      "executeOnce": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070015"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_events"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ts": "={{ $('Validate').first().json.at }}",
+            "fingerprint": "={{ $('Validate').first().json.fingerprint }}",
+            "run_id": "={{ 'diagnose-' + $execution.id }}",
+            "transition": "diagnosed",
+            "detail": "={{ $('Validate').first().json.status + ': ' + $('Validate').first().json.summary }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "name": "Diagnosed Event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2500,
+        450
+      ],
+      "executeOnce": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00070016"
+    }
+  ],
+  "connections": {
+    "Diagnose Request": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Playbooks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playbooks": {
+      "main": [
+        [
+          {
+            "node": "Get Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Issues": {
+      "main": [
+        [
+          {
+            "node": "Get Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Events": {
+      "main": [
+        [
+          {
+            "node": "Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare": {
+      "main": [
+        [
+          {
+            "node": "Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Next Turn": {
+      "main": [
+        [
+          {
+            "node": "Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat": {
+      "main": [
+        [
+          {
+            "node": "Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Call": {
+      "main": [
+        [
+          {
+            "node": "Tool Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool Results": {
+      "main": [
+        [
+          {
+            "node": "Next Turn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Save Diagnosis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Diagnosis": {
+      "main": [
+        [
+          {
+            "node": "Diagnosed Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found": {
+      "main": [
+        [
+          {
+            "node": "Next Turn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "MCP Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Next Turn",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 300
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
