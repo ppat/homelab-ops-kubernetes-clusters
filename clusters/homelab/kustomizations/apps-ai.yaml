@@ -132,3 +132,32 @@ spec:
       kind: Deployment
       name: openclaw
       namespace: openclaw
+  # The Health Triage n8n workflow reads Alertmanager's API. n8n's SSRF protection refuses any
+  # in-cluster host not on this list, and the run would then report "alert pipeline blind". The
+  # module sets the list as a plain env value, so this repeats the module's entries: when the
+  # module's list changes, change this one with it.
+  # yamllint disable-line rule:indentation
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: n8n
+        namespace: n8n
+      spec:
+        template:
+          spec:
+            containers:
+            - name: n8n
+              env:
+              - name: N8N_SSRF_ALLOWED_HOSTNAMES
+                value: >-
+                  litellm.ai.svc.cluster.local,
+                  openclaw.openclaw.svc.cluster.local,
+                  smtp.${domain_name},
+                  kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: n8n
+      namespace: n8n
