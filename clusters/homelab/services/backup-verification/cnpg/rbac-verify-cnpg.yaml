@@ -1,0 +1,105 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verify-cnpg
+  namespace: backup-verification
+---
+# Create, inspect and delete recovery Clusters, and exec the content checks, in this
+# namespace only. Nothing here can create ExternalSecrets or read Secrets, which is what
+# keeps this namespace's entry in the ClusterSecretStore allowlist limited to what Flux
+# declares (cluster/secrets/bitwarden-secret-store.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: verify-cnpg
+  namespace: backup-verification
+rules:
+- apiGroups: [postgresql.cnpg.io]
+  resources: [clusters]
+  verbs: [get, list, create, patch, delete]
+- apiGroups: [barmancloud.cnpg.io]
+  resources: [objectstores]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [persistentvolumeclaims, pods]
+  verbs: [get, list]
+- apiGroups: [""]
+  resources: [pods/exec]
+  verbs: [create]
+- apiGroups: [""]
+  resources: [pods/log]
+  verbs: [get]
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: verify-cnpg
+  namespace: backup-verification
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: verify-cnpg
+subjects:
+- kind: ServiceAccount
+  name: verify-cnpg
+  namespace: backup-verification
+---
+# Read-only in each production namespace: find the Cluster that archives to the store (its
+# name changes with each database generation) and read the store's location.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: verify-cnpg-source
+  namespace: authentik
+rules:
+- apiGroups: [postgresql.cnpg.io]
+  resources: [clusters]
+  verbs: [list]
+- apiGroups: [barmancloud.cnpg.io]
+  resources: [objectstores]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: verify-cnpg-source
+  namespace: authentik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: verify-cnpg-source
+subjects:
+- kind: ServiceAccount
+  name: verify-cnpg
+  namespace: backup-verification
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: verify-cnpg-source
+  namespace: home-automation
+rules:
+- apiGroups: [postgresql.cnpg.io]
+  resources: [clusters]
+  verbs: [list]
+- apiGroups: [barmancloud.cnpg.io]
+  resources: [objectstores]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: verify-cnpg-source
+  namespace: home-automation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: verify-cnpg-source
+subjects:
+- kind: ServiceAccount
+  name: verify-cnpg
+  namespace: backup-verification

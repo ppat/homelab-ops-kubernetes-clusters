@@ -1,0 +1,98 @@
+---
+# Weekly restore of authentik's newest CloudNativePG backup, Sunday 03:00. The database is
+# about 9 GB, so the restore wait allows 2 hours.
+# verify-cnpg.sh holds the steps and the read-only argument.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: verify-cnpg-authentik
+  namespace: backup-verification
+  labels:
+    app.kubernetes.io/name: verify-cnpg
+spec:
+  schedule: "0 3 * * 0"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  # A run missed while the cluster was down still happens the same day.
+  startingDeadlineSeconds: 21600
+  # Jobs are kept, not TTL-deleted, so a failed run's log is there when the alert is read.
+  # The alert rules read CronJob status and do not depend on the Job objects.
+  failedJobsHistoryLimit: 2
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: verify-cnpg
+    spec:
+      # No retry. A retry would repeat the whole restore, and the first failure is the
+      # signal. The deadline covers the restore wait (READY_TIMEOUT_SECONDS) plus the
+      # cleanup; BackupVerificationFailed waits longer than this before firing.
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: verify-cnpg
+        spec:
+          serviceAccountName: verify-cnpg
+          restartPolicy: Never
+          # Long enough for the cleanup trap to delete the recovery Cluster when the deadline
+          # ends the run.
+          terminationGracePeriodSeconds: 900
+          containers:
+          - name: verify
+            image: docker.io/ppatlabs/health-canary:0.1.0@sha256:46ed0801c955d5f012ee0c19d4bf29169f610851732ce5c18111637246b2b62f
+            command: ["bash", "/scripts/verify-cnpg.sh"]
+            env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SOURCE_NAMESPACE
+              value: authentik
+            - name: OBJECT_STORE
+              value: authentik-db-backup-store
+            - name: RECOVERY_CLUSTER
+              value: verify-cnpg-authentik
+            - name: DATABASE
+              value: authentik
+            - name: OWNER
+              value: authentik
+            # Delete reclaim, so deleting the recovery Cluster deletes its Longhorn volume.
+            - name: STORAGE_CLASS
+              value: sc-longhorn-local-non-replicated-ephemeral
+            - name: CHECKS_FILE
+              value: /scripts/authentik-db.sql
+            - name: READY_TIMEOUT_SECONDS
+              value: "7200"
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            volumeMounts:
+            - mountPath: /scripts
+              name: scripts
+              readOnly: true
+            - mountPath: /tmp
+              name: temp
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: scripts
+            configMap:
+              name: verify-cnpg
+          - name: temp
+            emptyDir:
+              sizeLimit: 16Mi

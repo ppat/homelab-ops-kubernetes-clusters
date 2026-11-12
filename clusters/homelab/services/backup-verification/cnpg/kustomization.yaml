@@ -1,0 +1,27 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- rbac-verify-cnpg.yaml
+- externalsecret-backup-credentials.yaml
+- objectstore-backup-stores.yaml
+- cronjob-verify-cnpg-authentik.yaml
+- cronjob-verify-cnpg-home-automation.yaml
+
+configMapGenerator:
+- name: verify-cnpg
+  namespace: backup-verification
+  files:
+  - verify-cnpg.sh
+  - checks/authentik-db.sql
+  - checks/home-automation-db.sql
+  options:
+    annotations:
+      # The script and the SQL are full of `$name` and `$$`, which Flux post-build
+      # substitution would expand or collapse.
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    # A CronJob mounts the current content at each run, so a stable name picks up edits.
+    # A hashed name would strand an old ConfigMap on every edit, because Flux prune is
+    # disabled on this cluster.
+    disableNameSuffixHash: true

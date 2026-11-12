@@ -1,0 +1,55 @@
+---
+# Read-side copies of the production stores that components/db-backups renders for
+# authentik and home-automation. destinationPath and endpointURL must equal production's;
+# verify-cnpg.sh checks that on every run.
+#
+# No retentionPolicy, unlike production. Retention runs only for a Cluster that names the
+# store in spec.plugins, which no recovery Cluster does, so this changes nothing today. It
+# keeps a store that points at production backups from ever being able to prune them.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: authentik-db-backup-store
+  namespace: backup-verification
+spec:
+  configuration:
+    destinationPath: s3://nas-cloudnativepg-backups/authentik-db
+    endpointURL: https://s3.nas.${dns_zone}
+    s3Credentials:
+      accessKeyId:
+        name: authentik-db-backup-credentials
+        key: s3_accesskeyid
+      secretAccessKey:
+        name: authentik-db-backup-credentials
+        key: s3_secretaccesskey
+      region:
+        name: authentik-db-backup-credentials
+        key: s3_region
+    data:
+      compression: snappy
+    wal:
+      compression: snappy
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: home-automation-db-backup-store
+  namespace: backup-verification
+spec:
+  configuration:
+    destinationPath: s3://nas-cloudnativepg-backups/home-automation-db
+    endpointURL: https://versitygw-s3.nas.${dns_zone}
+    s3Credentials:
+      accessKeyId:
+        name: home-automation-db-backup-credentials
+        key: s3_accesskeyid
+      secretAccessKey:
+        name: home-automation-db-backup-credentials
+        key: s3_secretaccesskey
+      region:
+        name: home-automation-db-backup-credentials
+        key: s3_region
+    data:
+      compression: snappy
+    wal:
+      compression: snappy
