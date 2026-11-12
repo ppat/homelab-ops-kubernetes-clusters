@@ -1,0 +1,123 @@
+{
+  "id": "HealthLastRun001",
+  "name": "Health Last Run",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "health/last-run",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Last Run Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "5f6a1e10-1a2b-4c3d-9e0f-000000000511",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00050001"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_runs"
+        },
+        "returnAll": false,
+        "limit": 50,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      },
+      "name": "Get Runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        250,
+        300
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00050002"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Did the twice-daily health check run? A pure function of the clock and the health_runs rows.\n// The answer is about the most recent 06:00 or 18:00 run whose deadline (start + grace) has passed.\nfunction lastRun({ now, runs, timezone, hours, graceMinutes }) {\n  const at = DateTime.fromISO(now).setZone(timezone);\n  let slot = null;\n  for (let d = 0; d < 3 && !slot; d++) {\n    for (const h of [...hours].sort((a, b) => b - a)) {\n      const s = at.minus({ days: d }).set({ hour: h, minute: 0, second: 0, millisecond: 0 });\n      if (s.plus({ minutes: graceMinutes }) <= at) { slot = s; break; }\n    }\n  }\n  const expectedBy = slot.plus({ minutes: graceMinutes });\n  const label = slot.toFormat('HH:mm');\n  const mine = runs\n    .filter((r) => r && r.scheduled_for && DateTime.fromISO(r.scheduled_for).toMillis() === slot.toMillis())\n    .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));\n  const finished = mine.find((r) => r.finished_at && DateTime.fromISO(r.finished_at) <= expectedBy);\n  const run = finished || mine[0] || null;\n  let ok = false;\n  let message;\n  if (finished) {\n    ok = true;\n    message = `Health check for ${label} finished at ${DateTime.fromISO(finished.finished_at).setZone(timezone).toFormat('HH:mm')}.`;\n  } else if (!run) {\n    message = `Health check did not run at ${label} ${timezone}: no run was recorded.`;\n  } else if (!run.finished_at) {\n    message = `Health check started at ${label} ${timezone} but did not finish: the n8n execution failed or is stuck.`;\n  } else {\n    message = `Health check for ${label} ${timezone} finished late, at ${DateTime.fromISO(run.finished_at).setZone(timezone).toFormat('HH:mm')}.`;\n  }\n  return {\n    ok,\n    last_run: run ? { run_id: run.run_id, started_at: run.started_at, finished_at: run.finished_at || null, status: run.status } : null,\n    expected_by: expectedBy.toUTC().toISO(),\n    message,\n  };\n}\n\n// Answers only callers inside the cluster. The n8n Ingress routes every /webhook/* path, and Traefik\n// forwards the public Host and adds X-Forwarded-For; a caller using the Service name sends neither.\nconst IN_CLUSTER_HOST = 'n8n.n8n.svc.cluster.local';\nconst headers = $('Last Run Request').first().json.headers || {};\nconst host = String(headers.host || '').split(':')[0].toLowerCase();\nif (host !== IN_CLUSTER_HOST || headers['x-forwarded-for'] || headers['x-forwarded-host'] || headers['x-real-ip']) {\n  return [{ json: { code: 404, body: { code: 404, message: 'Not found' } } }];\n}\nconst read = $('Get Runs').all().map((i) => i.json);\nconst failed = read.find((r) => r.error);\nif (failed) {\n  return [{ json: { code: 200, body: { ok: false, last_run: null, expected_by: null,\n    message: `Health check state could not be read: ${String(failed.error.message || failed.error).slice(0, 160)}` } } }];\n}\nconst body = lastRun({ now: DateTime.now().toUTC().toISO(), runs: read.filter((r) => r.run_id),\n  timezone: 'America/New_York', hours: [6, 18], graceMinutes: 20 });\nreturn [{ json: { code: 200, body } }];\n"
+      },
+      "name": "Compute",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ],
+      "notes": "ok is true only when the run for the latest 06:00 or 18:00 slot finished within 20 minutes. Keep the slots in step with the Health Triage trigger.",
+      "notesInFlow": true,
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00050003"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "responseCode": "={{ $json.code }}"
+        }
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        750,
+        300
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00050004"
+    }
+  ],
+  "connections": {
+    "Last Run Request": {
+      "main": [
+        [
+          {
+            "node": "Get Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Runs": {
+      "main": [
+        [
+          {
+            "node": "Compute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
