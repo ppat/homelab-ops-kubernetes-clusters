@@ -45,6 +45,20 @@ proxy_config:
       # $0.02 / $0.00per 1M
       input_cost_per_token: 0.00000002
       output_cost_per_token: 0.00
+  # Same upstream as the entry above, under the bare name openclaw's memory-lancedb
+  # plugin requires (it looks up embedding dimensions by that name). Declared as its own
+  # deployment rather than a router_settings.model_group_alias: LiteLLM lists an alias in
+  # /model/info as an extra row carrying its target's model_info.id, and the
+  # ncecere/litellm Terraform provider's litellm_models data source rejects duplicate ids,
+  # failing every plan of homelab-ops-terraform's litellm workspace. A separate entry gets
+  # its own id because LiteLLM hashes model_name together with litellm_params.
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openrouter/openai/text-embedding-3-small
+      api_key: os.environ/OPENROUTER_API_KEY
+      # $0.02 / $0.00per 1M
+      input_cost_per_token: 0.00000002
+      output_cost_per_token: 0.00
   - model_name: openai/gpt-4o-mini
     litellm_params:
       model: openrouter/openai/gpt-4o-mini
@@ -62,5 +76,3 @@ proxy_config:
     routing_strategy: simple-shuffle
     allowed_fails: 3
     cooldown_time: 60
-    model_group_alias:
-      text-embedding-3-small: openai/text-embedding-3-small
