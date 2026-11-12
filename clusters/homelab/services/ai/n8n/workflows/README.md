@@ -14,6 +14,7 @@ database, so they get there by running the n8n CLI against that database (see
 | `alertmanager-immediate.json` | Webhook `POST /webhook/alertmanager-immediate` for Alertmanager's immediate route. Checks the `Authorization` header against a Header Auth credential, turns each alert into one line (`resolved_summary` when resolved, `summary` otherwise) and calls `Notify` with `source: alertmanager`. Responds 200 before `Notify` runs |
 | `health-triage.json` | Twice-daily cluster health check (see [Health check](#health-check)). Reads Alertmanager, tracks issues in Data Tables and sends at most one message per run through `Notify` |
 | `health-last-run.json` | `GET /webhook/health/last-run`, answered only to callers inside the cluster: whether the latest 06:00 or 18:00 `Health Triage` run finished (see [Run liveness](#run-liveness)) |
+| `health-pages.json` | `GET /webhook/health/issues` (open and recently resolved issues) and `GET /webhook/health/issue?fp=<fingerprint>` (one issue: state, history, labels, diagnosis). Basic auth, user `health` |
 | `credentials/credentials.json` | Credential records the workflows reference by ID. They carry no secrets. n8n fills in the values at runtime from its credential-overwrite data |
 
 Quiet hours are defined once, in `Notify`'s `Settings` node (start, end, timezone), and apply to every
@@ -79,6 +80,16 @@ Settings live in the workflow's `Settings` node: Alertmanager URL, page URL, cap
 tiers and impact text, expected heartbeats, the dependency graph and the tier maps. nas heartbeats belong
 in `expected_heartbeats` once nas rules are evaluated centrally.
 
+### Issue pages
+
+`Health Pages` renders the Data Tables as HTML at `https://n8n.<domain>/webhook/health/issues` and
+`.../health/issue?fp=<fingerprint>`, the links in the triage messages. The n8n Ingress has no SSO, so
+both webhooks use n8n's basic auth with the `Health Pages Auth` credential: user `health`, password
+from BWS `n8n_health_pages_password`. Every stored value is HTML-escaped and only `http(s)` runbook links
+are rendered as links. n8n serves webhook HTML with a `Content-Security-Policy: sandbox` header; the
+pages use no scripts, so that does not affect them. The fingerprint is a query parameter because n8n
+puts the webhook ID into the URL of any webhook path with a `:parameter`.
+
 ### Run liveness
 
 `Health Last Run` serves `GET http://n8n.n8n.svc.cluster.local:5678/webhook/health/last-run` for a checker
@@ -108,7 +119,7 @@ These live outside this directory and must hold before the workflows can succeed
   the `CREDENTIALS_OVERWRITE_DATA` JSON into the `n8n-workflow-secrets` Secret, which the apps-ai
   n8n Deployment takes as an optional `envFrom`. n8n reads that name without the `N8N_` prefix.
   Without it the credential records stay empty and `Notify` fails. It reuses BWS
-  `openclaw_hooks_token`, `n8n_smtp_user` and `n8n_smtp_password`. Reloader watches the Secret, so
+  `openclaw_hooks_token`, `n8n_smtp_user`, `n8n_smtp_password` and `n8n_health_pages_password`. Reloader watches the Secret, so
   a changed key rolls n8n.
 - **OpenClaw is allowlisted for SSRF protection**: `openclaw.openclaw.svc.cluster.local` must be in
   `N8N_SSRF_ALLOWED_HOSTNAMES`. Otherwise n8n refuses the request because the Service resolves to a
@@ -122,7 +133,7 @@ These live outside this directory and must hold before the workflows can succeed
 
 n8n applies each entry of the overwrite JSON to every credential of that type, which is why each
 service here uses a different credential type (`httpBearerAuth` for OpenClaw, `smtp` for Maddy,
-`httpHeaderAuth` for the Alertmanager webhook). Any credential of these types created later in the
+`httpHeaderAuth` for the Alertmanager webhook, `httpBasicAuth` for the health pages). Any credential of these types created later in the
 n8n UI receives the same values. Pick a different credential type for a new service, or extend the
 ExternalSecret's template deliberately.
 
@@ -137,7 +148,7 @@ copying. `fromEmail` must be an address the SMTP account may send as (BWS `n8n_s
 ```bash
 DOMAIN=<domain_name>
 kubectl -n n8n exec deploy/n8n -- mkdir -p /tmp/seed
-for f in notify-subworkflow.json alertmanager-immediate.json health-triage.json health-last-run.json credentials/credentials.json; do
+for f in notify-subworkflow.json alertmanager-immediate.json health-triage.json health-last-run.json health-pages.json credentials/credentials.json; do
   sed "s/\${domain_name}/${DOMAIN}/g" "$f" \
     | kubectl -n n8n exec -i deploy/n8n -- sh -c "cat > /tmp/seed/$(basename "$f")"
 done
@@ -147,9 +158,11 @@ kubectl -n n8n exec deploy/n8n -- n8n import:workflow --input=/tmp/seed/alertman
 kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=NotifyWhatsApp01
 kubectl -n n8n exec deploy/n8n -- n8n import:workflow --input=/tmp/seed/health-triage.json
 kubectl -n n8n exec deploy/n8n -- n8n import:workflow --input=/tmp/seed/health-last-run.json
+kubectl -n n8n exec deploy/n8n -- n8n import:workflow --input=/tmp/seed/health-pages.json
 kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=AlertmanagerImm01
 kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=HealthTriage0001
 kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=HealthLastRun001
+kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=HealthPages00001
 kubectl -n n8n rollout restart deploy/n8n
 ```
 
