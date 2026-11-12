@@ -1,0 +1,20 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- rbac-verify-longhorn.yaml
+- cronjob-verify-longhorn-arr.yaml
+
+configMapGenerator:
+- name: verify-longhorn
+  namespace: backup-verification
+  files:
+  - verify-longhorn.sh
+  - check-volume.sh
+  options:
+    annotations:
+      # The scripts are full of `$name`, which Flux post-build substitution would expand.
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    # Same reason as cnpg/: a stable name, because Flux prune is disabled on this cluster.
+    disableNameSuffixHash: true

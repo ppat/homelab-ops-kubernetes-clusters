@@ -153,6 +153,57 @@ tests:
         description: >-
           kube-state-metrics reports no CronJobs in the backup-verification namespace for an
           hour. The backup verification alerts are blind until it does.
+# The volume group: a failed Longhorn verification fires with capability backup.volume, and
+# does not fire the database alert. A database CronJob does not fire the volume alert.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob="verify-longhorn-arr"}'
+    values: '3600x120'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x2400'
+  - series: 'kube_cronjob_spec_suspend{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x2400'
+  alert_rule_test:
+  - eval_time: 6h
+    alertname: BackupVerificationFailed
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-longhorn-arr, capability: backup.volume, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A volume backup failed its restore verification.
+        description: >-
+          verify-longhorn-arr has not succeeded since its run scheduled at
+          1970-01-01 01:00:00 +0000 UTC. A volume's newest backup was missing or too old,
+          did not restore, or failed its content checks. The Job's log names the volume and
+          the failed step.
+  - eval_time: 194h
+    alertname: BackupVerificationStale
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-cnpg-authentik, capability: backup.db, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A database backup has not been verified for over 8 days.
+        description: >-
+          verify-cnpg-authentik has had no successful run for 8d 2h 0m 0s,
+          or it is suspended. Nothing has shown that this database's backups restore.
+# Volume staleness, measured from creation for a CronJob that never succeeded.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_created{namespace="backup-verification", cronjob="verify-longhorn-arr"}'
+    values: '0x2400'
+  - series: 'kube_cronjob_spec_suspend{namespace="backup-verification", cronjob="verify-longhorn-arr"}'
+    values: '0x2400'
+  alert_rule_test:
+  - eval_time: 100h
+    alertname: BackupVerificationStale
+    exp_alerts: []
+  - eval_time: 194h
+    alertname: BackupVerificationStale
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-longhorn-arr, capability: backup.volume, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A volume backup has not been verified for over 8 days.
+        description: >-
+          verify-longhorn-arr has had no successful run for 8d 2h 0m 0s,
+          or it is suspended. Nothing has shown that these volumes' backups restore.
 - interval: 1m
   input_series: []
   alert_rule_test:
@@ -162,3 +213,6 @@ tests:
     - exp_labels: {capability: backup.db, tier: H1, severity: none}
       exp_annotations:
         summary: The backup.db restore verification rules are being evaluated.
+    - exp_labels: {capability: backup.volume, tier: H1, severity: none}
+      exp_annotations:
+        summary: The backup.volume restore verification rules are being evaluated.
