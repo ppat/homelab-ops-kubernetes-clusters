@@ -1,0 +1,101 @@
+---
+# Weekly restore of the newest Longhorn backup of two small application-config volumes,
+# Saturday 03:00. Both volumes are in the daily `backup-ops` group, so the newest backup is
+# at most a day old. verify-longhorn.sh holds the steps and the read-only argument.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: verify-longhorn-arr
+  namespace: backup-verification
+  labels:
+    app.kubernetes.io/name: verify-longhorn
+spec:
+  schedule: "0 3 * * 6"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 21600
+  failedJobsHistoryLimit: 2
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: verify-longhorn
+    spec:
+      backoffLimit: 0
+      # Two volumes, each up to 30 minutes to restore and 15 to check.
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: verify-longhorn
+        spec:
+          serviceAccountName: verify-longhorn
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 900
+          containers:
+          - name: verify
+            image: docker.io/ppatlabs/health-canary:0.1.0@sha256:46ed0801c955d5f012ee0c19d4bf29169f610851732ce5c18111637246b2b62f
+            command: ["bash", "/scripts/verify-longhorn.sh"]
+            env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # <name>=<source PV>. The verification volume is bv-<name>, and the RBAC in
+            # rbac-verify-longhorn.yaml names each bv-<name>, so a new entry needs both.
+            - name: TARGETS
+              value: >-
+                prowlarr=pvc-fbe126d0-3b70-4232-b09d-8033b5401407
+                lidarr=pvc-a250c868-9264-4706-a8c8-c29b683c2f06
+            - name: BACKUP_TARGET
+              value: default
+            # A recurring-job group that no RecurringJob names. See verify-longhorn.sh.
+            - name: NO_OP_GROUP
+              value: backup-verification
+            - name: MAX_BACKUP_AGE_HOURS
+              value: "48"
+            - name: CHECK_IMAGE
+              value: docker.io/ppatlabs/health-canary:0.1.0@sha256:46ed0801c955d5f012ee0c19d4bf29169f610851732ce5c18111637246b2b62f
+            # The applications' file owner: media_writer_uid and media_writer_gid in
+            # kustomizations/apps-downloaders.yaml.
+            - name: CHECK_UID
+              value: "1044"
+            - name: CHECK_GID
+              value: "65538"
+            # The *arr applications keep their data in PostgreSQL; the volume holds
+            # config.xml and caches. The API key line shows config.xml restored as content.
+            - name: REQUIRED_FILE
+              value: config.xml
+            - name: REQUIRED_PATTERN
+              value: <ApiKey>
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            volumeMounts:
+            - mountPath: /scripts
+              name: scripts
+              readOnly: true
+            - mountPath: /tmp
+              name: temp
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: scripts
+            configMap:
+              name: verify-longhorn
+          - name: temp
+            emptyDir:
+              sizeLimit: 16Mi

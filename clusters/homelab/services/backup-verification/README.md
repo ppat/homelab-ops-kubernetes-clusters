@@ -76,6 +76,59 @@ removes the Longhorn volume with the Cluster. That class selects Longhorn's `def
 recurring-job group, which today holds only trim and snapshot cleanup. A backup job added to
 `default` could back up a recovery volume that exists during its cron minute.
 
+## Longhorn volumes (`longhorn/`)
+
+`verify-longhorn-arr`, Saturday 03:00 America/New_York, verifies the newest `default`-target
+backup of two small application-config volumes: `downloaders/prowlarr-data` and
+`downloaders/lidarr-data`, listed by PV name in the CronJob's `TARGETS`. Each volume is verified
+in its own shell, so one failing does not skip the other. Each run of `longhorn/verify-longhorn.sh`:
+
+1. deletes the check pod, PVC, PV and Longhorn volume `bv-<name>` left by an earlier run;
+2. finds the source volume's backup volume on the target by its `backup-volume` and
+   `backup-target` labels, and its newest backup, which must be `Completed` and under 48 h old;
+3. creates Longhorn volume `bv-<name>` from that backup, one replica;
+4. waits until Longhorn reports the restore finished, and checks the volume carries only the
+   no-op recurring-job label;
+5. binds a static PV and PVC to it and runs `longhorn/check-volume.sh` in a pod that mounts it
+   read-only, as the applications' user;
+6. deletes all of it, then fails if the volume still exists or the backup target holds a backup
+   volume for `bv-<name>`.
+
+The content checks read every file in full, require `config.xml` to contain `<ApiKey>`, and run
+SQLite's `integrity_check` on every `*.db` (copied out first with its write-ahead log, since the
+mount is read-only). The *arr applications keep their data in PostgreSQL, which `downloaders`'
+CloudNativePG backups cover, so these volumes hold configuration and caches and may hold no
+database at all.
+
+### Why it cannot write to the backup target
+
+A restored volume is an ordinary Longhorn volume and can be backed up. On this cluster two
+Longhorn behaviours would back it up into the production target:
+
+- Longhorn gives a volume with no recurring-job label the `default` group.
+- The `restore-volume-recurring-jobs` setting is on, so a volume restored from a backup inherits
+  the source volume's recurring jobs. For these volumes that includes `daily-backup`.
+
+The volume is created with label `recurring-job-group.longhorn.io/backup-verification`, a group no
+RecurringJob names, which stops both: Longhorn skips the inheritance when a volume already has a
+job label other than `default`. `restoreVolumeRecurringJob: disabled` stops the inheritance on its
+own. Step 4 checks the labels, and step 6 checks that no backup of the volume exists.
+
+The job's Role names `bv-prowlarr` and `bv-lidarr` for every verb on Longhorn volumes and PVs
+except `create`, which RBAC cannot restrict by name. A new entry in `TARGETS` needs its `bv-<name>`
+added in `longhorn/rbac-verify-longhorn.yaml`.
+
+### Rehearsal without restoring
+
+`STOP_BEFORE_RESTORE=true` stops each volume after step 2 and validates the Volume against the API
+server without creating it.
+
+```bash
+kubectl -n backup-verification create job --from=cronjob/verify-longhorn-arr verify-longhorn-dry -o json --dry-run=client \
+  | jq '.spec.template.spec.containers[0].env += [{"name": "STOP_BEFORE_RESTORE", "value": "true"}]' \
+  | kubectl create -f -
+```
+
 ## Running one by hand
 
 ```bash

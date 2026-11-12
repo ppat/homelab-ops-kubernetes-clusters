@@ -105,3 +105,70 @@ spec:
         capability: backup.db
         tier: H1
         severity: none
+
+  - name: backup-verification-volume
+    rules:
+    - alert: BackupVerificationFailed
+      annotations:
+        summary: A volume backup failed its restore verification.
+        description: >-
+          {{ $labels.cronjob }} has not succeeded since its run scheduled at
+          {{ $value | humanizeTimestamp }}. A volume's newest backup was missing or too old,
+          did not restore, or failed its content checks. The Job's log names the volume and
+          the failed step.
+      expr: |
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob=~"verify-longhorn-.+"}
+        )
+        > (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob=~"verify-longhorn-.+"}
+        )
+        or
+        0 * max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob=~"verify-longhorn-.+"}
+        )
+        )
+      for: 4h
+      labels:
+        capability: backup.volume
+        tier: H1
+        severity: warning
+    - alert: BackupVerificationStale
+      annotations:
+        summary: A volume backup has not been verified for over 8 days.
+        description: >-
+          {{ $labels.cronjob }} has had no successful run for {{ $value | humanizeDuration }},
+          or it is suspended. Nothing has shown that these volumes' backups restore.
+      expr: |
+        (
+        time() - (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob=~"verify-longhorn-.+"}
+        )
+        or
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_created{namespace="backup-verification", cronjob=~"verify-longhorn-.+"}
+        )
+        )
+        > 8 * 86400
+        )
+        or
+        (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_spec_suspend{namespace="backup-verification", cronjob=~"verify-longhorn-.+"}
+        ) == 1
+        )
+      for: 1h
+      labels:
+        capability: backup.volume
+        tier: H1
+        severity: warning
+    - alert: CapabilityHeartbeat
+      annotations:
+        summary: The backup.volume restore verification rules are being evaluated.
+      expr: vector(1)
+      labels:
+        capability: backup.volume
+        tier: H1
+        severity: none
