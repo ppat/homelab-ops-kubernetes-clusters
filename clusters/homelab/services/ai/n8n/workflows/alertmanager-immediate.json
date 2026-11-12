@@ -1,0 +1,160 @@
+{
+  "id": "AlertmanagerImm01",
+  "name": "Alertmanager Immediate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alertmanager-immediate",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000301",
+      "name": "Webhook - Alertmanager",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "5f6a1e10-1a2b-4c3d-9e0f-000000000311",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "alertmanager-webhook",
+          "name": "Alertmanager Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000302",
+              "name": "subject",
+              "type": "string",
+              "value": "Alertmanager"
+            },
+            {
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000303",
+              "name": "source",
+              "type": "string",
+              "value": "alertmanager"
+            },
+            {
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000304",
+              "name": "message",
+              "type": "string",
+              "value": "={{ $json.body.alerts.map(a => a.status === 'resolved' ? a.annotations.resolved_summary : a.annotations.summary).join('\\n') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000305",
+      "name": "Set - Notify Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "NotifyWhatsApp01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subject": "={{ $json.subject }}",
+            "message": "={{ $json.message }}",
+            "source": "={{ $json.source }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000306",
+      "name": "Execute Workflow - Notify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook - Alertmanager": {
+      "main": [
+        [
+          {
+            "node": "Set - Notify Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Notify Payload": {
+      "main": [
+        [
+          {
+            "node": "Execute Workflow - Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

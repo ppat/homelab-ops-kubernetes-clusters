@@ -53,6 +53,16 @@
         "fallbacks": [
           "litellm/openrouter/z-ai/glm-5.3-flash"
         ]
+      },
+      // Quiet hours: heartbeats run only outside the operator's quiet hours, 22:00 to 06:00
+      // Eastern, so this window is their inverse. The heartbeat is the one sender that does
+      // not go through n8n's Notify workflow, where quiet hours are defined; keep the two equal.
+      "heartbeat": {
+        "activeHours": {
+          "start": "06:00",
+          "end": "22:00",
+          "timezone": "America/New_York"
+        }
       }
     }
   },

@@ -10,8 +10,13 @@ database, so they get there by running the n8n CLI against that database (see
 
 | File | Purpose |
 | ---- | ------- |
-| `notify-subworkflow.json` | Shared `Notify` sub-workflow. Takes `subject` and `message`, emails them through Maddy and sends `subject: message` to WhatsApp through OpenClaw |
+| `notify-subworkflow.json` | Shared `Notify` sub-workflow. Takes `subject`, `message` and an optional `source` (default `n8n`), emails the first two through Maddy and sends `subject: message` to WhatsApp through OpenClaw |
+| `alertmanager-immediate.json` | Webhook `POST /webhook/alertmanager-immediate` for Alertmanager's immediate route. Checks the `Authorization` header against a Header Auth credential, turns each alert into one line (`resolved_summary` when resolved, `summary` otherwise) and calls `Notify` with `source: alertmanager`. Responds 200 before `Notify` runs |
 | `credentials/credentials.json` | Credential records the workflows reference by ID. They carry no secrets. n8n fills in the values at runtime from its credential-overwrite data |
+
+Quiet hours are defined once, in `Notify`'s `Settings` node (start, end, timezone), and apply to every
+message n8n sends. A message arriving inside the window is held in a waiting execution until the window
+ends, then sent to both channels.
 
 ```mermaid
 flowchart LR
@@ -50,9 +55,9 @@ These live outside this directory and must hold before the workflows can succeed
   `notify` (in `../../openclaw/openclaw.json`).
 
 n8n applies each entry of the overwrite JSON to every credential of that type, which is why each
-service here uses a different credential type (`httpBearerAuth` for OpenClaw, `smtp` for Maddy). Any
-credential of these two types created later in the n8n UI
-receives the same values. Pick a different credential type for a new service, or extend the
+service here uses a different credential type (`httpBearerAuth` for OpenClaw, `smtp` for Maddy,
+`httpHeaderAuth` for the Alertmanager webhook). Any credential of these types created later in the
+n8n UI receives the same values. Pick a different credential type for a new service, or extend the
 ExternalSecret's template deliberately.
 
 ## Importing
@@ -66,13 +71,15 @@ copying. `fromEmail` must be an address the SMTP account may send as (BWS `n8n_s
 ```bash
 DOMAIN=<domain_name>
 kubectl -n n8n exec deploy/n8n -- mkdir -p /tmp/seed
-for f in notify-subworkflow.json credentials/credentials.json; do
+for f in notify-subworkflow.json alertmanager-immediate.json credentials/credentials.json; do
   sed "s/\${domain_name}/${DOMAIN}/g" "$f" \
     | kubectl -n n8n exec -i deploy/n8n -- sh -c "cat > /tmp/seed/$(basename "$f")"
 done
 kubectl -n n8n exec deploy/n8n -- n8n import:credentials --input=/tmp/seed/credentials.json
 kubectl -n n8n exec deploy/n8n -- n8n import:workflow --input=/tmp/seed/notify-subworkflow.json
+kubectl -n n8n exec deploy/n8n -- n8n import:workflow --input=/tmp/seed/alertmanager-immediate.json
 kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=NotifyWhatsApp01
+kubectl -n n8n exec deploy/n8n -- n8n publish:workflow --id=AlertmanagerImm01
 kubectl -n n8n rollout restart deploy/n8n
 ```
 

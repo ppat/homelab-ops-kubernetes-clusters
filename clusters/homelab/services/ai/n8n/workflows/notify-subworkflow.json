@@ -11,6 +11,9 @@
             },
             {
               "name": "message"
+            },
+            {
+              "name": "source"
             }
           ]
         }
@@ -26,6 +29,60 @@
     },
     {
       "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000106",
+              "name": "quiet_hours_start",
+              "type": "string",
+              "value": "22:00"
+            },
+            {
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000107",
+              "name": "quiet_hours_end",
+              "type": "string",
+              "value": "06:00"
+            },
+            {
+              "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000108",
+              "name": "quiet_hours_timezone",
+              "type": "string",
+              "value": "America/New_York"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000105",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        370,
+        300
+      ],
+      "notes": "Quiet hours for every message n8n sends: start and end as 24-hour HH:MM, and an IANA timezone. Edit here and re-import. Messages arriving in the window are held until it ends.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ (() => { const t = $now.setZone($json.quiet_hours_timezone); const at = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return t.set({ hour: h, minute: m, second: 0, millisecond: 0 }); }; const start = at($json.quiet_hours_start); const end = at($json.quiet_hours_end); const crossesMidnight = start > end; const inWindow = crossesMidnight ? (t >= start || t < end) : (t >= start && t < end); if (!inWindow) { return t.toISO(); } return (crossesMidnight && t >= start ? end.plus({ days: 1 }) : end).toISO(); })() }}"
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-000000000104",
+      "name": "Quiet Hours Gate",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        500,
+        300
+      ],
+      "notes": "Holds the message until quiet hours end. Outside the window the resume time is now, so the message passes straight through. The window and timezone come from the Settings node. It may cross midnight, and Luxon applies the zone's DST rules.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
         "fromEmail": "n8n@${domain_name}",
         "toEmail": "owner@${domain_name}",
         "subject": "={{ $json.subject }}",
@@ -38,7 +95,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        500,
+        770,
         220
       ],
       "onError": "continueRegularOutput",
@@ -57,7 +114,7 @@
         "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ source: 'n8n', message: $json.subject + ': ' + $json.message }) }}",
+        "jsonBody": "={{ JSON.stringify({ source: $json.source || 'n8n', message: $json.subject + ': ' + $json.message }) }}",
         "options": {
           "timeout": 30000
         }
@@ -67,7 +124,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        500,
+        770,
         380
       ],
       "retryOnFail": true,
@@ -86,12 +143,34 @@
       "main": [
         [
           {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quiet Hours Gate": {
+      "main": [
+        [
+          {
             "node": "Send Email - Maddy",
             "type": "main",
             "index": 0
           },
           {
             "node": "OpenClaw - Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Quiet Hours Gate",
             "type": "main",
             "index": 0
           }
