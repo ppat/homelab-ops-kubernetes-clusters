@@ -240,7 +240,17 @@
         "provider": "brave"
       },
       "fetch": {
-        "enabled": true
+        "enabled": true,
+        // web_fetch refuses private and in-cluster hosts. This one host is exempt so the health
+        // liveness automation can read n8n's last-run endpoint, which answers only when the
+        // request's Host is this Service name. The match is on the host alone, so the port in
+        // that URL needs no entry. Every other private host stays refused; do not swap this for
+        // dangerouslyAllowPrivateNetwork.
+        "ssrfPolicy": {
+          "allowedHostnames": [
+            "n8n.n8n.svc.cluster.local"
+          ]
+        }
       }
     }
   },
