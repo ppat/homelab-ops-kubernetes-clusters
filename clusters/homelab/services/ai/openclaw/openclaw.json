@@ -48,6 +48,7 @@
       "bootstrapMaxChars": 20000,
       "bootstrapTotalMaxChars": 150000,
       "contextInjection": "always",
+      // n8n's Health Diagnose workflow uses these same models (its Settings node). Keep the two equal.
       "model": {
         "primary": "litellm/openrouter/deepseek/deepseek-v4-flash-0731",
         "fallbacks": [
