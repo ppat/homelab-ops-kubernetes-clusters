@@ -1,0 +1,13 @@
+---
+# Its own namespace because the restore runs here. A recovery Cluster created in a
+# production namespace would share that namespace's Secrets, Services and policies, and a
+# mistake in the verification job could reach the live database. Here the job can only
+# create and delete its own throwaway Clusters. Reads in the production namespaces are
+# limited to listing Clusters and reading one ObjectStore (rbac-verify-cnpg.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backup-verification
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: merge

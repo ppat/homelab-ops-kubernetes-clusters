@@ -1,0 +1,164 @@
+---
+# yamllint disable rule:line-length
+# promtool unit tests for prometheusrule-backup-verification.yaml. Each alert except the
+# heartbeat has a case that must fire and a case that must stay silent. Sample values are
+# seconds since the epoch, one sample every 5 minutes (12 per hour).
+rule_files:
+- prometheusrule-backup-verification.yaml
+evaluation_interval: 1m
+tests:
+# A run scheduled at 10h fails. It fires 4h later and clears when the next run succeeds.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob="verify-cnpg-authentik", pod="ksm-a"}'
+    values: '0x119 36000x120 72000x120'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob="verify-cnpg-authentik", pod="ksm-a"}'
+    values: '0x239 75600x120'
+  alert_rule_test:
+  - eval_time: 13h
+    alertname: BackupVerificationFailed
+    exp_alerts: []
+  - eval_time: 15h
+    alertname: BackupVerificationFailed
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-cnpg-authentik, capability: backup.db, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A database backup failed its restore verification.
+        description: >-
+          verify-cnpg-authentik has not succeeded since its run scheduled at
+          1970-01-01 10:00:00 +0000 UTC. The newest backup did not restore, or the restored
+          database failed its content checks. The Job's log names the failed step.
+  - eval_time: 25h
+    alertname: BackupVerificationFailed
+    exp_alerts: []
+# A run in progress: scheduled at 10h, succeeding at 12h (within the Job deadline). Never fires.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob="verify-cnpg-home-automation"}'
+    values: '0x119 36000x240'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob="verify-cnpg-home-automation"}'
+    values: '0x143 43200x220'
+  alert_rule_test:
+  - eval_time: 11h
+    alertname: BackupVerificationFailed
+    exp_alerts: []
+  - eval_time: 20h
+    alertname: BackupVerificationFailed
+    exp_alerts: []
+# A CronJob that has been scheduled but never succeeded fires.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '3600x120'
+  alert_rule_test:
+  - eval_time: 6h
+    alertname: BackupVerificationFailed
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-cnpg-authentik, capability: backup.db, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A database backup failed its restore verification.
+        description: >-
+          verify-cnpg-authentik has not succeeded since its run scheduled at
+          1970-01-01 01:00:00 +0000 UTC. The newest backup did not restore, or the restored
+          database failed its content checks. The Job's log names the failed step.
+# Stale: last success at 0, still not succeeded 8 days later. Fires after 8d plus for: 1h.
+# A CronJob in another namespace is ignored.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x2400'
+  - series: 'kube_cronjob_spec_suspend{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x2400'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="health-canary", cronjob="verify-cnpg-authentik"}'
+    values: '0x2400'
+  alert_rule_test:
+  - eval_time: 192h
+    alertname: BackupVerificationStale
+    exp_alerts: []
+  - eval_time: 194h
+    alertname: BackupVerificationStale
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-cnpg-authentik, capability: backup.db, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A database backup has not been verified for over 8 days.
+        description: >-
+          verify-cnpg-authentik has had no successful run for 8d 2h 0m 0s,
+          or it is suspended. Nothing has shown that this database's backups restore.
+# Weekly successes keep it silent.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x2015 604800x2016'
+  - series: 'kube_cronjob_spec_suspend{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x4031'
+  alert_rule_test:
+  - eval_time: 300h
+    alertname: BackupVerificationStale
+    exp_alerts: []
+# Never succeeded: measured from creation.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_created{namespace="backup-verification", cronjob="verify-cnpg-home-automation"}'
+    values: '0x2400'
+  - series: 'kube_cronjob_spec_suspend{namespace="backup-verification", cronjob="verify-cnpg-home-automation"}'
+    values: '0x2400'
+  alert_rule_test:
+  - eval_time: 100h
+    alertname: BackupVerificationStale
+    exp_alerts: []
+  - eval_time: 194h
+    alertname: BackupVerificationStale
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-cnpg-home-automation, capability: backup.db, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A database backup has not been verified for over 8 days.
+        description: >-
+          verify-cnpg-home-automation has had no successful run for 8d 2h 0m 0s,
+          or it is suspended. Nothing has shown that this database's backups restore.
+# Suspended with a recent success still fires.
+- interval: 5m
+  input_series:
+  - series: 'kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x120'
+  - series: 'kube_cronjob_spec_suspend{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '0x35 1x100'
+  alert_rule_test:
+  - eval_time: 2h
+    alertname: BackupVerificationStale
+    exp_alerts: []
+  - eval_time: 5h
+    alertname: BackupVerificationStale
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, cronjob: verify-cnpg-authentik, capability: backup.db, tier: H1, severity: warning}
+      exp_annotations:
+        summary: A database backup has not been verified for over 8 days.
+        description: >-
+          verify-cnpg-authentik has had no successful run for 1s,
+          or it is suspended. Nothing has shown that this database's backups restore.
+# Metrics absent fires after an hour without any CronJob in the namespace, and not while one exists.
+- interval: 10m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="backup-verification", cronjob="verify-cnpg-authentik"}'
+    values: '1x6'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: BackupVerificationMetricsAbsent
+    exp_alerts: []
+  - eval_time: 3h
+    alertname: BackupVerificationMetricsAbsent
+    exp_alerts:
+    - exp_labels: {namespace: backup-verification, capability: obs.metrics, tier: M2, severity: warning}
+      exp_annotations:
+        summary: Backup verification metrics are missing.
+        description: >-
+          kube-state-metrics reports no CronJobs in the backup-verification namespace for an
+          hour. The backup verification alerts are blind until it does.
+- interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: CapabilityHeartbeat
+    exp_alerts:
+    - exp_labels: {capability: backup.db, tier: H1, severity: none}
+      exp_annotations:
+        summary: The backup.db restore verification rules are being evaluated.

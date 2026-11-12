@@ -26,6 +26,7 @@ resources:
 - apps-obsidian-vault.yaml
 - config-storage.yaml
 - config-services.yaml
+- config-services-backup-verification.yaml
 - config-services-ci-diagnostics.yaml
 - config-services-image-builder.yaml
 - config-services-sandbox-docker.yaml

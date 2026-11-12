@@ -1,0 +1,34 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-backup-verification
+  namespace: flux-system
+spec:
+  # The ObjectStore and Cluster CRDs come from infra-database-core, the ExternalSecret CRD and
+  # the store from infra-security-core. The Roles in authentik and home-automation need those
+  # namespaces, which infra-security-extra and apps-home-automation create.
+  dependsOn:
+  - name: infra-security-core
+    namespace: flux-system
+  - name: infra-database-core
+    namespace: flux-system
+  - name: infra-security-extra
+    namespace: flux-system
+  - name: apps-home-automation
+    namespace: flux-system
+  # Its own Kustomization rather than the shared config-services, so a new namespace failing
+  # on first apply cannot fail the directories that reconcile through the shared one.
+  interval: 15m0s
+  path: ./clusters/homelab/services/backup-verification
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets

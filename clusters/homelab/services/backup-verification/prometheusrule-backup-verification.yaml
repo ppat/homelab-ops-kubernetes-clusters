@@ -1,0 +1,107 @@
+---
+# Outcome of the weekly restore verifications in this namespace. Each verification is a
+# CronJob whose Job exits non-zero on any failed step, and the rules read the CronJob status
+# that kube-state-metrics exports. Jobs are not read directly, so the rules do not depend on
+# how long finished Jobs are kept.
+#
+#   BackupVerificationFailed  the latest scheduled run has not succeeded. A later success
+#                             clears it. `for` is longer than the Job's
+#                             activeDeadlineSeconds, so a run in progress never fires it.
+#   BackupVerificationStale   no success for 8 days (one weekly interval plus a day), or the
+#                             CronJob is suspended. A CronJob that never succeeded is measured
+#                             from its creation.
+#
+# Neither carries `notify: immediate`. A broken backup is triaged at the next scheduled
+# health check, not delivered at night.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+  name: backup-verification-rules
+  namespace: backup-verification
+spec:
+  groups:
+  - name: backup-verification
+    rules:
+    # Every rule below goes quiet, rather than firing, if kube-state-metrics stops exporting
+    # this namespace's CronJobs.
+    - alert: BackupVerificationMetricsAbsent
+      annotations:
+        summary: Backup verification metrics are missing.
+        description: >-
+          kube-state-metrics reports no CronJobs in the backup-verification namespace for an
+          hour. The backup verification alerts are blind until it does.
+      expr: |
+        absent(kube_cronjob_info{namespace="backup-verification"})
+      for: 1h
+      labels:
+        capability: obs.metrics
+        tier: M2
+        severity: warning
+
+  - name: backup-verification-db
+    rules:
+    - alert: BackupVerificationFailed
+      annotations:
+        summary: A database backup failed its restore verification.
+        description: >-
+          {{ $labels.cronjob }} has not succeeded since its run scheduled at
+          {{ $value | humanizeTimestamp }}. The newest backup did not restore, or the restored
+          database failed its content checks. The Job's log names the failed step.
+      expr: |
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob=~"verify-cnpg-.+"}
+        )
+        > (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob=~"verify-cnpg-.+"}
+        )
+        or
+        0 * max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="backup-verification", cronjob=~"verify-cnpg-.+"}
+        )
+        )
+      for: 4h
+      labels:
+        capability: backup.db
+        tier: H1
+        severity: warning
+    - alert: BackupVerificationStale
+      annotations:
+        summary: A database backup has not been verified for over 8 days.
+        description: >-
+          {{ $labels.cronjob }} has had no successful run for {{ $value | humanizeDuration }},
+          or it is suspended. Nothing has shown that this database's backups restore.
+      expr: |
+        (
+        time() - (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_successful_time{namespace="backup-verification", cronjob=~"verify-cnpg-.+"}
+        )
+        or
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_created{namespace="backup-verification", cronjob=~"verify-cnpg-.+"}
+        )
+        )
+        > 8 * 86400
+        )
+        or
+        (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_spec_suspend{namespace="backup-verification", cronjob=~"verify-cnpg-.+"}
+        ) == 1
+        )
+      for: 1h
+      labels:
+        capability: backup.db
+        tier: H1
+        severity: warning
+    - alert: CapabilityHeartbeat
+      annotations:
+        summary: The backup.db restore verification rules are being evaluated.
+      expr: vector(1)
+      labels:
+        capability: backup.db
+        tier: H1
+        severity: none
