@@ -1,0 +1,299 @@
+{
+  "id": "HealthPages00001",
+  "name": "Health Pages",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "health/issues",
+        "responseMode": "responseNode",
+        "options": {},
+        "authentication": "basicAuth"
+      },
+      "name": "Issues Index",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "5f6a1e10-1a2b-4c3d-9e0f-000000000611",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "health-pages",
+          "name": "Health Pages Auth"
+        }
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060001"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_issues"
+        },
+        "returnAll": true
+      },
+      "name": "Get Issues For Index",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        250,
+        200
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060002"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health pages: HTML for the open-issue index and for one issue. Pure functions of the stored rows.\nconst TIMEZONE = 'America/New_York';\nconst esc = (v) => String(v === null || v === undefined ? '' : v)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\nconst when = (iso) => (iso ? DateTime.fromISO(String(iso)).setZone(TIMEZONE).toFormat('yyyy-LL-dd HH:mm') : '');\nconst tierRank = (t) => ({ H1: 1, H2: 2, H3: 3, M1: 4, M2: 5, M3: 6, L: 7 }[t] || 8);\nconst parse = (s) => { try { return JSON.parse(s || '{}'); } catch (e) { return {}; } };\nconst safeUrl = (u) => (/^https?:\\/\\//i.test(String(u || '')) ? String(u) : '');\n\nfunction page(title, body) {\n  return `<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>${esc(title)}</title>\n<style>\nbody{font:15px/1.45 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#1d1d1f;background:#fff}\nh1{font-size:1.3em}h2{font-size:1.1em;margin-top:1.6em}table{border-collapse:collapse;width:100%}\ntd,th{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}\nth{font-weight:600}.t{font-weight:700;white-space:nowrap}.H1,.H2,.H3{color:#b00020}.M1,.M2,.M3{color:#a35a00}.L{color:#555}\n.muted{color:#666}pre{white-space:pre-wrap;word-break:break-word;background:#f5f5f7;padding:8px}\n@media (prefers-color-scheme:dark){body{background:#111;color:#eee}td,th{border-color:#333}pre{background:#222}.muted{color:#aaa}}\n</style></head><body>${body}</body></html>`;\n}\n\nfunction renderIndex(rows, now) {\n  const issues = rows.filter((r) => r && r.fingerprint);\n  const open = issues.filter((r) => r.status === 'open' || r.status === 'accepted')\n    .sort((a, b) => tierRank(a.tier) - tierRank(b.tier) || String(a.first_seen).localeCompare(String(b.first_seen)));\n  const weekAgo = DateTime.fromISO(now).minus({ days: 7 });\n  const resolved = issues.filter((r) => r.status === 'resolved' && r.resolved_at && DateTime.fromISO(String(r.resolved_at)) >= weekAgo)\n    .sort((a, b) => String(b.resolved_at).localeCompare(String(a.resolved_at)));\n  const titleOf = new Map(issues.map((r) => [r.fingerprint, r.title]));\n  const row = (r, extra) => `<tr><td class=\"t ${esc(r.tier)}\">${esc(r.tier)}</td>\n<td><a href=\"issue?fp=${esc(r.fingerprint)}\">${esc(r.title)}</a><div class=\"muted\">${esc([r.cluster, r.subject].filter(Boolean).join(', '))}${\n  r.root_cause_fp ? ` &middot; likely caused by ${esc(titleOf.get(r.root_cause_fp) || r.root_cause_fp)}` : ''}</div></td>\n<td>${extra}</td></tr>`;\n  const openRows = open.map((r) => row(r, `${esc(r.status === 'accepted' ? 'accepted (silenced)' : 'open')}<div class=\"muted\">since ${esc(when(r.first_seen))}</div>`)).join('');\n  const resolvedRows = resolved.map((r) => row(r, `resolved ${esc(when(r.resolved_at))}`)).join('');\n  return page('Cluster health', `<h1>Cluster health</h1>\n<p class=\"muted\">As of ${esc(when(now))} ${esc(TIMEZONE)}. ${open.length} open or accepted, ${resolved.length} resolved in the last 7 days.</p>\n<h2>Open</h2>${open.length ? `<table><tr><th>Tier</th><th>Problem</th><th>State</th></tr>${openRows}</table>` : '<p>Nothing open.</p>'}\n<h2>Resolved in the last 7 days</h2>${resolved.length ? `<table><tr><th>Tier</th><th>Problem</th><th>When</th></tr>${resolvedRows}</table>` : '<p>None.</p>'}`);\n}\n\nfunction renderDiagnosis(json) {\n  const d = parse(json);\n  if (!d || !d.summary) return '<p class=\"muted\">Not diagnosed.</p>';\n  const list = (xs, f) => (Array.isArray(xs) && xs.length ? `<ul>${xs.map((x) => `<li>${f(x)}</li>`).join('')}</ul>` : '<p class=\"muted\">None.</p>');\n  const rc = d.root_cause || {};\n  const fix = d.fix || {};\n  return `<p><b>${esc(d.summary)}</b></p>\n<p>Root cause (${esc(rc.confidence || 'unknown')}): ${esc(rc.statement || '')}${rc.capability ? ` <span class=\"muted\">[${esc(rc.capability)}]</span>` : ''}</p>\n${d.impact && d.impact.blast_radius ? `<p>Blast radius: ${esc(d.impact.blast_radius)}</p>` : ''}\n<h3>Evidence</h3>${list(d.evidence, (e) => `<span class=\"muted\">${esc(e.kind)}</span> ${esc(e.tool)} ${esc(e.args)}<pre>${esc(e.excerpt)}</pre>`)}\n<h3>Ruled out</h3>${list(d.ruled_out, (r) => `${esc(r.hypothesis)}: ${esc(r.refuted_by)}`)}\n${Array.isArray(d.unexplained_alerts) && d.unexplained_alerts.length ? `<h3>Not explained</h3>${list(d.unexplained_alerts, esc)}` : ''}\n<h3>Fix</h3>${fix.where ? `<p>Where: ${esc(fix.where)}</p>` : ''}${Array.isArray(fix.steps) && fix.steps.length ? `<ol>${fix.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>` : '<p class=\"muted\">No steps.</p>'}\n${d.verify_after_fix ? `<p>Verify after the fix: ${esc(d.verify_after_fix)}</p>` : ''}`;\n}\n\nfunction renderIssue(issue, events, related) {\n  if (!issue) return null;\n  const ann = parse(issue.annotations_json);\n  const labels = parse(issue.labels_json);\n  const runbook = safeUrl(ann.runbook_url);\n  const facts = [\n    ['State', issue.status === 'accepted' ? 'accepted (silenced in Alertmanager)' : issue.status],\n    ['Tier', issue.tier], ['Capability', issue.capability], ['Cluster', issue.cluster], ['Subject', issue.subject],\n    ['Severity', issue.severity], ['First seen', when(issue.first_seen)], ['Last seen', when(issue.last_seen)],\n    ['Resolved', when(issue.resolved_at)], ['Runs seen', issue.runs_seen], ['Recurrences', issue.recurrences],\n    ['Alerts in this issue', issue.alert_count],\n  ].filter(([, v]) => v !== '' && v !== null && v !== undefined);\n  const root = related.find((r) => r.fingerprint === issue.root_cause_fp);\n  const attached = related.filter((r) => r.root_cause_fp === issue.fingerprint && r.status === 'open');\n  const history = [...events].sort((a, b) => String(b.ts).localeCompare(String(a.ts))).slice(0, 100);\n  return page(issue.title, `<p><a href=\"issues\">&larr; All issues</a></p>\n<h1><span class=\"${esc(issue.tier)}\">[${esc(issue.tier)}]</span> ${esc(issue.title)}</h1>\n${ann.description && ann.description !== issue.title ? `<p>${esc(ann.description)}</p>` : ''}\n${runbook ? `<p><a href=\"${esc(runbook)}\">Runbook</a></p>` : ''}\n${root ? `<p>Likely a consequence of <a href=\"issue?fp=${esc(root.fingerprint)}\">${esc(root.title)}</a>.</p>` : ''}\n${attached.length ? `<h2>Attached issues (likely consequences)</h2><ul>${attached.map((r) => `<li><a href=\"issue?fp=${esc(r.fingerprint)}\">${esc(r.title)}</a> <span class=\"muted\">${esc(r.subject)}</span></li>`).join('')}</ul>` : ''}\n<h2>State</h2><table>${facts.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>\n<h2>Diagnosis</h2>${renderDiagnosis(issue.diagnosis_json)}\n<h2>History</h2>${history.length ? `<table><tr><th>When</th><th>Transition</th><th>Detail</th></tr>${history.map((e) => `<tr><td>${esc(when(e.ts))}</td><td>${esc(e.transition)}</td><td>${esc(e.detail)}</td></tr>`).join('')}</table>` : '<p class=\"muted\">No events.</p>'}\n<h2>Labels</h2><pre>${esc(JSON.stringify(labels, null, 2))}</pre>\n<p class=\"muted\">Fingerprint ${esc(issue.fingerprint)}</p>`);\n}\n\nconst notFound = () => page('Not found', '<h1>Not found</h1><p><a href=\"issues\">All issues</a></p>');\n\n\nconst rows = $('Get Issues For Index').all().map((i) => i.json);\nconst failed = rows.find((r) => r.error);\nif (failed) return [{ json: { code: 503, html: page('Cluster health', '<h1>Cluster health</h1><p>No data yet: the Health Triage workflow has not run.</p>') } }];\nreturn [{ json: { code: 200, html: renderIndex(rows, DateTime.now().toUTC().toISO()) } }];\n"
+      },
+      "name": "Render Index",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        200
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060003"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.code }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Respond Index",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        750,
+        200
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060004"
+    },
+    {
+      "parameters": {
+        "path": "health/issue",
+        "responseMode": "responseNode",
+        "options": {},
+        "authentication": "basicAuth"
+      },
+      "name": "Issue Page",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        450
+      ],
+      "webhookId": "5f6a1e10-1a2b-4c3d-9e0f-000000000612",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "health-pages",
+          "name": "Health Pages Auth"
+        }
+      },
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060005"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_issues"
+        },
+        "returnAll": true
+      },
+      "name": "Get Issues For Page",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        250,
+        450
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060006"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "health_events"
+        },
+        "returnAll": true,
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "fingerprint",
+              "condition": "eq",
+              "keyValue": "={{ String($('Issue Page').first().json.query.fp || '') }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Events",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        500,
+        450
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "onError": "continueRegularOutput",
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060007"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Health pages: HTML for the open-issue index and for one issue. Pure functions of the stored rows.\nconst TIMEZONE = 'America/New_York';\nconst esc = (v) => String(v === null || v === undefined ? '' : v)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\nconst when = (iso) => (iso ? DateTime.fromISO(String(iso)).setZone(TIMEZONE).toFormat('yyyy-LL-dd HH:mm') : '');\nconst tierRank = (t) => ({ H1: 1, H2: 2, H3: 3, M1: 4, M2: 5, M3: 6, L: 7 }[t] || 8);\nconst parse = (s) => { try { return JSON.parse(s || '{}'); } catch (e) { return {}; } };\nconst safeUrl = (u) => (/^https?:\\/\\//i.test(String(u || '')) ? String(u) : '');\n\nfunction page(title, body) {\n  return `<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>${esc(title)}</title>\n<style>\nbody{font:15px/1.45 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#1d1d1f;background:#fff}\nh1{font-size:1.3em}h2{font-size:1.1em;margin-top:1.6em}table{border-collapse:collapse;width:100%}\ntd,th{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}\nth{font-weight:600}.t{font-weight:700;white-space:nowrap}.H1,.H2,.H3{color:#b00020}.M1,.M2,.M3{color:#a35a00}.L{color:#555}\n.muted{color:#666}pre{white-space:pre-wrap;word-break:break-word;background:#f5f5f7;padding:8px}\n@media (prefers-color-scheme:dark){body{background:#111;color:#eee}td,th{border-color:#333}pre{background:#222}.muted{color:#aaa}}\n</style></head><body>${body}</body></html>`;\n}\n\nfunction renderIndex(rows, now) {\n  const issues = rows.filter((r) => r && r.fingerprint);\n  const open = issues.filter((r) => r.status === 'open' || r.status === 'accepted')\n    .sort((a, b) => tierRank(a.tier) - tierRank(b.tier) || String(a.first_seen).localeCompare(String(b.first_seen)));\n  const weekAgo = DateTime.fromISO(now).minus({ days: 7 });\n  const resolved = issues.filter((r) => r.status === 'resolved' && r.resolved_at && DateTime.fromISO(String(r.resolved_at)) >= weekAgo)\n    .sort((a, b) => String(b.resolved_at).localeCompare(String(a.resolved_at)));\n  const titleOf = new Map(issues.map((r) => [r.fingerprint, r.title]));\n  const row = (r, extra) => `<tr><td class=\"t ${esc(r.tier)}\">${esc(r.tier)}</td>\n<td><a href=\"issue?fp=${esc(r.fingerprint)}\">${esc(r.title)}</a><div class=\"muted\">${esc([r.cluster, r.subject].filter(Boolean).join(', '))}${\n  r.root_cause_fp ? ` &middot; likely caused by ${esc(titleOf.get(r.root_cause_fp) || r.root_cause_fp)}` : ''}</div></td>\n<td>${extra}</td></tr>`;\n  const openRows = open.map((r) => row(r, `${esc(r.status === 'accepted' ? 'accepted (silenced)' : 'open')}<div class=\"muted\">since ${esc(when(r.first_seen))}</div>`)).join('');\n  const resolvedRows = resolved.map((r) => row(r, `resolved ${esc(when(r.resolved_at))}`)).join('');\n  return page('Cluster health', `<h1>Cluster health</h1>\n<p class=\"muted\">As of ${esc(when(now))} ${esc(TIMEZONE)}. ${open.length} open or accepted, ${resolved.length} resolved in the last 7 days.</p>\n<h2>Open</h2>${open.length ? `<table><tr><th>Tier</th><th>Problem</th><th>State</th></tr>${openRows}</table>` : '<p>Nothing open.</p>'}\n<h2>Resolved in the last 7 days</h2>${resolved.length ? `<table><tr><th>Tier</th><th>Problem</th><th>When</th></tr>${resolvedRows}</table>` : '<p>None.</p>'}`);\n}\n\nfunction renderDiagnosis(json) {\n  const d = parse(json);\n  if (!d || !d.summary) return '<p class=\"muted\">Not diagnosed.</p>';\n  const list = (xs, f) => (Array.isArray(xs) && xs.length ? `<ul>${xs.map((x) => `<li>${f(x)}</li>`).join('')}</ul>` : '<p class=\"muted\">None.</p>');\n  const rc = d.root_cause || {};\n  const fix = d.fix || {};\n  return `<p><b>${esc(d.summary)}</b></p>\n<p>Root cause (${esc(rc.confidence || 'unknown')}): ${esc(rc.statement || '')}${rc.capability ? ` <span class=\"muted\">[${esc(rc.capability)}]</span>` : ''}</p>\n${d.impact && d.impact.blast_radius ? `<p>Blast radius: ${esc(d.impact.blast_radius)}</p>` : ''}\n<h3>Evidence</h3>${list(d.evidence, (e) => `<span class=\"muted\">${esc(e.kind)}</span> ${esc(e.tool)} ${esc(e.args)}<pre>${esc(e.excerpt)}</pre>`)}\n<h3>Ruled out</h3>${list(d.ruled_out, (r) => `${esc(r.hypothesis)}: ${esc(r.refuted_by)}`)}\n${Array.isArray(d.unexplained_alerts) && d.unexplained_alerts.length ? `<h3>Not explained</h3>${list(d.unexplained_alerts, esc)}` : ''}\n<h3>Fix</h3>${fix.where ? `<p>Where: ${esc(fix.where)}</p>` : ''}${Array.isArray(fix.steps) && fix.steps.length ? `<ol>${fix.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>` : '<p class=\"muted\">No steps.</p>'}\n${d.verify_after_fix ? `<p>Verify after the fix: ${esc(d.verify_after_fix)}</p>` : ''}`;\n}\n\nfunction renderIssue(issue, events, related) {\n  if (!issue) return null;\n  const ann = parse(issue.annotations_json);\n  const labels = parse(issue.labels_json);\n  const runbook = safeUrl(ann.runbook_url);\n  const facts = [\n    ['State', issue.status === 'accepted' ? 'accepted (silenced in Alertmanager)' : issue.status],\n    ['Tier', issue.tier], ['Capability', issue.capability], ['Cluster', issue.cluster], ['Subject', issue.subject],\n    ['Severity', issue.severity], ['First seen', when(issue.first_seen)], ['Last seen', when(issue.last_seen)],\n    ['Resolved', when(issue.resolved_at)], ['Runs seen', issue.runs_seen], ['Recurrences', issue.recurrences],\n    ['Alerts in this issue', issue.alert_count],\n  ].filter(([, v]) => v !== '' && v !== null && v !== undefined);\n  const root = related.find((r) => r.fingerprint === issue.root_cause_fp);\n  const attached = related.filter((r) => r.root_cause_fp === issue.fingerprint && r.status === 'open');\n  const history = [...events].sort((a, b) => String(b.ts).localeCompare(String(a.ts))).slice(0, 100);\n  return page(issue.title, `<p><a href=\"issues\">&larr; All issues</a></p>\n<h1><span class=\"${esc(issue.tier)}\">[${esc(issue.tier)}]</span> ${esc(issue.title)}</h1>\n${ann.description && ann.description !== issue.title ? `<p>${esc(ann.description)}</p>` : ''}\n${runbook ? `<p><a href=\"${esc(runbook)}\">Runbook</a></p>` : ''}\n${root ? `<p>Likely a consequence of <a href=\"issue?fp=${esc(root.fingerprint)}\">${esc(root.title)}</a>.</p>` : ''}\n${attached.length ? `<h2>Attached issues (likely consequences)</h2><ul>${attached.map((r) => `<li><a href=\"issue?fp=${esc(r.fingerprint)}\">${esc(r.title)}</a> <span class=\"muted\">${esc(r.subject)}</span></li>`).join('')}</ul>` : ''}\n<h2>State</h2><table>${facts.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>\n<h2>Diagnosis</h2>${renderDiagnosis(issue.diagnosis_json)}\n<h2>History</h2>${history.length ? `<table><tr><th>When</th><th>Transition</th><th>Detail</th></tr>${history.map((e) => `<tr><td>${esc(when(e.ts))}</td><td>${esc(e.transition)}</td><td>${esc(e.detail)}</td></tr>`).join('')}</table>` : '<p class=\"muted\">No events.</p>'}\n<h2>Labels</h2><pre>${esc(JSON.stringify(labels, null, 2))}</pre>\n<p class=\"muted\">Fingerprint ${esc(issue.fingerprint)}</p>`);\n}\n\nconst notFound = () => page('Not found', '<h1>Not found</h1><p><a href=\"issues\">All issues</a></p>');\n\n\nconst fp = String(($('Issue Page').first().json.query || {}).fp || '');\nconst rows = $('Get Issues For Page').all().map((i) => i.json).filter((r) => r.fingerprint);\nconst issue = /^[0-9a-f]{40}$/.test(fp) ? rows.find((r) => r.fingerprint === fp) : null;\nif (!issue) return [{ json: { code: 404, html: notFound() } }];\nconst events = $('Get Events').all().map((i) => i.json).filter((e) => e.fingerprint === fp);\nreturn [{ json: { code: 200, html: renderIssue(issue, events, rows) } }];\n"
+      },
+      "name": "Render Issue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        450
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060008"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": "={{ $json.code }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Respond Issue",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1000,
+        450
+      ],
+      "id": "5f6a1e10-1a2b-4c3d-9e0f-00060009"
+    }
+  ],
+  "connections": {
+    "Issues Index": {
+      "main": [
+        [
+          {
+            "node": "Get Issues For Index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Issues For Index": {
+      "main": [
+        [
+          {
+            "node": "Render Index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Index": {
+      "main": [
+        [
+          {
+            "node": "Respond Index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Issue Page": {
+      "main": [
+        [
+          {
+            "node": "Get Issues For Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Issues For Page": {
+      "main": [
+        [
+          {
+            "node": "Get Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Events": {
+      "main": [
+        [
+          {
+            "node": "Render Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Issue": {
+      "main": [
+        [
+          {
+            "node": "Respond Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
