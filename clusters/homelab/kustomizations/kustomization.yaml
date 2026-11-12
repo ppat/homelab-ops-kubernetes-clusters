@@ -12,6 +12,7 @@ resources:
 - infra-networking-extra.yaml
 - infra-observability-core.yaml
 - infra-observability-extra.yaml
+- infra-observability-health-canaries.yaml
 - infra-security-core.yaml
 - infra-security-extra.yaml
 - infra-storage-core.yaml

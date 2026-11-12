@@ -8,3 +8,5 @@ resources:
 - sc-longhorn-replicated.yaml
 - sc-longhorn-rwx.yaml
 - sc-nfs-share.yaml
+- sc-health-canary-longhorn-replicated.yaml
+- sc-health-canary-longhorn-rwx.yaml

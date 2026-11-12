@@ -1,0 +1,23 @@
+---
+# Storage canary twin of sc-nfs-dynamic-share.yaml with reclaimPolicy Delete. The canary
+# creates a PVC per run and deletes it with the run's pod; on the Retain original every run
+# would leave a Released PV and its subdirectory on the share behind. Keep provisioner,
+# parameters and mount options identical to the original.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-health-canary-nfs-dynamic-share
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: ${ipaddress_nfs}
+  share: /volume1/kubernetes-dynamic
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+mountOptions:
+- vers=4.1,
+- proto=tcp
+- noatime
+- nodiratime
+- nodev
+- noexec
+- nosuid

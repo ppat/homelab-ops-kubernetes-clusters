@@ -1,0 +1,235 @@
+---
+# Cluster-owned inputs of the health canaries: the S3 canary ExternalSecrets and the static NFS
+# export the nfs-share canary mounts. Separate from config-services because it needs the
+# health-canary namespace, which infra-observability-extra creates.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: config-services-health-canary
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  - name: infra-security-core
+    namespace: flux-system
+  interval: 15m0s
+  path: ./clusters/homelab/services/health-canary
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: root
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: cluster-secrets
+---
+# Storage canary instances, one per StorageClass in use. Each points at the module's template
+# directory with its own variables. Classes deliberately left out:
+#   longhorn-static            only for pre-existing Longhorn volumes, nothing provisions from it
+#   sc-prometheus              Retain, single consumer, covered by Prometheus's own health
+#   sc-longhorn-local-non-replicated  Retain; its Delete sibling (the ephemeral class) has the
+#                              same replica count but best-effort locality, so strict-local
+#                              provisioning is not exercised by any canary
+#
+# longhorn: chart-managed, reclaimPolicy Delete, no recurringJobSelector.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-block-longhorn
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      storage_canary_name: longhorn
+      storage_canary_kind: block
+      storage_canary_class: longhorn
+---
+# sc-health-canary-longhorn-replicated: Delete twin of sc-longhorn-replicated.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-block-longhorn-replicated
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      storage_canary_name: longhorn-replicated
+      storage_canary_kind: block
+      storage_canary_class: sc-health-canary-longhorn-replicated
+---
+# sc-health-canary-longhorn-rwx: Delete twin of sc-longhorn-rwx; RWX so the share-manager path is what gets tested.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-block-longhorn-rwx
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      storage_canary_name: longhorn-rwx
+      storage_canary_kind: block
+      storage_canary_class: sc-health-canary-longhorn-rwx
+      storage_canary_access_mode: ReadWriteMany
+---
+# sc-longhorn-local-non-replicated-ephemeral: already reclaimPolicy Delete.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-block-longhorn-local-ephemeral
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      storage_canary_name: longhorn-local-ephemeral
+      storage_canary_kind: block
+      storage_canary_class: sc-longhorn-local-non-replicated-ephemeral
+---
+# sc-nfs-share is only consumed through static PVs, so its canary mounts a static export
+# (services/health-canary/pv-nfs-share.yaml) instead of provisioning.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-nfs-nfs-share
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  - name: config-services-health-canary
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/storage-claim
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  patches:
+  # The Synology grants write on the kubernetes-* shares to group 65539, the same group every
+  # other NFS consumer on these shares writes through. NFS ignores fsGroup, so the canary
+  # joins it as a supplemental group.
+  # yamllint disable-line rule:indentation
+  - patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext/supplementalGroups
+        value: [65539]
+    target:
+      kind: CronJob
+  postBuild:
+    substitute:
+      storage_canary_name: nfs-share
+      storage_canary_kind: nfs
+      storage_canary_claim: nfs-canary-nfs-share
+---
+# S3 canary instances. All run here, on the cluster whose backups and logs use these
+# endpoints, against the ingress URLs those clients use. Credentials are the ExternalSecrets in
+# services/health-canary/. Neither MinIO is covered: homelab's is declared by no manifest any more,
+# and nas's is being retired in favour of versitygw.
+#
+# homelab Garage, through its ingress as authentik and Loki reach it.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-s3-garage
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  - name: config-services-health-canary
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/s3
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      s3_canary_name: garage
+      s3_canary_endpoint: https://garage-s3.homelab.nikara.net
+      s3_canary_bucket: homelab-health-canary
+---
+# nas versitygw, through the same ingress the Longhorn and CNPG backups use.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: health-canary-s3-versitygw-nas
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: infra-observability-extra
+    namespace: flux-system
+  - name: config-services-health-canary
+    namespace: flux-system
+  interval: 15m0s
+  path: ./infrastructure/subsystems/observability-extra/health-canaries/s3
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: infra-observability-extra
+    namespace: flux-system
+  timeout: 2m0s
+  wait: true
+  postBuild:
+    substitute:
+      s3_canary_name: versitygw-nas
+      s3_canary_endpoint: https://versitygw-s3.nas.nikara.net
+      s3_canary_bucket: nas-health-canary

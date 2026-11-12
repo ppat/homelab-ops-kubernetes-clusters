@@ -8,6 +8,7 @@ resources:
 - infra-kubernetes-core.yaml
 - infra-networking-core.yaml
 - infra-observability-core.yaml
+- infra-observability-extra.yaml
 - infra-security-core.yaml
 - infra-storage-core.yaml
 - infra-storage-minio.yaml

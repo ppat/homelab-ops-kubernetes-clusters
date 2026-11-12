@@ -5,3 +5,4 @@ kind: Kustomization
 resources:
 - sc-nfs-share.yaml
 - sc-nfs-dynamic-share.yaml
+- sc-health-canary-nfs-dynamic-share.yaml

@@ -1,0 +1,18 @@
+---
+# Storage canary twin of sc-longhorn-rwx.yaml, for the same two reasons as
+# sc-health-canary-longhorn-replicated.yaml: reclaimPolicy Delete, and a recurring-job group
+# with no jobs. Keep provisioner and every other parameter identical to the original.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-health-canary-longhorn-rwx
+allowVolumeExpansion: true
+parameters:
+  fsType: "ext4"
+  nfsOptions: "vers=4.2,noresvport,softerr,timeo=600,retrans=5"
+  numberOfReplicas: "3"
+  recurringJobSelector: '[{"name":"health-canary", "isGroup":true}]'
+  staleReplicaTimeout: "30"
+provisioner: driver.longhorn.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
