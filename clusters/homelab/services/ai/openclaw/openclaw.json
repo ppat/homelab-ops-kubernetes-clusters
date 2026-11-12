@@ -56,8 +56,10 @@
         ]
       },
       // Quiet hours: heartbeats run only outside the operator's quiet hours, 22:00 to 06:00
-      // Eastern, so this window is their inverse. The heartbeat is the one sender that does
-      // not go through n8n's Notify workflow, where quiet hours are defined; keep the two equal.
+      // Eastern, so this window is their inverse. Two senders do not go through n8n's Notify
+      // workflow, where quiet hours are defined: this heartbeat, and the health-run-liveness
+      // automation, whose window is ACTIVE_HOURS in automations/reconcile.js beside this file.
+      // Keep all three equal.
       "heartbeat": {
         "activeHours": {
           "start": "06:00",
@@ -171,8 +173,9 @@
   },
 
   // Jobs are not declared statically here -- `cron.jobs` isn't part of the config schema
-  // (jobs live in the gateway's own state store). The daily-digest job is created once,
-  // post-deploy, via `openclaw cron add` (same pattern as the WhatsApp QR pairing step).
+  // (jobs live in the gateway's own state store). The jobs in automations/ beside this file are
+  // kept in place by the openclaw-automations-reconcile CronJob. The daily-digest job is created
+  // once, post-deploy, via `openclaw cron add` (same pattern as the WhatsApp QR pairing step).
   "cron": {
     "enabled": true
   },

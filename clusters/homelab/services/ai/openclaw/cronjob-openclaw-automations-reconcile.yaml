@@ -1,0 +1,104 @@
+---
+# Keeps openclaw's automations equal to the job definitions in automations/. openclaw stores
+# automations in its own state database, not in openclaw.json, so without this a job deleted,
+# edited or lost with the state volume stays that way. automations/reconcile.js says what a run
+# compares and what it refuses.
+#
+# reconcile.js and each job's definition and script reach the gateway container as command
+# arguments, so this container needs nothing but kubectl. See
+# rbac-openclaw-automations-reconcile.yaml for why the CLI runs inside the gateway container.
+#
+# Hourly, with no extra Job on deploy. A change to a definition takes effect within the hour, and
+# a gateway restart keeps its jobs (they persist on its volume). The only job today runs twice a
+# day, so an hour of lag on a change costs at most one check. A Job alongside would add a second
+# copy of this spec for that hour.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openclaw-automations-reconcile
+  namespace: openclaw
+  labels:
+    app.kubernetes.io/name: openclaw-automations-reconcile
+spec:
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openclaw-automations-reconcile
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openclaw-automations-reconcile
+        spec:
+          serviceAccountName: openclaw-automations-reconcile
+          automountServiceAccountToken: true
+          containers:
+          - name: reconcile
+            image: registry.k8s.io/kubectl:v1.36.6@sha256:0650805141538d13ccbb6bb9e0dd647bc415bc002898357970211c4d47224396
+            command: ["kubectl"]
+            args:
+            - exec
+            - --namespace=openclaw
+            - deployment/openclaw
+            - --container=openclaw
+            - --
+            - node
+            - -e
+            - $(RECONCILE_JS)
+            - --
+            - $(HEALTH_RUN_LIVENESS_JSON)
+            - $(HEALTH_RUN_LIVENESS_JS)
+            env:
+            # kubectl keeps its discovery cache under $HOME.
+            - name: HOME
+              value: /tmp
+            - name: RECONCILE_JS
+              valueFrom:
+                configMapKeyRef:
+                  name: openclaw-automations
+                  key: reconcile.js
+            - name: HEALTH_RUN_LIVENESS_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: openclaw-automations
+                  key: health-run-liveness.json
+            - name: HEALTH_RUN_LIVENESS_JS
+              valueFrom:
+                configMapKeyRef:
+                  name: openclaw-automations
+                  key: health-run-liveness.js
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+            volumeMounts:
+            - mountPath: /tmp
+              name: tmp
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 64Mi
+      ttlSecondsAfterFinished: 86400
+  schedule: "15 * * * *"
+  startingDeadlineSeconds: 3000
+  timeZone: Etc/UTC

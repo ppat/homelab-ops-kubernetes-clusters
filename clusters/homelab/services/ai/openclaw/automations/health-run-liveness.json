@@ -1,0 +1,10 @@
+{
+  "name": "health-run-liveness",
+  "agentId": "main",
+  "cron": "30 6,18 * * *",
+  "tz": "America/New_York",
+  "timeoutSeconds": 120,
+  "toolBudget": 2,
+  "tools": ["web_fetch"],
+  "channel": "whatsapp"
+}
