@@ -1,0 +1,51 @@
+---
+# What openclaw-automations-reconcile needs to run the openclaw CLI inside the gateway container:
+# find the gateway pod, then exec into it.
+#
+# Why exec and not the CLI over the network: a CLI connecting from another pod is a remote
+# operator device, and the gateway admits a new one only after manual pairing approval. Pairing is
+# skipped only for loopback connections, so the CLI runs where the gateway is.
+#
+# What this grants. pods/exec cannot be scoped by resourceName (the pod name is generated), so
+# this ServiceAccount can exec into any pod in the openclaw namespace. The gateway is the only
+# long-running pod there. A shell in its container reads everything that container holds: the
+# gateway token, the LiteLLM key, the hooks token and the WhatsApp session. That is the same reach
+# as anyone holding the gateway token, which the reconcile would need on any other path. Nothing
+# here reaches another namespace or the cluster scope.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openclaw-automations-reconcile
+  namespace: openclaw
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openclaw-automations-reconcile
+  namespace: openclaw
+rules:
+# `kubectl exec deployment/openclaw` reads the Deployment for its selector, then picks a pod.
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["openclaw"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openclaw-automations-reconcile
+  namespace: openclaw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openclaw-automations-reconcile
+subjects:
+- kind: ServiceAccount
+  name: openclaw-automations-reconcile
+  namespace: openclaw

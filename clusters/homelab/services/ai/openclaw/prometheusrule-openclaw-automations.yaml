@@ -1,0 +1,120 @@
+---
+# Freshness and failure of openclaw-automations-reconcile, the CronJob that keeps the health
+# liveness automation (health-run-liveness) in place. If it stops, a deleted or edited liveness job
+# stays that way, and the health triage could stop running without anything saying so.
+#
+# Same shape as the health canary rules in the apps repo, read from the CronJob status that
+# kube-state-metrics exports.
+#   OpenclawAutomationsReconcileFailing  runs have been failing for 90 minutes: two consecutive
+#                                        hourly runs. A single failure is tolerated, since a run
+#                                        that lands while the gateway pod is being replaced fails
+#                                        and the next one corrects it.
+#   OpenclawAutomationsReconcileStale    no successful run for three schedule intervals, or the
+#                                        CronJob is suspended.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+  labels:
+    release: kube-prometheus-stack
+  name: openclaw-automations
+  namespace: openclaw
+spec:
+  groups:
+  - name: openclaw-automations
+    rules:
+    - alert: OpenclawAutomationsReconcileFailing
+      annotations:
+        description: >-
+          {{ $labels.cronjob }} in {{ $labels.namespace }} has not succeeded since its run
+          scheduled at {{ $value | humanizeTimestamp }}. openclaw's automations may differ from
+          the definitions in Git, and the health liveness check may be missing or changed. The
+          Job's log names the job and the field that differs, or the schedule it refused.
+        summary: The openclaw automations reconcile is failing.
+      expr: |
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        > (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        or
+        0 * max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        )
+      for: 90m
+      labels:
+        capability: triage.self
+        tier: M2
+        severity: warning
+    - alert: OpenclawAutomationsReconcileStale
+      annotations:
+        description: >-
+          {{ $labels.cronjob }} in {{ $labels.namespace }} has had no successful run for
+          {{ $value | humanizeDuration }}, more than three schedule intervals, or it is suspended.
+          Nothing is keeping the health liveness check in place.
+        summary: The openclaw automations reconcile is not running.
+      expr: |
+        time() - (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        or
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        )
+        > on (k8s_cluster, namespace, cronjob) (
+        3 * (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_next_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        - (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        or
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        )
+        )
+        )
+        or on (k8s_cluster, namespace, cronjob)
+        0 * (
+        max by (k8s_cluster, namespace, cronjob) (
+        kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile"}
+        ) == 1
+        )
+        )
+      for: 15m
+      labels:
+        capability: triage.self
+        tier: M2
+        severity: warning
+    # kube-state-metrics exports this CronJob as long as it exists, so its absence means the
+    # CronJob was deleted or its metrics stopped, and both rules above would go quiet.
+    - alert: OpenclawAutomationsReconcileAbsent
+      annotations:
+        description: >-
+          kube-state-metrics reports no openclaw-automations-reconcile CronJob for 30 minutes.
+          Either it was deleted or its metrics are missing, and the reconcile's other alerts
+          cannot fire.
+        summary: The openclaw automations reconcile is gone.
+      expr: |
+        absent(kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile"})
+      for: 30m
+      labels:
+        capability: triage.self
+        tier: M2
+        severity: warning
+    - alert: CapabilityHeartbeat
+      annotations:
+        summary: The triage.self alert rules for the openclaw automations reconcile are being evaluated.
+      expr: vector(1)
+      labels:
+        capability: triage.self
+        tier: M2
+        severity: none

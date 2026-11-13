@@ -9,6 +9,11 @@ resources:
 # Plugin credentials referenced only from openclaw.json, pulled into the container wholesale
 # via an envFrom patch in kustomizations/apps-ai.yaml so new keys need no apps-ai change.
 - openclaw/externalsecret-openclaw-plugin-secrets.yaml
+# Keeps openclaw's automations equal to openclaw/automations/, with rules for the reconcile's own
+# freshness. See the CronJob's header.
+- openclaw/rbac-openclaw-automations-reconcile.yaml
+- openclaw/cronjob-openclaw-automations-reconcile.yaml
+- openclaw/prometheusrule-openclaw-automations.yaml
 # Credentials for this cluster's n8n workflows, taken by the apps-ai n8n Deployment as an
 # optional envFrom.
 - n8n/externalsecret-n8n-workflow-secrets.yaml
@@ -41,5 +46,16 @@ configMapGenerator:
       # openclaw.json's `${VAR}` tokens are expanded by OpenClaw itself from its own
       # container env at startup, not by Flux -- without this, Flux's postBuild
       # substitution would try (and fail) to resolve them before this ConfigMap is applied.
+      kustomize.toolkit.fluxcd.io/substitute: disabled
+    disableNameSuffixHash: true
+- name: openclaw-automations
+  namespace: openclaw
+  files:
+  - openclaw/automations/reconcile.js
+  - openclaw/automations/health-run-liveness.json
+  - openclaw/automations/health-run-liveness.js
+  options:
+    annotations:
+      # The scripts use JavaScript `${...}` template literals.
       kustomize.toolkit.fluxcd.io/substitute: disabled
     disableNameSuffixHash: true

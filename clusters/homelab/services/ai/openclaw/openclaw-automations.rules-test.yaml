@@ -1,0 +1,217 @@
+---
+# yamllint disable rule:line-length
+# promtool unit tests for prometheusrule-openclaw-automations.yaml. Series carry the extra labels
+# a kube-state-metrics scrape adds (`job`, `instance`). Timestamps are seconds from the test's own
+# epoch (time() starts at 0). The CronJob runs hourly: schedules at 0, 3600, 7200, ... and the
+# next schedule is always one hour after the last.
+rule_files:
+- prometheusrule-openclaw-automations.yaml
+evaluation_interval: 1m
+tests:
+# ------------------------------------------------------------------- healthy
+# Every run succeeds 30 s after its schedule. The minute between a schedule and its success being
+# scraped is a run in progress and must not fire.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics", instance="10.0.0.9:8080"}'
+    values: '1x239'
+  - series: 'kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics", instance="10.0.0.9:8080"}'
+    values: '0x239'
+  - series: 'kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics", instance="10.0.0.9:8080"}'
+    values: '0x239'
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics", instance="10.0.0.9:8080"}'
+    values: '0x59 3600x59 7200x59 10800x59'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics", instance="10.0.0.9:8080"}'
+    values: '30x60 3630x59 7230x59 10830x58'
+  - series: 'kube_cronjob_next_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics", instance="10.0.0.9:8080"}'
+    values: '3600x59 7200x59 10800x59 14400x59'
+  alert_rule_test:
+  - eval_time: 180m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts: []
+  - eval_time: 230m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts: []
+  - eval_time: 230m
+    alertname: OpenclawAutomationsReconcileStale
+    exp_alerts: []
+  - eval_time: 230m
+    alertname: OpenclawAutomationsReconcileAbsent
+    exp_alerts: []
+  - eval_time: 230m
+    alertname: CapabilityHeartbeat
+    exp_alerts:
+    - exp_labels: {capability: triage.self, tier: M2, severity: none}
+      exp_annotations:
+        summary: The triage.self alert rules for the openclaw automations reconcile are being evaluated.
+
+# ------------------------------------------------------------------- one failed run, then recovery
+# The run at 3600 fails (for example while the gateway pod is being replaced) and the run at 7200
+# succeeds. The failing condition holds for one hour, less than `for`, so nothing fires.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '1x179'
+  - series: 'kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x179'
+  - series: 'kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x179'
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x59 3600x59 7200x59'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '30x120 7230x58'
+  - series: 'kube_cronjob_next_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '3600x59 7200x59 10800x59'
+  alert_rule_test:
+  - eval_time: 119m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts: []
+  - eval_time: 170m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts: []
+
+# ------------------------------------------------------------------- two consecutive failures
+# The runs at 3600 and 7200 both fail. The condition holds from minute 60 and fires 90 minutes
+# later, carrying the latest schedule time. Stale has not reached three intervals plus its `for`.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '1x179'
+  - series: 'kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x179'
+  - series: 'kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x179'
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x59 3600x59 7200x59'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '30x179'
+  - series: 'kube_cronjob_next_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '3600x59 7200x59 10800x59'
+  alert_rule_test:
+  - eval_time: 149m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts: []
+  - eval_time: 151m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts:
+    - exp_labels: {namespace: openclaw, cronjob: openclaw-automations-reconcile, capability: triage.self, tier: M2, severity: warning}
+      exp_annotations:
+        summary: The openclaw automations reconcile is failing.
+        description: >-
+          openclaw-automations-reconcile in openclaw has not succeeded since its run
+          scheduled at 1970-01-01 02:00:00 +0000 UTC. openclaw's automations may differ from
+          the definitions in Git, and the health liveness check may be missing or changed. The
+          Job's log names the job and the field that differs, or the schedule it refused.
+  - eval_time: 151m
+    alertname: OpenclawAutomationsReconcileStale
+    exp_alerts: []
+
+# ------------------------------------------------------------------- never succeeded
+# A new CronJob whose every run fails has no last_successful_time series at all. The `or 0 *`
+# arm stands in for it, so the rule still fires instead of having nothing to compare.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '1x179'
+  - series: 'kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x179'
+  - series: 'kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x179'
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '_x4 300x55 3600x59 7200x59'
+  - series: 'kube_cronjob_next_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '300x4 3600x55 7200x59 10800x59'
+  alert_rule_test:
+  - eval_time: 93m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts: []
+  - eval_time: 95m
+    alertname: OpenclawAutomationsReconcileFailing
+    exp_alerts:
+    - exp_labels: {namespace: openclaw, cronjob: openclaw-automations-reconcile, capability: triage.self, tier: M2, severity: warning}
+      exp_annotations:
+        summary: The openclaw automations reconcile is failing.
+        description: >-
+          openclaw-automations-reconcile in openclaw has not succeeded since its run
+          scheduled at 1970-01-01 01:00:00 +0000 UTC. openclaw's automations may differ from
+          the definitions in Git, and the health liveness check may be missing or changed. The
+          Job's log names the job and the field that differs, or the schedule it refused.
+
+# ------------------------------------------------------------------- not running
+# The last success was at 30 s and no run is scheduled after 3600 (for example the CronJob
+# controller stopped creating Jobs). Stale fires once three intervals plus `for` have passed.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '1x239'
+  - series: 'kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x239'
+  - series: 'kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x239'
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x239'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '30x239'
+  - series: 'kube_cronjob_next_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '3600x239'
+  alert_rule_test:
+  - eval_time: 190m
+    alertname: OpenclawAutomationsReconcileStale
+    exp_alerts: []
+  - eval_time: 200m
+    alertname: OpenclawAutomationsReconcileStale
+    exp_alerts:
+    - exp_labels: {namespace: openclaw, cronjob: openclaw-automations-reconcile, capability: triage.self, tier: M2, severity: warning}
+      exp_annotations:
+        summary: The openclaw automations reconcile is not running.
+        description: >-
+          openclaw-automations-reconcile in openclaw has had no successful run for
+          3h 19m 30s, more than three schedule intervals, or it is suspended.
+          Nothing is keeping the health liveness check in place.
+
+# ------------------------------------------------------------------- suspended
+# kube-state-metrics stops exporting next_schedule_time for a suspended CronJob, so the interval
+# comparison has nothing to compare. The suspend arm fires on its own.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '1x59'
+  - series: 'kube_cronjob_created{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x59'
+  - series: 'kube_cronjob_spec_suspend{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '1x59'
+  - series: 'kube_cronjob_status_last_schedule_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '0x59'
+  - series: 'kube_cronjob_status_last_successful_time{namespace="openclaw", cronjob="openclaw-automations-reconcile", job="kube-state-metrics"}'
+    values: '30x59'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: OpenclawAutomationsReconcileStale
+    exp_alerts:
+    - exp_labels: {namespace: openclaw, cronjob: openclaw-automations-reconcile, capability: triage.self, tier: M2, severity: warning}
+      exp_annotations:
+        summary: The openclaw automations reconcile is not running.
+        description: >-
+          openclaw-automations-reconcile in openclaw has had no successful run for
+          19m 30s, more than three schedule intervals, or it is suspended.
+          Nothing is keeping the health liveness check in place.
+
+# ------------------------------------------------------------------- CronJob gone
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_info{namespace="other", cronjob="something-else", job="kube-state-metrics"}'
+    values: '1x59'
+  alert_rule_test:
+  - eval_time: 29m
+    alertname: OpenclawAutomationsReconcileAbsent
+    exp_alerts: []
+  - eval_time: 31m
+    alertname: OpenclawAutomationsReconcileAbsent
+    exp_alerts:
+    - exp_labels: {namespace: openclaw, cronjob: openclaw-automations-reconcile, capability: triage.self, tier: M2, severity: warning}
+      exp_annotations:
+        summary: The openclaw automations reconcile is gone.
+        description: >-
+          kube-state-metrics reports no openclaw-automations-reconcile CronJob for 30 minutes.
+          Either it was deleted or its metrics are missing, and the reconcile's other alerts
+          cannot fire.
